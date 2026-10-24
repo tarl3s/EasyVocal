@@ -82,6 +82,13 @@ public class AppSettings
     public bool StartMenuAsked { get; set; }
     /// <summary>The person wants the Start menu shortcut (it is kept pointing at this EasyVocal.exe).</summary>
     public bool StartMenuShortcut { get; set; }
+    /// <summary>
+    /// Windows' default playback device when the VB-CABLE install started (VB-CABLE may take its place): put back
+    /// once the cable shows up, then forgotten. Null = nothing to put back.
+    /// </summary>
+    public string? PreCableOutputId { get; set; }
+    /// <summary>The same for Windows' default microphone.</summary>
+    public string? PreCableInputId { get; set; }
     public List<VoicePreset> Voices { get; set; } = new();
     public List<SoundItem> Sounds { get; set; } = new();
     /// <summary>Keys: the ids of <see cref="Hotkeys.HotkeyMap.General"/> ("toggleFilter", "stopSounds", "muteMic").</summary>

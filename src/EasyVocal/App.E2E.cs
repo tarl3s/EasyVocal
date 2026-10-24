@@ -366,6 +366,55 @@ public partial class App
             await ExpectCopy(Call, "the call gets the voice again");
         });
 
+        await Step("12 VB-CABLE takes Windows' defaults: the headphones stay real, banner + Fix, the install puts back what the person had", async () =>
+        {
+            await Baseline(c, main);
+            string SoundInCable() => L.T("Your PC's sound is going into the virtual cable, so you can't hear it.");
+            int calls = d.SetDefaultCalls.Length;
+
+            // Windows' default playback device and microphone become the cable (nothing EasyVocal did).
+            d.SetWindowsDefaults(TestAudioDevices.CableId, TestAudioDevices.CableMicId);
+            await WaitUntil(() => c.SoundGoesToCable && main.Banner.Visibility == Visibility.Visible && main.BannerText.Text == SoundInCable(), 4000,
+                "the 'sound is going into the virtual cable' banner");
+            Expect(main.FixButton.Visibility == Visibility.Visible, "the banner offers Fix");
+            Expect(d.SetDefaultCalls.Length == calls, "nothing is changed before Fix is pressed");
+            await Task.Delay(700); // past the device-change settle: a restart would have happened by now
+            Expect(c.State == EngineState.Running && c.MonitorInUse == TestAudioDevices.HeadphonesId,
+                "the headphones are still the real ones while Windows' default is the cable");
+            Click(main.HearMeButton);
+            await ExpectCopy(Phones, "Hear me still plays on the real headphones");
+            Click(main.HearMeButton);
+
+            Click(main.FixButton);
+            var fixedTo = d.SetDefaultCalls.Skip(calls).ToArray();
+            Note("Fix set the defaults to: " + string.Join(", ", fixedTo));
+            Expect(fixedTo.Contains(TestAudioDevices.HeadphonesId) && fixedTo.Contains(TestAudioDevices.MicId) && fixedTo.Length == 2,
+                "Fix makes the real headphones and the real microphone Windows' defaults");
+            await WaitUntil(() => d.DefaultOutput == TestAudioDevices.HeadphonesId && d.DefaultInput == TestAudioDevices.MicId
+                                  && !c.SoundGoesToCable && main.Banner.Visibility != Visibility.Visible, 3000, "the banner to go away after Fix");
+
+            // The install: setup remembers the defaults, the (fake) installer adds the cable and takes them, EasyVocal puts them back.
+            d.SetCable(false);
+            await WaitUntil(() => c.State == EngineState.NoVirtualCable, 4000, "the engine to see VB-CABLE gone");
+            calls = d.SetDefaultCalls.Length;
+            await Modal(w => w is SetupWindow, () => Click(main.FixButton), async w =>
+            {
+                var setup = (SetupWindow)w;
+                Click(setup.InstallButton);
+                await WaitUntil(() => setup.CableReadyPanel.Visibility == Visibility.Visible, 5000, "setup to see the installed cable");
+                await WaitUntil(() => d.SetDefaultCalls.Length >= calls + 2 && d.DefaultOutput == TestAudioDevices.HeadphonesId && d.DefaultInput == TestAudioDevices.MicId, 5000,
+                    "the (fake) installer to take the defaults and EasyVocal to put back the ones the person had");
+                var restored = d.SetDefaultCalls.Skip(calls).ToArray();
+                Note("after the install the defaults were put back to: " + string.Join(", ", restored));
+                Expect(restored.Length == 2 && restored.Contains(TestAudioDevices.HeadphonesId) && restored.Contains(TestAudioDevices.MicId),
+                    "exactly the headphones and the microphone from before the install are put back");
+                Expect(c.Settings.PreCableOutputId == TestAudioDevices.HeadphonesId && c.Settings.PreCableInputId == TestAudioDevices.MicId,
+                    "the defaults from before the install are remembered in the settings (for a cable that shows up after a restart)");
+            }, "the setup window (install)");
+            await WaitUntil(() => c.State == EngineState.Running && main.Banner.Visibility != Visibility.Visible, 8000, "the audio to run with the new cable");
+            await ExpectCopy(Call, "the call gets the voice through the installed cable");
+        });
+
         await Step("11 settings persistence (first run): a sound to keep, the custom voice, OFF, Hear me on, quit the normal way", async () =>
         {
             var keep = await AddSoundFromFile(c, main, "e2e keep.wav", 700, "E2E keep");
@@ -468,6 +517,7 @@ public partial class App
             Expect(sound is { Name: "E2E keep" } && File.Exists(c.SoundPath(sound.FileName)) && main.SoundCard(soundId) != null,
                 "the custom sound, its file and its card are back");
             Expect(s.Voices.First(v => v.Id == "chipmunk").Hotkey == hotkey && c.RegisteredHotkeyCount == 1, "the hotkey is back and registered");
+            Expect(s.PreCableOutputId == null && s.PreCableInputId == null, "the defaults remembered for the install were forgotten once the cable came");
 
             await ExpectCopy(Call, "OFF after the restart: the call gets the clean voice");
             await ExpectCopy(Phones, "Hear me after the restart: the headphones get the voice");

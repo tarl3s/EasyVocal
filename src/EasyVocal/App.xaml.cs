@@ -83,7 +83,10 @@ public partial class App : Application
 
         // The e2e test plays and records known audio through test devices (VB-CABLE missing at first, then "installed").
         if (args.E2E) e2eDevices = new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
-        controller = new AppController(dataFolder, e2eDevices);
+        // A test never changes Windows' real default devices (the smoke test lists the real devices, read-only).
+        controller = new AppController(dataFolder, (Audio.IAudioDevices?)e2eDevices ?? (args.TestMode ? Audio.WindowsAudioDevices.ReadOnlyDefaults : null));
+        // ...and never downloads or runs the VB-CABLE installer: the e2e test "installs" its test cable instead.
+        if (args.TestMode) controller.CableInstaller = e2eDevices != null ? e2eDevices.FakeInstallAsync : (_, _) => Task.FromResult(new InstallResult(InstallStatus.Failed, "tests never install VB-CABLE"));
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));

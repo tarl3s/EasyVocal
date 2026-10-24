@@ -13,6 +13,8 @@ tecla. Sem anúncios, sem pagar, nada bloqueado.
 
 1. **Instale o EasyVocal.** Extraia o download em qualquer pasta e abra o `EasyVocal.exe`.
 2. **Instale o VB-CABLE de dentro do app.** Na primeira vez o EasyVocal explica e tem um botão **Instalar**.
+   Se você não ouvir nada depois de instalar (o VB-CABLE pode virar o alto-falante padrão do PC), o EasyVocal volta o
+   som para o seu fone ou caixas de som, ou mostra um botão **Resolver** que faz isso.
 3. **Escolha "CABLE Output" como microfone** no app da chamada (Discord, WhatsApp Desktop, seu jogo...). O EasyVocal
    mostra um guia curto para cada app.
 

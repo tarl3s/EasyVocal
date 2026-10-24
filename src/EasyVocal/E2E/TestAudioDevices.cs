@@ -17,13 +17,15 @@ internal sealed class TestAudioDevices : IAudioDevices
     public const string MicId = "e2e-mic";
     public const string HeadphonesId = "e2e-headphones";
     public const string CableId = "e2e-cable-input";
-    private const string CableMicId = "e2e-cable-output";
+    public const string CableMicId = "e2e-cable-output";
 
     private readonly object sync = new();
     private readonly float[] voice = E2ESignal.Voice();
     private readonly Dictionary<string, CaptureOutput> latest = new();
     private bool micPresent = true, headphonesPresent = true, cablePresent;
     private readonly List<TestMic> mics = new(); // every one opened (the engine's, and the setup window's level meter)
+    private string defaultOutput = HeadphonesId, defaultInput = MicId; // "Windows'" defaults (both roles)
+    private readonly List<string> setDefaultCalls = new();
 
     public TestAudioDevices(bool cablePresent) => this.cablePresent = cablePresent;
 
@@ -72,8 +74,8 @@ internal sealed class TestAudioDevices : IAudioDevices
         lock (sync)
         {
             var list = new List<DeviceInfo>();
-            if (micPresent) list.Add(new DeviceInfo(MicId, "E2E Microphone", true));
-            if (cablePresent) list.Add(new DeviceInfo(CableMicId, "CABLE Output (VB-Audio Virtual Cable)", false));
+            if (micPresent) list.Add(new DeviceInfo(MicId, "E2E Microphone", defaultInput == MicId));
+            if (cablePresent) list.Add(new DeviceInfo(CableMicId, "CABLE Output (VB-Audio Virtual Cable)", defaultInput == CableMicId));
             return list;
         }
     }
@@ -83,8 +85,8 @@ internal sealed class TestAudioDevices : IAudioDevices
         lock (sync)
         {
             var list = new List<DeviceInfo>();
-            if (headphonesPresent) list.Add(new DeviceInfo(HeadphonesId, "E2E Headphones", true));
-            if (cablePresent) list.Add(new DeviceInfo(CableId, "CABLE Input (VB-Audio Virtual Cable)", false));
+            if (headphonesPresent) list.Add(new DeviceInfo(HeadphonesId, "E2E Headphones", defaultOutput == HeadphonesId));
+            if (cablePresent) list.Add(new DeviceInfo(CableId, "CABLE Input (VB-Audio Virtual Cable)", defaultOutput == CableId));
             return list;
         }
     }
@@ -113,8 +115,75 @@ internal sealed class TestAudioDevices : IAudioDevices
         }
     }
 
-    /// <summary>VB-CABLE installed (true) or removed.</summary>
-    public void SetCable(bool present) => Change(() => cablePresent = present);
+    /// <summary>VB-CABLE installed (true) or removed (a default it was goes back to the test's real device, as Windows does).</summary>
+    public void SetCable(bool present) => Change(() =>
+    {
+        cablePresent = present;
+        if (present) return;
+        if (defaultOutput == CableId) defaultOutput = HeadphonesId;
+        if (defaultInput == CableMicId) defaultInput = MicId;
+    });
+
+    // ---------- Windows' default devices (fake: the PC's real ones are never touched) ----------
+
+    public string DefaultOutput
+    {
+        get { lock (sync) return defaultOutput; }
+    }
+
+    public string DefaultInput
+    {
+        get { lock (sync) return defaultInput; }
+    }
+
+    /// <summary>Every device EasyVocal made the default, in order.</summary>
+    public string[] SetDefaultCalls
+    {
+        get { lock (sync) return setDefaultCalls.ToArray(); }
+    }
+
+    public DefaultIds Defaults(bool playback)
+    {
+        lock (sync)
+        {
+            var id = playback ? defaultOutput : defaultInput;
+            return new DefaultIds(id, id);
+        }
+    }
+
+    public bool SetDefault(string id)
+    {
+        bool ok = false;
+        Change(() =>
+        {
+            setDefaultCalls.Add(id);
+            if ((id == HeadphonesId && headphonesPresent) || (id == CableId && cablePresent)) { defaultOutput = id; ok = true; }
+            else if ((id == MicId && micPresent) || (id == CableMicId && cablePresent)) { defaultInput = id; ok = true; }
+        });
+        return ok;
+    }
+
+    /// <summary>Windows (or the VB-CABLE installer) changes its defaults; null keeps that one.</summary>
+    public void SetWindowsDefaults(string? output, string? input) => Change(() =>
+    {
+        if (output != null) defaultOutput = output;
+        if (input != null) defaultInput = input;
+    });
+
+    /// <summary>
+    /// The setup's Install button in the e2e test: VB-CABLE "installs" (its devices appear) and, like the real installer
+    /// can, makes itself Windows' default playback device and microphone.
+    /// </summary>
+    public async Task<InstallResult> FakeInstallAsync(IProgress<double> progress, CancellationToken ct)
+    {
+        progress.Report(1);
+        await Task.Delay(100, ct);
+        SetCable(true);
+        await Task.Delay(100, ct);
+        SetWindowsDefaults(CableId, CableMicId);
+        await Task.Delay(100, ct);
+        return new InstallResult(InstallStatus.Installed);
+    }
 
     /// <summary>
     /// Unplugs the headphones: the one in use starts failing (its writes throw, as WASAPI does) and the device leaves

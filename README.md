@@ -13,6 +13,8 @@ No ads, no paywall, nothing locked.
 
 1. **Install EasyVocal.** Unzip the download anywhere and open `EasyVocal.exe`.
 2. **Install VB-CABLE from inside the app.** On the first run EasyVocal explains it and has an **Install** button.
+   If you hear nothing after installing it (VB-CABLE can make itself the PC's default speaker), EasyVocal puts your
+   sound back on your headphones or speakers, or offers a **Fix** button that does it.
 3. **Pick "CABLE Output" as the microphone** in your call app (Discord, WhatsApp Desktop, your game...). EasyVocal
    shows a short guide for each app.
 

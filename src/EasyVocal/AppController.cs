@@ -29,6 +29,8 @@ public sealed class AppController : IDisposable
     private static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RecoverEvery = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan DeviceSettle = TimeSpan.FromMilliseconds(500);
+    /// <summary>After VB-CABLE shows up, how long a default it takes is put back to what the person had.</summary>
+    private static readonly TimeSpan RestoreWindow = TimeSpan.FromSeconds(60);
 
     private readonly Dispatcher ui;
     private readonly VoiceChain chain = new(AudioFormat.SampleRate);
@@ -52,6 +54,7 @@ public sealed class AppController : IDisposable
     private MicPick? micInUse;
     private string? usedMic, usedCall, usedMonitor; // what the current session opened
     private int changePosted;
+    private DateTime? restoreUntil; // set when the cable shows up while the defaults from before its install are remembered
     private bool started, disposed, savePending;
 
     /// <param name="dataFolder">Where settings.json and the Sounds folder live (normally <see cref="SettingsStore.DefaultFolder"/>).</param>
@@ -134,6 +137,12 @@ public sealed class AppController : IDisposable
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio started: " + engine.State);
+        if (RemembersDefaults && DeviceRules.FindVirtualCable(devices.Outputs()) == null)
+        {
+            AppLog.Info("VB-CABLE never showed up: the default devices remembered for its install are forgotten");
+            ForgetDefaultsBeforeCable();
+        }
+        CheckDefaults();
         recoverTimer.Start(); // every 2 s: brings back whatever stopped working (cheap while everything works)
 
         LoadSoundsInBackground();
@@ -169,6 +178,7 @@ public sealed class AppController : IDisposable
         }
         StopPreview();
         engine.Dispose();
+        if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
         if (savePending) SaveNow();
         saveTimer.Stop();
     }
@@ -806,6 +816,105 @@ public sealed class AppController : IDisposable
     private string? MonitorId(IReadOnlyList<DeviceInfo> outputs) =>
         DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
 
+    // ---------- Windows' default devices (VB-CABLE may take them) ----------
+
+    /// <summary>How the VB-CABLE install is run (the e2e test fakes it; the smoke test never downloads anything).</summary>
+    public Func<IProgress<double>, CancellationToken, Task<InstallResult>> CableInstaller { get; set; } = VbCableInstaller.DownloadAndRunAsync;
+
+    /// <summary>Windows sends the PC's sound into the virtual cable (its default playback device is VB-CABLE): the person hears nothing.</summary>
+    public bool SoundGoesToCable { get; private set; }
+
+    /// <summary>The headphones the running session opened (for the e2e test).</summary>
+    internal string? MonitorInUse => usedMonitor;
+
+    private bool RemembersDefaults => Settings.PreCableOutputId != null || Settings.PreCableInputId != null;
+
+    /// <summary>
+    /// Right before the VB-CABLE installer runs: remembers Windows' default playback device and microphone (not when
+    /// they are cable devices already), so they can be put back if the install makes the cable the default.
+    /// </summary>
+    public void RememberDefaultsBeforeCable()
+    {
+        Settings.PreCableOutputId = DefaultDeviceRules.Remember(devices.Defaults(playback: true), devices.Outputs());
+        Settings.PreCableInputId = DefaultDeviceRules.Remember(devices.Defaults(playback: false), devices.Inputs());
+        restoreUntil = null;
+        AppLog.Info("Before installing VB-CABLE: default output " + (Settings.PreCableOutputId ?? "none") + ", default input " + (Settings.PreCableInputId ?? "none"));
+        Save();
+    }
+
+    /// <summary>Nothing to put back any more (the install didn't happen, the restore window is over, Fix was pressed).</summary>
+    public void ForgetDefaultsBeforeCable()
+    {
+        restoreUntil = null;
+        if (!RemembersDefaults) return;
+        Settings.PreCableOutputId = Settings.PreCableInputId = null;
+        Save();
+    }
+
+    /// <summary>
+    /// Looks at Windows' defaults (at start, after a device change). Within a minute of VB-CABLE showing up, a default
+    /// it took goes back to exactly what the person had before the install; nothing else is changed without a click.
+    /// </summary>
+    private void CheckDefaults()
+    {
+        if (disposed) return;
+        var outputs = devices.Outputs();
+        var outDefaults = devices.Defaults(playback: true);
+        if (RemembersDefaults)
+        {
+            var now = DateTime.UtcNow;
+            if (restoreUntil == null && DeviceRules.FindVirtualCable(outputs) != null) restoreUntil = now + RestoreWindow;
+            if (restoreUntil is { } until && now > until)
+            {
+                AppLog.Info("The default devices remembered for the VB-CABLE install are forgotten");
+                ForgetDefaultsBeforeCable();
+            }
+            else if (restoreUntil != null)
+            {
+                bool changed = false;
+                if (DefaultDeviceRules.RestoreTo(outDefaults, outputs, Settings.PreCableOutputId) is { } o)
+                    changed |= SetDefault(o, "VB-CABLE took the default output: putting back");
+                if (DefaultDeviceRules.RestoreTo(devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId) is { } i)
+                    changed |= SetDefault(i, "VB-CABLE took the default input: putting back");
+                if (changed) outDefaults = devices.Defaults(playback: true);
+            }
+        }
+        bool taken = DefaultDeviceRules.TakenByCable(outDefaults, outputs);
+        if (taken == SoundGoesToCable) return;
+        SoundGoesToCable = taken;
+        AppLog.Info(taken ? "Windows' default playback device is the virtual cable" : "Windows' default playback device is a real one again");
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// The banner's Fix: Windows' default playback device (and microphone, when it is the cable too) becomes the one
+    /// the person had before the install, else the best real one. False when it couldn't be fixed.
+    /// </summary>
+    public bool FixDefaults()
+    {
+        if (disposed) return false;
+        bool ok = true;
+        var outputs = devices.Outputs();
+        var outDefaults = devices.Defaults(playback: true);
+        if (DefaultDeviceRules.FixTo(outDefaults, outputs, Settings.PreCableOutputId, playback: true) is { } o)
+            ok &= SetDefault(o, "Fix: default output");
+        else if (DefaultDeviceRules.TakenByCable(outDefaults, outputs))
+            ok = false; // no real playback device to switch to
+        if (DefaultDeviceRules.FixTo(devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId, playback: false) is { } i)
+            ok &= SetDefault(i, "Fix: default input");
+        if (ok) ForgetDefaultsBeforeCable();
+        CheckDefaults();
+        RaiseChanged();
+        return ok;
+    }
+
+    private bool SetDefault(string id, string why)
+    {
+        bool ok = devices.SetDefault(id);
+        AppLog.Info(why + " " + id + (ok ? "" : " (failed)"));
+        return ok;
+    }
+
     /// <summary>Every active device and which ones are the defaults: a change means the engine may pick other devices.</summary>
     private string DeviceFingerprint()
     {
@@ -828,6 +937,7 @@ public sealed class AppController : IDisposable
     {
         deviceTimer.Stop();
         if (disposed) return;
+        CheckDefaults();
         var now = DeviceFingerprint();
         if (now == deviceFingerprint) return;
         deviceFingerprint = now;
@@ -867,6 +977,7 @@ public sealed class AppController : IDisposable
                 return;
             }
             engine.TryRecover();
+            if (RemembersDefaults) CheckDefaults(); // the installer may switch the defaults a while after the cable shows up
         }
         catch (Exception ex) { AppLog.Error("Recovering the audio failed", ex); }
     }

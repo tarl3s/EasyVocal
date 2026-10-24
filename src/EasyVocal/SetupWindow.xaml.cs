@@ -111,15 +111,20 @@ public partial class SetupWindow : Window
         SetProgress(0);
         SetStatus(L.T("Downloading VB-CABLE…"), false);
         cancelInstall = new CancellationTokenSource();
+        // VB-CABLE may make itself Windows' default playback device and microphone: what the person has now is put back.
+        controller.RememberDefaultsBeforeCable();
         InstallResult result;
         try
         {
-            result = await VbCableInstaller.DownloadAndRunAsync(new Progress<double>(OnInstallProgress), cancelInstall.Token);
+            result = await controller.CableInstaller(new Progress<double>(OnInstallProgress), cancelInstall.Token);
         }
         finally
         {
             installing = false;
         }
+        // Cancelled = the window was closed: an installer already running may still add the cable (the controller watches).
+        if (result.Status is InstallStatus.DeclinedPermission or InstallStatus.NotVerified or InstallStatus.Failed)
+            controller.ForgetDefaultsBeforeCable();
         if (closed) return;
 
         InstallButton.IsEnabled = true;

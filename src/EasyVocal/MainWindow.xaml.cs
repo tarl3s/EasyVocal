@@ -139,8 +139,19 @@ public partial class MainWindow : Window
         HotkeyNote.Text = problems.Count > 0 ? "⚠ " + string.Join(" ", problems) : "";
     }
 
+    /// <summary>The banner's Fix puts Windows' sound back on a real device (instead of opening the setup).</summary>
+    private bool fixDefaults;
+
     private void UpdateBanner()
     {
+        fixDefaults = false;
+        if (controller.SoundGoesToCable)
+        {
+            // Hearing nothing at all is the worse problem: this comes first. Nothing changes until Fix is pressed.
+            ShowBanner(L.T("Your PC's sound is going into the virtual cable, so you can't hear it."), fix: true, chooseMic: false);
+            fixDefaults = true;
+            return;
+        }
         switch (controller.State)
         {
             case EngineState.MicLost:
@@ -539,7 +550,16 @@ public partial class MainWindow : Window
 
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 
-    private void FixButton_Click(object sender, RoutedEventArgs e) => SetupWindow.Open(controller, this);
+    private void FixButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!fixDefaults)
+        {
+            SetupWindow.Open(controller, this);
+            return;
+        }
+        if (!controller.FixDefaults())
+            AskDialog.Tell(this, L.T("Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings."));
+    }
 
     private void MicButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 

@@ -189,5 +189,7 @@
   "Virtual microphone not found. You can still try the voices with 🎧 Hear me.": "Microfone virtual não encontrado. Você ainda pode testar as vozes com 🎧 Me ouvir.",
   "Your microphone isn't connected, so EasyVocal is using {0} for now.": "Seu microfone não está conectado, então o EasyVocal está usando {0} por enquanto.",
   "Use headphones — speakers can echo back into the mic.": "Use fone de ouvido — o som das caixas pode voltar para o microfone.",
-  "Windows would not let EasyVocal start with it.": "O Windows não deixou o EasyVocal iniciar junto com ele."
+  "Windows would not let EasyVocal start with it.": "O Windows não deixou o EasyVocal iniciar junto com ele.",
+  "Your PC's sound is going into the virtual cable, so you can't hear it.": "O som do seu PC está indo para o cabo virtual, por isso você não ouve nada.",
+  "Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings.": "O Windows não deixou o EasyVocal mudar isso. Escolha o seu fone ou as suas caixas de som nas configurações de som do Windows."
 }
