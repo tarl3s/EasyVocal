@@ -43,6 +43,9 @@ public sealed class AppController : IDisposable
     private readonly HashSet<string> brokenSounds = new();
     private SoundPreview? preview;
     private string deviceFingerprint = "";
+    private readonly MicPicker micPicker = new();
+    private MicPick? micInUse;
+    private string? usedMic, usedCall, usedMonitor; // what the current session opened
     private int changePosted;
     private bool started, disposed, savePending;
 
@@ -664,31 +667,58 @@ public sealed class AppController : IDisposable
 
     // ---------- devices ----------
 
+    /// <summary>
+    /// The chosen microphone has been missing a while and Windows' default is used for now: its name, else null.
+    /// The saved choice is kept and used again as soon as it is back.
+    /// </summary>
+    public string? MicStandIn => engine.State == EngineState.Running && micInUse is { Fallback: true } pick ? pick.Name : null;
+
+    /// <summary>The virtual cable is missing, but the mic and the headphones work (the voices can be tried with Hear me).</summary>
+    public bool MonitorOnly => engine.MonitorOnly;
+
+    /// <summary>What a session would open now (the mic pick has no side effect worth noting: it only times a missing mic).</summary>
+    private AudioRoutes PickRoutes(IReadOnlyList<DeviceInfo> inputs, IReadOnlyList<DeviceInfo> outputs, out MicPick mic)
+    {
+        mic = micPicker.Pick(Settings.MicDeviceId, inputs, DateTime.UtcNow);
+        var call = DeviceRules.PickCall(Settings.OutputDeviceId, outputs);
+        return new AudioRoutes(mic.Id, call, DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, call));
+    }
+
+    // The three factories run on the UI thread, inside engine.Start / TryRecover; each notes what it opened.
+
     private IAudioInput MakeInput()
     {
+        micInUse = null;
+        usedMic = null;
         // Never pass null: null means Windows' default microphone, which could be the virtual cable (a feedback loop).
-        var id = Settings.MicDeviceId ?? DeviceRules.DefaultMic(DeviceList.Inputs())?.Id
-            ?? throw new InvalidOperationException("No microphone is connected.");
-        return new WasapiMicInput(id);
+        var pick = micPicker.Pick(Settings.MicDeviceId, DeviceList.Inputs(), DateTime.UtcNow);
+        var id = pick.Id ?? throw new InvalidOperationException("No microphone is connected.");
+        var input = new WasapiMicInput(id);
+        if (pick.Fallback) AppLog.Info("The chosen microphone is missing: using " + pick.Name + " for now");
+        micInUse = pick;
+        usedMic = id;
+        return input;
     }
 
     private IAudioOutput MakeCallOutput()
     {
-        var id = Settings.OutputDeviceId ?? DeviceRules.FindVirtualCable(DeviceList.Outputs())?.Id
-            ?? throw new NoVirtualCableException();
-        return new WasapiSpeakerOutput(id);
+        usedCall = null;
+        var id = DeviceRules.PickCall(Settings.OutputDeviceId, DeviceList.Outputs()) ?? throw new NoVirtualCableException();
+        var output = new WasapiSpeakerOutput(id);
+        usedCall = id;
+        return output;
     }
 
-    /// <summary>The headphones: the chosen device, else the Windows default unless it is the cable. Null = no monitor.</summary>
+    /// <summary>The headphones (see <see cref="DeviceRules.PickMonitor"/>). Null = no monitor.</summary>
     private IAudioOutput? MakeMonitor()
     {
+        usedMonitor = null;
         var outputs = DeviceList.Outputs();
-        var callId = Settings.OutputDeviceId ?? DeviceRules.FindVirtualCable(outputs)?.Id;
-        var id = Settings.MonitorDeviceId
-            ?? (outputs.FirstOrDefault(d => d.IsDefault && !DeviceRules.IsVirtualCable(d.Name))
-                ?? outputs.FirstOrDefault(d => !DeviceRules.IsVirtualCable(d.Name)))?.Id;
-        if (id == null || id == callId) return null; // never play the monitor into the call
-        return new WasapiSpeakerOutput(id);
+        var id = DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
+        if (id == null) return null;
+        var output = new WasapiSpeakerOutput(id);
+        usedMonitor = id;
+        return output;
     }
 
     /// <summary>Every active device and which ones are the defaults: a change means the engine may pick other devices.</summary>
@@ -717,11 +747,21 @@ public sealed class AppController : IDisposable
         if (now == deviceFingerprint) return;
         deviceFingerprint = now;
         var state = engine.State;
-        AppLog.Info("Devices changed (engine " + state + ")");
-        // While running, restart too: a lost monitor (headphones) never comes back by itself, and a new default
-        // device should be picked up.
-        if (state == EngineState.Running) RestartAudio();
-        else if (state != EngineState.Stopped) Recover();
+        if (state == EngineState.Running)
+        {
+            // Only when this session would now open other devices (a mic came back, new default headphones…), or its
+            // headphones stopped working: they never come back by themselves. An unrelated device changes nothing.
+            var wanted = PickRoutes(DeviceList.Inputs(), DeviceList.Outputs(), out _);
+            var inUse = new AudioRoutes(usedMic, usedCall, usedMonitor);
+            bool restart = AudioRoutes.NeedsRestart(inUse, wanted, engine.MonitorLost);
+            AppLog.Info("Devices changed (engine Running): " + (restart ? "restarting the audio" : "nothing to do"));
+            if (restart) RestartAudio();
+        }
+        else
+        {
+            AppLog.Info("Devices changed (engine " + state + ")");
+            if (state != EngineState.Stopped) Recover();
+        }
         RaiseChanged();
     }
 

@@ -212,17 +212,8 @@ public partial class SetupWindow : Window
         loadingMics = true;
         try
         {
-            MicBox.Items.Clear();
-            var auto = new ComboBoxItem { Content = L.T("Automatic (Windows default)"), Tag = null };
-            MicBox.Items.Add(auto);
-            ComboBoxItem selected = auto;
-            foreach (var mic in mics)
-            {
-                var item = new ComboBoxItem { Content = mic.Name, Tag = mic };
-                MicBox.Items.Add(item);
-                if (mic.Id == controller.Settings.MicDeviceId) selected = item;
-            }
-            MicBox.SelectedItem = selected;
+            // The same list as Settings: a chosen mic that is unplugged shows as "Device not connected", not "Automatic".
+            DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), mics, controller.Settings.MicDeviceId);
             NoMicText.Visibility = mics.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         finally
@@ -236,14 +227,14 @@ public partial class SetupWindow : Window
     {
         meter?.Dispose();
         meter = null;
-        var id = (MicBox.SelectedItem as ComboBoxItem)?.Tag is DeviceInfo mic ? mic.Id : DeviceRules.DefaultMic(inputs)?.Id;
-        if (id != null) meter = new MicMeter(id);
+        var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(inputs)?.Id;
+        if (id != null) meter = new MicMeter(id); // an unplugged choice can't be opened: the bar just stays empty
     }
 
     private void MicBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (loadingMics || MicBox.SelectedItem is not ComboBoxItem item) return;
-        var id = (item.Tag as DeviceInfo)?.Id;
+        if (loadingMics || MicBox.SelectedItem is not ComboBoxItem) return;
+        var id = DeviceBox.IdOf(MicBox);
         if (id == controller.Settings.MicDeviceId) return;
         controller.Settings.MicDeviceId = id;
         controller.Save();

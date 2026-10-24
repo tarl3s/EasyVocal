@@ -53,5 +53,36 @@ public static class DeviceRules
         return list;
     }
 
+
+    /// <summary>The call device: the person's pick, else VB-CABLE's playback end. Null when there is none.</summary>
+    public static string? PickCall(string? savedId, IEnumerable<DeviceInfo> outputs) =>
+        savedId ?? FindVirtualCable(outputs)?.Id;
+
+    /// <summary>
+    /// The headphones: the person's pick while it is connected, else the Windows default unless it is the cable, else
+    /// the first real output. Never the call device (that would play the monitor into the call). Null = no monitor.
+    /// </summary>
+    public static string? PickMonitor(string? savedId, IReadOnlyList<DeviceInfo> outputs, string? callId)
+    {
+        string? id = null;
+        if (savedId != null)
+        {
+            foreach (var d in outputs)
+                if (d.Id == savedId) id = d.Id;
+            if (id == null) return null; // unplugged: no monitor until it comes back (the device list change brings it)
+        }
+        else
+        {
+            DeviceInfo? first = null;
+            foreach (var d in outputs)
+            {
+                if (IsVirtualCable(d.Name)) continue;
+                if (d.IsDefault) { first = d; break; }
+                first ??= d;
+            }
+            id = first?.Id;
+        }
+        return id == callId ? null : id;
+    }
     private static bool Has(string name, string part) => name.Contains(part, StringComparison.OrdinalIgnoreCase);
 }

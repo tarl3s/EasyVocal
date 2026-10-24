@@ -139,11 +139,18 @@ public partial class MainWindow : Window
         switch (controller.State)
         {
             case EngineState.MicLost:
-                ShowBanner(L.T("Microphone disconnected — reconnecting…"), fix: false);
+                ShowBanner(L.T("Microphone disconnected — reconnecting…"), fix: false, chooseMic: true);
+                break;
+            case EngineState.NoVirtualCable when controller.MonitorOnly:
+                ShowBanner(L.T("Virtual microphone not found. You can still try the voices with 🎧 Hear me."), fix: true, chooseMic: false);
                 break;
             case EngineState.OutputLost:
             case EngineState.NoVirtualCable:
-                ShowBanner(L.T("Virtual microphone not found"), fix: true);
+                ShowBanner(L.T("Virtual microphone not found"), fix: true, chooseMic: false);
+                break;
+            case EngineState.Running when controller.MicStandIn is { } standIn:
+                // The chosen mic has been gone a while: Windows' default is used for now (the choice is kept).
+                ShowBanner(L.F("Your microphone isn't connected, so EasyVocal is using {0} for now.", standIn), fix: false, chooseMic: true);
                 break;
             default:
                 Banner.Visibility = Visibility.Collapsed;
@@ -151,10 +158,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowBanner(string text, bool fix)
+    private void ShowBanner(string text, bool fix, bool chooseMic)
     {
         BannerText.Text = text;
         FixButton.Visibility = fix ? Visibility.Visible : Visibility.Collapsed;
+        MicButton.Visibility = chooseMic ? Visibility.Visible : Visibility.Collapsed;
         Banner.Visibility = Visibility.Visible;
     }
 
@@ -533,6 +541,8 @@ public partial class MainWindow : Window
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 
     private void FixButton_Click(object sender, RoutedEventArgs e) => SetupWindow.Open(controller, this);
+
+    private void MicButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 
     private void StopAllButton_Click(object sender, RoutedEventArgs e) => controller.StopAllSounds();
 

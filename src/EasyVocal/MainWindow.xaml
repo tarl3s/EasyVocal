@@ -63,6 +63,8 @@
             <DockPanel>
                 <Button x:Name="FixButton" DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Margin="12,0,0,0"
                         Content="{loc:T 'Fix'}" Click="FixButton_Click" />
+                <Button x:Name="MicButton" DockPanel.Dock="Right" Style="{StaticResource AccentButton}" Margin="12,0,0,0"
+                        Content="{loc:T 'Choose microphone'}" Click="MicButton_Click" />
                 <TextBlock x:Name="BannerText" TextWrapping="Wrap" VerticalAlignment="Center" />
             </DockPanel>
         </Border>

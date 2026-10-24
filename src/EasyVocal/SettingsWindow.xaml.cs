@@ -44,12 +44,12 @@ public partial class SettingsWindow : Window
             var inputs = DeviceList.Inputs();
             var outputs = DeviceList.Outputs();
 
-            Fill(MicBox, L.T("Automatic (Windows default)"), inputs, s.MicDeviceId);
+            DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), inputs, s.MicDeviceId);
             micShown = MicBox.SelectedItem as ComboBoxItem;
             MicProblem.Visibility = Visibility.Collapsed;
 
-            Fill(OutputBox, L.T("Automatic (CABLE Input)"), outputs, s.OutputDeviceId);
-            Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(outputs), s.MonitorDeviceId);
+            DeviceBox.Fill(OutputBox, L.T("Automatic (CABLE Input)"), outputs, s.OutputDeviceId);
+            DeviceBox.Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(outputs), s.MonitorDeviceId);
 
             LanguageBox.Items.Clear();
             var languages = new (string Code, string Name)[]
@@ -74,34 +74,6 @@ public partial class SettingsWindow : Window
         }
     }
 
-    /// <summary>The first item is the automatic choice (no device id). A saved device that is unplugged stays listed so it isn't lost.</summary>
-    private static void Fill(ComboBox box, string autoLabel, IEnumerable<DeviceInfo> devices, string? savedId)
-    {
-        box.Items.Clear();
-        var auto = new ComboBoxItem { Content = autoLabel };
-        box.Items.Add(auto);
-        ComboBoxItem selected = auto;
-        bool found = savedId == null;
-        foreach (var device in devices)
-        {
-            var item = new ComboBoxItem { Content = device.Name, Tag = device };
-            box.Items.Add(item);
-            if (device.Id == savedId)
-            {
-                selected = item;
-                found = true;
-            }
-        }
-        if (!found)
-        {
-            var gone = new ComboBoxItem { Content = L.T("Device not connected"), Tag = new DeviceInfo(savedId!, L.T("Device not connected"), false) };
-            box.Items.Add(gone);
-            selected = gone;
-        }
-        box.SelectedItem = selected;
-    }
-
-    private static string? IdOf(ComboBox box) => ((box.SelectedItem as ComboBoxItem)?.Tag as DeviceInfo)?.Id;
 
     // ---------- devices ----------
 
@@ -120,21 +92,21 @@ public partial class SettingsWindow : Window
         }
         MicProblem.Visibility = Visibility.Collapsed;
         micShown = item;
-        controller.Settings.MicDeviceId = IdOf(MicBox);
+        controller.Settings.MicDeviceId = DeviceBox.IdOf(MicBox);
         DevicesChanged();
     }
 
     private void OutputBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (loading) return;
-        controller.Settings.OutputDeviceId = IdOf(OutputBox);
+        controller.Settings.OutputDeviceId = DeviceBox.IdOf(OutputBox);
         DevicesChanged();
     }
 
     private void MonitorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (loading) return;
-        controller.Settings.MonitorDeviceId = IdOf(MonitorBox);
+        controller.Settings.MonitorDeviceId = DeviceBox.IdOf(MonitorBox);
         DevicesChanged();
     }
 
