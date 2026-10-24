@@ -128,11 +128,73 @@ public class SettingsStoreTests : IDisposable
         var s = SettingsStore.Load(tmp);
         s.Language = "first";
         SettingsStore.Save(tmp, s);
+        Assert.Equal(new[] { SettingsPath }, Directory.GetFiles(tmp)); // the first save has nothing to back up
         s.Language = "second";
         SettingsStore.Save(tmp, s);
 
-        Assert.Equal(new[] { SettingsPath }, Directory.GetFiles(tmp));
+        Assert.Equal(new[] { SettingsPath, SettingsPath + ".bak" }, Directory.GetFiles(tmp).OrderBy(f => f, StringComparer.Ordinal));
         Assert.Equal("second", SettingsStore.Load(tmp).Language);
+    }
+
+    [Fact]
+    public void Save_KeepsThePreviousFileAsBak()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Language = "first";
+        SettingsStore.Save(tmp, s);
+        s.Language = "second";
+        SettingsStore.Save(tmp, s);
+        Assert.Contains("\"first\"", File.ReadAllText(SettingsPath + ".bak"));
+        Assert.Contains("\"second\"", File.ReadAllText(SettingsPath));
+    }
+
+    [Fact]
+    public void Load_CorruptFileWithGoodBak_UsesTheBak()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Language = "from-backup";
+        SettingsStore.Save(tmp, s);
+        File.Copy(SettingsPath, SettingsPath + ".bak");
+        File.WriteAllText(SettingsPath, "{ \"Voices\": [ {");
+
+        var loaded = SettingsStore.Load(tmp, out bool couldNotRead);
+        Assert.False(couldNotRead);
+        Assert.Equal("from-backup", loaded.Language);
+        Assert.True(File.Exists(SettingsPath + ".bad"));
+    }
+
+    [Fact]
+    public void Load_LockedFile_DefaultsAndReadOnlySession()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Language = "mine";
+        SettingsStore.Save(tmp, s);
+
+        var file = new SettingsFile(tmp);
+        AppSettings loaded;
+        using (new FileStream(SettingsPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            loaded = file.Load();
+            Assert.True(file.CouldNotRead);
+            Assert.Equal("normal", loaded.ActiveVoiceId);
+            Assert.NotEqual("mine", loaded.Language);
+        }
+        // Still flagged after the lock is gone: this session must never write its defaults over the real file.
+        loaded.Language = "defaults";
+        Assert.False(file.Save(loaded));
+        Assert.Equal("mine", SettingsStore.Load(tmp).Language);
+        Assert.False(File.Exists(SettingsPath + ".bad"));
+    }
+
+    [Fact]
+    public void SettingsFile_ReadableFile_Saves()
+    {
+        var file = new SettingsFile(tmp);
+        var s = file.Load();
+        Assert.False(file.CouldNotRead);
+        s.Language = "pt-BR";
+        Assert.True(file.Save(s));
+        Assert.Equal("pt-BR", SettingsStore.Load(tmp).Language);
     }
 
     [Fact]

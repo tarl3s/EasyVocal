@@ -34,6 +34,7 @@ public sealed class AppController : IDisposable
     private readonly VoiceChain chain = new(AudioFormat.SampleRate);
     private readonly SoundMixer mixer = new();
     private readonly AudioEngine engine;
+    private readonly SettingsFile settingsFile;
     private readonly DispatcherTimer saveTimer, recoverTimer, deviceTimer;
     private GlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
@@ -52,7 +53,10 @@ public sealed class AppController : IDisposable
         DataFolder = dataFolder;
         SoundsFolder = Path.Combine(dataFolder, "Sounds");
         FirstRun = !File.Exists(Path.Combine(dataFolder, "settings.json"));
-        Settings = SettingsStore.Load(dataFolder);
+        settingsFile = new SettingsFile(dataFolder);
+        Settings = settingsFile.Load();
+        if (settingsFile.CouldNotRead)
+            AppLog.Info("settings.json could not be read (another program holds it?): using defaults and not saving this session");
         engine = new AudioEngine(MakeInput, MakeCallOutput, MakeMonitor, chain, mixer);
 
         saveTimer = new DispatcherTimer(DispatcherPriority.Background, ui) { Interval = SaveDelay };
@@ -171,7 +175,10 @@ public sealed class AppController : IDisposable
     {
         saveTimer.Stop();
         savePending = false;
-        try { SettingsStore.Save(DataFolder, Settings); }
+        try
+        {
+            if (!settingsFile.Save(Settings)) AppLog.Info("Settings not saved: settings.json could not be read when EasyVocal started");
+        }
         catch (Exception ex) { AppLog.Error("Saving settings failed", ex); }
     }
 

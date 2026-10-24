@@ -1,12 +1,45 @@
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using EasyVocal.Core.Model;
 
 namespace EasyVocal.Core.Storage;
 
+/// <summary>
+/// One data folder's settings.json for the life of the app. <see cref="Load"/> reads it (retrying a moment when
+/// another program holds it); when the file exists but still can't be read, the session is read-only:
+/// <see cref="Save"/> then writes nothing, so the person's real settings are never replaced by defaults.
+/// </summary>
+public sealed class SettingsFile
+{
+    private readonly string folder;
+
+    public SettingsFile(string folder) => this.folder = folder;
+
+    /// <summary>settings.json existed but could not be read (locked, no permission): nothing is saved this session.</summary>
+    public bool CouldNotRead { get; private set; }
+
+    public AppSettings Load()
+    {
+        var s = SettingsStore.Load(folder, out bool couldNotRead);
+        CouldNotRead = couldNotRead;
+        return s;
+    }
+
+    /// <summary>Writes the settings; false (nothing written) while <see cref="CouldNotRead"/>.</summary>
+    public bool Save(AppSettings s)
+    {
+        if (CouldNotRead) return false;
+        SettingsStore.Save(folder, s);
+        return true;
+    }
+}
+
 public static class SettingsStore
 {
     private const string FileNameJson = "settings.json";
+    private const int ReadAttempts = 3;
+    private static readonly TimeSpan ReadRetryDelay = TimeSpan.FromMilliseconds(100);
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -20,32 +53,100 @@ public static class SettingsStore
     public static string DefaultFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "EasyVocal");
 
-    public static AppSettings Load(string folder)
+    public static AppSettings Load(string folder) => Load(folder, out _);
+
+    /// <summary>
+    /// Reads settings.json. A damaged file is kept as settings.json.bad and the previous good copy
+    /// (settings.json.bak) is used instead; with neither, defaults. <paramref name="couldNotRead"/> is true when
+    /// settings.json exists but could not be read at all (another program holds it, no permission): the caller
+    /// must not save over it this session.
+    /// </summary>
+    public static AppSettings Load(string folder, out bool couldNotRead)
     {
         var path = Path.Combine(folder, FileNameJson);
+        var backup = path + ".bak";
+        couldNotRead = false;
         AppSettings? s = null;
-        if (File.Exists(path))
+        var text = ReadWithRetry(path, out bool unreadable);
+        if (unreadable)
         {
-            try
-            {
-                s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Json);
-            }
-            catch (Exception)
-            {
-                s = null;
-            }
+            couldNotRead = true;
+        }
+        else if (text != null)
+        {
+            s = Parse(text);
             if (s == null) KeepBadCopy(path);
+        }
+        if (s == null && File.Exists(backup))
+        {
+            var old = ReadWithRetry(backup, out _);
+            if (old != null) s = Parse(old);
         }
         return Normalize(s ?? new AppSettings());
     }
 
+    /// <summary>
+    /// Power-loss safe: the new settings go to settings.json.tmp, are flushed to the disk, then replace settings.json
+    /// in one step; the previous file stays as settings.json.bak.
+    /// </summary>
     public static void Save(string folder, AppSettings s)
     {
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, FileNameJson);
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(s, Json));
-        File.Move(tmp, path, overwrite: true);
+        var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(s, Json));
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            fs.Write(bytes, 0, bytes.Length);
+            fs.Flush(flushToDisk: true);
+        }
+        if (!File.Exists(path))
+        {
+            File.Move(tmp, path);
+            return;
+        }
+        try
+        {
+            File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // A file system without an atomic replace: keep the old copy, then move the new file over.
+            File.Copy(path, path + ".bak", overwrite: true);
+            File.Move(tmp, path, overwrite: true);
+        }
+    }
+
+    /// <summary>The file's text; null when there is no file. <paramref name="unreadable"/>: it exists but every try failed.</summary>
+    private static string? ReadWithRetry(string path, out bool unreadable)
+    {
+        unreadable = false;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return null; // removed while we looked
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= ReadAttempts)
+                {
+                    unreadable = true;
+                    return null;
+                }
+                Thread.Sleep(ReadRetryDelay);
+            }
+        }
+    }
+
+    private static AppSettings? Parse(string text)
+    {
+        try { return JsonSerializer.Deserialize<AppSettings>(text, Json); }
+        catch (Exception) { return null; }
     }
 
     private static void KeepBadCopy(string path)
