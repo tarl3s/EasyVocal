@@ -113,6 +113,33 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void SaveThenLoad_BuiltInSoundKeepsTheNameAndEmojiThePersonGaveIt()
+    {
+        var s = SettingsStore.Load(tmp);
+        var ding = s.Sounds.Single(x => x.Id == "ding");
+        ding.Name = "Bell";
+        ding.Emoji = "🛎️";
+        ding.FileName = "elsewhere.wav"; // not the person's: a built-in always plays its own file
+        SettingsStore.Save(tmp, s);
+
+        var loaded = SettingsStore.Load(tmp).Sounds.Single(x => x.Id == "ding");
+        Assert.Equal("Bell", loaded.Name);
+        Assert.Equal("🛎️", loaded.Emoji);
+        Assert.Equal("ding.wav", loaded.FileName);
+        Assert.True(loaded.BuiltIn);
+    }
+
+    [Fact]
+    public void Load_BuiltInSoundWithEmptyNameOrEmoji_UsesTheCatalogOnes()
+    {
+        WriteFile("{\"Sounds\":[{\"Id\":\"ding\",\"Name\":\" \",\"Emoji\":\"\"}]}");
+        var ding = SettingsStore.Load(tmp).Sounds.Single(x => x.Id == "ding");
+        var catalog = StarterSounds.Items().Single(x => x.Id == "ding");
+        Assert.Equal(catalog.Name, ding.Name);
+        Assert.Equal(catalog.Emoji, ding.Emoji);
+    }
+
+    [Fact]
     public void Load_OutOfRangeSliders_AreClamped()
     {
         WriteFile("{\"Voices\":[{\"Id\":\"c1\",\"Name\":\"C\",\"Sliders\":{\"Pitch\":5,\"Echo\":-2}}]}");
