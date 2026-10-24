@@ -58,14 +58,19 @@ public readonly record struct Hotkey(HotkeyMods Mods, int VirtualKey)
         return true;
     }
 
-    public override string ToString()
+    public override string ToString() => ModsPrefix(Mods) + KeyName;
+
+    /// <summary>The key without its modifiers, as saved ("7", "F9", "NumPad1").</summary>
+    public string KeyName => VkToName.TryGetValue(VirtualKey, out var n) ? n : "Key" + VirtualKey;
+
+    /// <summary>"Ctrl+Alt+" for those modifiers, in the order hotkeys are written; "" for none.</summary>
+    public static string ModsPrefix(HotkeyMods mods)
     {
         var sb = new StringBuilder();
-        if ((Mods & HotkeyMods.Ctrl) != 0) sb.Append("Ctrl+");
-        if ((Mods & HotkeyMods.Alt) != 0) sb.Append("Alt+");
-        if ((Mods & HotkeyMods.Shift) != 0) sb.Append("Shift+");
-        if ((Mods & HotkeyMods.Win) != 0) sb.Append("Win+");
-        sb.Append(VkToName.TryGetValue(VirtualKey, out var n) ? n : "Key" + VirtualKey);
+        if ((mods & HotkeyMods.Ctrl) != 0) sb.Append("Ctrl+");
+        if ((mods & HotkeyMods.Alt) != 0) sb.Append("Alt+");
+        if ((mods & HotkeyMods.Shift) != 0) sb.Append("Shift+");
+        if ((mods & HotkeyMods.Win) != 0) sb.Append("Win+");
         return sb.ToString();
     }
 

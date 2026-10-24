@@ -311,7 +311,7 @@ public sealed class AppController : IDisposable
 
     /// <summary>
     /// While the filter editor is open, the engine plays these sliders (and the filter counts as ON so they are heard);
-    /// null goes back to the active voice and the person's ON/OFF choice.
+    /// call it again after changing them. Null goes back to the active voice and the person's ON/OFF choice.
     /// </summary>
     public void PreviewSliders(VoiceSliders? sliders)
     {
@@ -699,9 +699,7 @@ public sealed class AppController : IDisposable
     /// <summary>What to call an action ("voice:robot"…) on screen: built-in names translated, the person's own as typed.</summary>
     public string ActionDisplayName(string action)
     {
-        var colon = action.IndexOf(':');
-        var kind = colon < 0 ? action : action[..colon];
-        var id = colon < 0 ? "" : action[(colon + 1)..];
+        var (kind, id) = SplitAction(action);
         return kind switch
         {
             "voice" when FindVoice(id) is { } v => DisplayName(v),
@@ -710,15 +708,20 @@ public sealed class AppController : IDisposable
         };
     }
 
+    /// <summary>"voice:robot" → ("voice", "robot"); an id without a kind → (the whole text, "").</summary>
+    private static (string Kind, string Id) SplitAction(string action)
+    {
+        var colon = action.IndexOf(':');
+        return colon < 0 ? (action, "") : (action[..colon], action[(colon + 1)..]);
+    }
+
     // Runs inside the hotkey window's WndProc: an exception must never escape into Windows.
     private void OnHotkey(string action)
     {
         try
         {
-            var colon = action.IndexOf(':');
-            if (colon < 0) return;
-            var id = action[(colon + 1)..];
-            switch (action[..colon])
+            var (kind, id) = SplitAction(action);
+            switch (kind)
             {
                 case "voice": SelectVoice(id); break;
                 case "sound": ToggleSound(id); break;

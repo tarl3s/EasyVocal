@@ -145,7 +145,7 @@ public partial class FilterEditorWindow : Window
             return;
         }
         row.Set(current, value);
-        controller.PreviewSliders(current.Clone());
+        controller.PreviewSliders(current);
     }
 
     /// <summary>Moves every slider to <see cref="current"/> without playing it step by step.</summary>
@@ -161,7 +161,7 @@ public partial class FilterEditorWindow : Window
     {
         current = baseline.Clone();
         ShowValues();
-        controller.PreviewSliders(current.Clone());
+        controller.PreviewSliders(current);
     }
 
     // ---------- save ----------

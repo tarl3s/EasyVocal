@@ -16,7 +16,7 @@ namespace EasyVocal;
 /// Startup: one instance only (a second launch shows the first one's window and exits), settings, language,
 /// the controller, the main window and the tray. Quitting happens only from the tray (closing the window hides it).
 /// <para>Arguments: <c>--data &lt;folder&gt;</c> uses another data folder (development and tests);
-/// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> starts normally, quits by itself after 3 s and logs "Smoke test passed";
+/// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> opens and checks every window, then quits (<c>App.SmokeTest.cs</c>);
 /// <c>--e2e</c> runs the end-to-end test on test audio devices (<c>App.E2E.cs</c>). Both tests need <c>--data</c>.</para>
 /// </summary>
 public partial class App : Application

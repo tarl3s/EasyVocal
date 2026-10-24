@@ -62,6 +62,16 @@ public class HotkeyTests
     };
 
     [Fact]
+    public void KeyNameAndModsPrefix_AreTheTwoHalvesOfTheSavedText()
+    {
+        var k = K("Ctrl+Shift+F9");
+        Assert.Equal("F9", k.KeyName);
+        Assert.Equal("Ctrl+Shift+", Hotkey.ModsPrefix(k.Mods));
+        Assert.Equal("", Hotkey.ModsPrefix(HotkeyMods.None));
+        Assert.Equal("Ctrl+Alt+Shift+Win+", Hotkey.ModsPrefix(HotkeyMods.Win | HotkeyMods.Shift | HotkeyMods.Alt | HotkeyMods.Ctrl));
+    }
+
+    [Fact]
     public void WhoUsesAction_IgnoresSelfAndHidden()
     {
         Assert.Null(HotkeyMap.WhoUsesAction(Settings(), K("7"), "sound:airhorn"));

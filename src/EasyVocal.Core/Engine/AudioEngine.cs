@@ -32,7 +32,7 @@ namespace EasyVocal.Core.Engine;
 public sealed class AudioEngine : IDisposable
 {
     /// <summary>Most audio an output may hold before its oldest part is trimmed (60 ms).</summary>
-    public const int MaxCallBacklog = AudioFormat.SampleRate * 60 / 1000;
+    public const int MaxBacklog = AudioFormat.SampleRate * 60 / 1000;
 
     /// <summary>What a trim leaves queued (20 ms): a cushion against the device reading a little early.</summary>
     public const int TargetBacklog = AudioFormat.SampleRate * 20 / 1000;
@@ -505,7 +505,7 @@ public sealed class AudioEngine : IDisposable
             s.CallLimiter.Process(call);
             try
             {
-                if (callOut.BufferedSamples > MaxCallBacklog) callOut.TrimTo(TargetBacklog);
+                if (callOut.BufferedSamples > MaxBacklog) callOut.TrimTo(TargetBacklog);
                 callOut.Write(call);
             }
             catch (Exception)
@@ -538,7 +538,7 @@ public sealed class AudioEngine : IDisposable
         s.MonitorLimiter.Process(mon);
         try
         {
-            if (monitor.BufferedSamples > MaxCallBacklog) monitor.TrimTo(TargetBacklog);
+            if (monitor.BufferedSamples > MaxBacklog) monitor.TrimTo(TargetBacklog);
             monitor.Write(mon);
         }
         catch (Exception)

@@ -56,8 +56,6 @@ public sealed class WasapiSpeakerOutput : IAudioOutput
         }
     }
 
-    public string Name => device.FriendlyName;
-
     public int BufferedSamples => queue.Count;
 
     public void Start() => output.Play();

@@ -6,7 +6,7 @@ namespace EasyVocal.Audio;
 
 /// <summary>
 /// Listens to one microphone only to show how loud it is (the setup window's level bar), whether or not the voice
-/// engine is running. It plays nothing and never throws: when the device can't be opened <see cref="Working"/> is false.
+/// engine is running. It plays nothing and never throws: a device that can't be opened just reads as silence.
 /// </summary>
 public sealed class MicMeter : IDisposable
 {
@@ -30,14 +30,15 @@ public sealed class MicMeter : IDisposable
         }
     }
 
-    public bool Working => input != null;
-
     /// <summary>The loudest sample (0..1) since the last call.</summary>
     public float TakeLevel() => Interlocked.Exchange(ref peak, 0f);
 
     /// <summary>Where a peak level sits on a bar: the last 60 dB mapped to 0..1 (quiet room = nearly empty).</summary>
-    public static double BarFraction(double level) =>
+    private static double BarFraction(double level) =>
         level <= 0.001 ? 0 : Math.Clamp((20 * Math.Log10(level) + 60) / 60, 0, 1);
+
+    /// <summary>The bar's next fill: jumps up to a new peak, falls back slowly (so short peaks stay visible).</summary>
+    public static double NextFill(double shown, double level) => Math.Max(BarFraction(level), shown - 0.04);
 
     // Capture thread.
     private void OnSamples(float[] buffer, int count)

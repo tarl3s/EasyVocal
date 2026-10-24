@@ -47,8 +47,6 @@ public sealed class WasapiMicInput : IAudioInput
     public event Action<float[], int>? Samples;
     public event Action<Exception?>? Stopped;
 
-    public string Name => device.FriendlyName;
-
     public void Start() => capture.StartRecording();
 
     /// <summary>Shared-mode devices usually report WAVE_FORMAT_EXTENSIBLE; the sub-format tells float from integer.</summary>

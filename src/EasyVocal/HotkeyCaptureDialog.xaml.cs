@@ -54,11 +54,11 @@ public partial class HotkeyCaptureDialog : Window
         }
     }
 
-    /// <summary>For the smoke test: the same as pressing the combination.</summary>
+    /// <summary>For the smoke test: the dialog, not shown (drive it with <see cref="Simulate"/>).</summary>
     internal static HotkeyCaptureDialog ForTest(AppController controller, string actionId, string itemName, string? current) =>
         new(controller, actionId, itemName, current);
 
-    /// <summary>For the smoke test: the same as pressing the combination.</summary>
+    /// <summary>For the smoke and e2e tests: the same as pressing the combination.</summary>
     internal void Simulate(HotkeyMods mods, int virtualKey) => Capture(mods, virtualKey);
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -79,7 +79,7 @@ public partial class HotkeyCaptureDialog : Window
         }
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
         {
-            KeyText.Text = ModsText(mods) + "…"; // only modifiers so far
+            KeyText.Text = Hotkey.ModsPrefix(mods) + "…"; // only modifiers so far
             showingMods = true;
             e.Handled = true;
             return;
@@ -104,16 +104,6 @@ public partial class HotkeyCaptureDialog : Window
         if ((m & ModifierKeys.Shift) != 0) mods |= HotkeyMods.Shift;
         if ((m & ModifierKeys.Windows) != 0) mods |= HotkeyMods.Win;
         return mods;
-    }
-
-    private static string ModsText(HotkeyMods mods)
-    {
-        var text = "";
-        if ((mods & HotkeyMods.Ctrl) != 0) text += "Ctrl+";
-        if ((mods & HotkeyMods.Alt) != 0) text += "Alt+";
-        if ((mods & HotkeyMods.Shift) != 0) text += "Shift+";
-        if ((mods & HotkeyMods.Win) != 0) text += "Win+";
-        return text;
     }
 
     /// <summary>True when the press is a hotkey we can use (the event is then handled).</summary>
@@ -147,8 +137,7 @@ public partial class HotkeyCaptureDialog : Window
         SaveButton.IsEnabled = true;
         if (key.IsPlainTypingKey)
         {
-            var name = key.ToString().Split('+')[^1];
-            TypingNoteText.Text = L.F("While EasyVocal is open, this key will stop typing '{0}' in other apps. Ctrl+{0} or the number pad avoid that.", name);
+            TypingNoteText.Text = L.F("While EasyVocal is open, this key will stop typing '{0}' in other apps. Ctrl+{0} or the number pad avoid that.", key.KeyName);
             TypingNote.Visibility = Visibility.Visible;
         }
     }

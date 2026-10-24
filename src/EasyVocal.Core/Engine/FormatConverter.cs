@@ -65,9 +65,6 @@ public sealed class FormatConverter
         }
     }
 
-    /// <summary>Bytes in one frame (one sample of every channel).</summary>
-    public int FrameBytes => frameBytes;
-
     /// <summary>The most samples <see cref="Convert"/> can return for <paramref name="bytes"/> of input: size the output buffer with it.</summary>
     public int MaxOutputSamples(int bytes)
     {

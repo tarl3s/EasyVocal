@@ -245,15 +245,7 @@ public partial class SetupWindow : Window
 
     private void UpdateMeter()
     {
-        if (meter == null)
-        {
-            meterShown = 0;
-        }
-        else
-        {
-            double fraction = MicMeter.BarFraction(meter.TakeLevel());
-            meterShown = Math.Max(fraction, meterShown - 0.04);
-        }
+        meterShown = meter == null ? 0 : MicMeter.NextFill(meterShown, meter.TakeLevel());
         MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
     }
 

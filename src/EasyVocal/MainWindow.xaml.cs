@@ -174,10 +174,7 @@ public partial class MainWindow : Window
     private void UpdateMeter()
     {
         if (WindowState == WindowState.Minimized) return;
-        // Peak in dB over the last 60 dB, falling back slowly so short peaks stay visible.
-        double level = controller.InputLevel;
-        double fraction = Audio.MicMeter.BarFraction(level);
-        meterShown = Math.Max(fraction, meterShown - 0.04);
+        meterShown = Audio.MicMeter.NextFill(meterShown, controller.InputLevel);
         MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
     }
 
@@ -412,7 +409,7 @@ public partial class MainWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem(L.T("Edit…"), () => EditVoice(id)));
         menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetVoiceHotkey(id)));
-        menu.Items.Add(MenuItem(L.T("Duplicate"), () => DuplicateVoice(id)));
+        menu.Items.Add(MenuItem(L.T("Duplicate"), () => controller.DuplicateVoice(id)));
         menu.Items.Add(new Separator());
         if (v.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetVoiceHidden(id, false)));
         else if (v.BuiltIn && ItemOps.CanHide(v)) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetVoiceHidden(id, true)));
@@ -426,7 +423,7 @@ public partial class MainWindow : Window
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem(L.T("Edit…"), () => EditSound(id)));
         menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetSoundHotkey(id)));
-        menu.Items.Add(MenuItem(L.T("Duplicate"), () => DuplicateSound(id)));
+        menu.Items.Add(MenuItem(L.T("Duplicate"), () => controller.DuplicateSound(id)));
         menu.Items.Add(new Separator());
         if (s.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetSoundHidden(id, false)));
         else if (s.BuiltIn) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetSoundHidden(id, true)));
@@ -484,10 +481,6 @@ public partial class MainWindow : Window
         controller.RebuildHotkeys();
         AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", chosen));
     }
-
-    private void DuplicateVoice(string id) => controller.DuplicateVoice(id);
-
-    private void DuplicateSound(string id) => controller.DuplicateSound(id);
 
     private void DeleteVoice(string id)
     {
