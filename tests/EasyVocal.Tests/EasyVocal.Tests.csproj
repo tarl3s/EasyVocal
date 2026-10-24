@@ -22,6 +22,7 @@
     <!-- Plain classes of the app (no WPF), compiled here so they can be tested without referencing the app. -->
     <Compile Include="..\..\src\EasyVocal\StartupRegistration.cs" Link="Linked\StartupRegistration.cs" />
     <Compile Include="..\..\src\EasyVocal\VbCableInstaller.cs" Link="Linked\VbCableInstaller.cs" />
+    <Compile Include="..\..\src\EasyVocal\Authenticode.cs" Link="Linked\Authenticode.cs" />
   </ItemGroup>
 
   <ItemGroup>

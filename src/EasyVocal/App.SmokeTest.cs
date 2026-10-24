@@ -217,6 +217,9 @@ public partial class App
                 w.ShowOfficialPageFallback(open: false);
                 w.UpdateLayout();
                 SnapshotWindow(w, Png("setup_fallback"));
+                w.ShowNotVerifiedFallback(open: false);
+                w.UpdateLayout();
+                SnapshotWindow(w, Png("setup_not_verified"));
             });
             Check(!c.Settings.SetupDone, "closing setup without Done doesn't finish it");
 
@@ -278,7 +281,13 @@ public partial class App
         }
         finally
         {
-            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\EasyVocalTest", throwOnMissingSubKey: false); }
+            // Only the smoke test's own key; the shared parent goes only when nobody else's key is left in it.
+            try
+            {
+                Registry.CurrentUser.DeleteSubKeyTree(@"Software\EasyVocalTest\Smoke", throwOnMissingSubKey: false);
+                try { Registry.CurrentUser.DeleteSubKey(@"Software\EasyVocalTest", throwOnMissingSubKey: false); }
+                catch (InvalidOperationException) { /* another key is still in it */ }
+            }
             catch (Exception ex) { AppLog.Error("Cleaning the smoke test registry key failed", ex); }
         }
         Check(StartupRegistration.Default.IsEnabled() == realBefore, "the real 'Start with Windows' entry was not touched");

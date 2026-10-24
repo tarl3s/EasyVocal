@@ -5,10 +5,28 @@ using System.Net.Http;
 
 namespace EasyVocal;
 
+/// <summary>How <see cref="VbCableInstaller.DownloadAndRunAsync"/> ended.</summary>
+public enum InstallStatus
+{
+    /// <summary>The installer ran and was closed (whether the driver is there is up to Windows: the window checks the devices).</summary>
+    Installed,
+    /// <summary>The person said no to the Windows permission prompt.</summary>
+    DeclinedPermission,
+    /// <summary>Stopped by the caller (the window was closed); an installer already running is left alone.</summary>
+    Cancelled,
+    /// <summary>The downloaded installer is not signed by VB-Audio (or the signature is not trusted): it was not run.</summary>
+    NotVerified,
+    /// <summary>Download, unpacking or starting failed; <see cref="InstallResult.Detail"/> says why (for the log).</summary>
+    Failed,
+}
+
+/// <summary>The outcome of an install attempt.</summary>
+public readonly record struct InstallResult(InstallStatus Status, string? Detail = null);
+
 /// <summary>
 /// Gets VB-CABLE (the free virtual microphone EasyVocal sends the voice to) from its official site: downloads the
-/// driver pack, unpacks it and starts its own installer, which asks Windows for permission. EasyVocal does not
-/// bundle the driver (VB-Audio's licence). Nothing here is called until the person presses Install.
+/// driver pack, unpacks it, checks the installer's signature and starts it (it asks Windows for permission).
+/// EasyVocal does not bundle the driver (VB-Audio's licence). Nothing here is called until the person presses Install.
 /// </summary>
 public static class VbCableInstaller
 {
@@ -17,59 +35,89 @@ public static class VbCableInstaller
 
     private const long MaxZipBytes = 50L * 1024 * 1024; // the real pack is about 1.3 MB
     private const int UacCancelled = 1223; // ERROR_CANCELLED: the person pressed No on the permission prompt
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromHours(6);
 
-    /// <summary>Why the last <see cref="DownloadAndRunAsync"/> returned false (for the log).</summary>
-    public static string? LastError { get; private set; }
-
-    /// <summary>The person said no to the permission prompt (not a failure to apologise for).</summary>
-    public static bool UserCancelled { get; private set; }
-
-    /// <summary>Where the pack is unpacked: <c>%TEMP%\EasyVocal_VBCABLE</c>.</summary>
+    /// <summary>Where the packs are unpacked, one folder per attempt: <c>%TEMP%\EasyVocal_VBCABLE\&lt;id&gt;</c>.</summary>
     public static string WorkFolder => Path.Combine(Path.GetTempPath(), "EasyVocal_VBCABLE");
 
     /// <summary>
-    /// Downloads, unpacks and runs the installer (with the Windows permission prompt), and completes when the installer closes.
-    /// <paramref name="progress"/> gets 0..1: the download fills most of it and 1 means "the installer is starting".
-    /// False on any failure (see <see cref="LastError"/>), or when the person cancelled (<see cref="UserCancelled"/>).
+    /// Downloads, unpacks, verifies and runs the installer (with the Windows permission prompt), and completes when the
+    /// installer closes. <paramref name="progress"/> gets 0..1: the download fills most of it and 1 means "the installer is starting".
     /// </summary>
-    public static async Task<bool> DownloadAndRunAsync(IProgress<double> progress, CancellationToken ct)
+    public static async Task<InstallResult> DownloadAndRunAsync(IProgress<double> progress, CancellationToken ct)
     {
-        LastError = null;
-        UserCancelled = false;
-        var folder = WorkFolder;
+        CleanStale(WorkFolder, StaleAfter);
+        var runFolder = Path.Combine(WorkFolder, Guid.NewGuid().ToString("N"));
         try
         {
-            TryDelete(folder);
-            Directory.CreateDirectory(folder);
-            var zip = Path.Combine(folder, "VBCABLE_Driver_Pack.zip");
+            Directory.CreateDirectory(runFolder);
+            var zip = Path.Combine(runFolder, "VBCABLE_Driver_Pack.zip");
             await DownloadAsync(ZipUrl, zip, progress, ct).ConfigureAwait(false);
-            ExtractZip(zip, Path.Combine(folder, "pack"));
-            var exe = FindSetupExe(Path.Combine(folder, "pack"), Environment.Is64BitOperatingSystem)
-                ?? throw new FileNotFoundException("The VB-CABLE installer is not in the download.");
-            progress.Report(1);
-            await RunElevatedAsync(exe, ct).ConfigureAwait(false);
-            return true;
-        }
-        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == UacCancelled)
-        {
-            UserCancelled = true;
-            LastError = "The permission prompt was declined.";
-            return false;
+            return await InstallFromZipAsync(zip, runFolder, progress, ct, Authenticode.Check, RunElevatedAsync).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            LastError = "Cancelled.";
-            return false;
+            TryDelete(runFolder); // cancelled while downloading: no installer is running
+            return new InstallResult(InstallStatus.Cancelled);
         }
         catch (Exception ex)
         {
-            LastError = ex.GetType().Name + ": " + ex.Message;
-            return false;
+            TryDelete(runFolder); // nothing was started yet
+            return new InstallResult(InstallStatus.Failed, ex.GetType().Name + ": " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Everything after the download: unpack, find the installer, verify its signature, run it. The folder is removed
+    /// only when no installer can still be using it: never after a cancellation (the elevated installer may still be
+    /// running and reading its driver files); a later run cleans stale folders.
+    /// </summary>
+    internal static async Task<InstallResult> InstallFromZipAsync(string zipPath, string runFolder, IProgress<double> progress,
+        CancellationToken ct, Func<string, SignatureCheck> verify, Func<string, CancellationToken, Task> launch)
+    {
+        bool keepFolder = false;
+        try
+        {
+            var packFolder = Path.Combine(runFolder, "pack");
+            ExtractZip(zipPath, packFolder);
+            var exe = FindSetupExe(packFolder, Environment.Is64BitOperatingSystem)
+                ?? throw new FileNotFoundException("The VB-CABLE installer is not in the download.");
+            var check = verify(exe);
+            if (check != SignatureCheck.Ok)
+                return new InstallResult(InstallStatus.NotVerified, "Signature check: " + check);
+            progress.Report(1);
+            await launch(exe, ct).ConfigureAwait(false);
+            return new InstallResult(InstallStatus.Installed);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == UacCancelled)
+        {
+            return new InstallResult(InstallStatus.DeclinedPermission);
+        }
+        catch (OperationCanceledException)
+        {
+            keepFolder = true;
+            return new InstallResult(InstallStatus.Cancelled);
+        }
+        catch (Exception ex)
+        {
+            return new InstallResult(InstallStatus.Failed, ex.GetType().Name + ": " + ex.Message);
         }
         finally
         {
-            TryDelete(folder);
+            if (!keepFolder) TryDelete(runFolder);
         }
+    }
+
+    /// <summary>Removes attempt folders older than <paramref name="olderThan"/> (left behind by a cancelled run), never a fresh one.</summary>
+    internal static void CleanStale(string root, TimeSpan olderThan)
+    {
+        try
+        {
+            if (!Directory.Exists(root)) return;
+            foreach (var dir in Directory.EnumerateDirectories(root))
+                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > olderThan) TryDelete(dir);
+        }
+        catch (Exception) { /* a folder in use: the next run tries again */ }
     }
 
     /// <summary>Opens the official download page in the browser.</summary>

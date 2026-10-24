@@ -129,6 +129,7 @@
   "Waiting for Windows to finish installing…": "Esperando o Windows terminar de instalar…",
   "Restart your PC to finish installing, then open EasyVocal again.": "Reinicie o computador para terminar a instalação e abra o EasyVocal de novo.",
   "Download it from the official page, run VBCABLE_Setup_x64.exe, then come back.": "Baixe na página oficial, execute o VBCABLE_Setup_x64.exe e volte aqui.",
+  "The download could not be verified as VB-Audio's, so EasyVocal did not run it. Download it from the official page, run VBCABLE_Setup_x64.exe, then come back.": "Não foi possível confirmar que o download é da VB-Audio, então o EasyVocal não o executou. Baixe na página oficial, execute o VBCABLE_Setup_x64.exe e volte aqui.",
   "The installation was cancelled. Press Install to try again.": "A instalação foi cancelada. Aperte Instalar para tentar de novo.",
   "Your microphone": "Seu microfone",
   "Automatic (Windows default)": "Automático (padrão do Windows)",

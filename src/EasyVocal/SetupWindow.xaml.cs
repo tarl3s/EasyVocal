@@ -106,14 +106,15 @@ public partial class SetupWindow : Window
         waiting = false;
         waitTimer.Stop();
         InstallButton.IsEnabled = false;
+        DoneButton.IsEnabled = false; // finishing now would leave the installer running behind a closed window
         ProgressTrack.Visibility = Visibility.Visible;
         SetProgress(0);
         SetStatus(L.T("Downloading VB-CABLE…"), false);
         cancelInstall = new CancellationTokenSource();
-        bool ok;
+        InstallResult result;
         try
         {
-            ok = await VbCableInstaller.DownloadAndRunAsync(new Progress<double>(OnInstallProgress), cancelInstall.Token);
+            result = await VbCableInstaller.DownloadAndRunAsync(new Progress<double>(OnInstallProgress), cancelInstall.Token);
         }
         finally
         {
@@ -122,16 +123,26 @@ public partial class SetupWindow : Window
         if (closed) return;
 
         InstallButton.IsEnabled = true;
-        if (!ok)
+        DoneButton.IsEnabled = true;
+        if (result.Status != InstallStatus.Installed)
         {
             ProgressTrack.Visibility = Visibility.Collapsed;
-            if (VbCableInstaller.UserCancelled)
+            switch (result.Status)
             {
-                SetStatus(L.T("The installation was cancelled. Press Install to try again."), true);
-                return;
+                case InstallStatus.DeclinedPermission:
+                    SetStatus(L.T("The installation was cancelled. Press Install to try again."), true);
+                    break;
+                case InstallStatus.Cancelled:
+                    break;
+                case InstallStatus.NotVerified:
+                    AppLog.Info("VB-CABLE installer not run: " + result.Detail);
+                    ShowNotVerifiedFallback();
+                    break;
+                default:
+                    AppLog.Info("VB-CABLE install failed: " + result.Detail);
+                    ShowOfficialPageFallback();
+                    break;
             }
-            AppLog.Info("VB-CABLE install failed: " + VbCableInstaller.LastError);
-            ShowOfficialPageFallback();
             return;
         }
 
@@ -154,6 +165,13 @@ public partial class SetupWindow : Window
     internal void ShowOfficialPageFallback(bool open = true)
     {
         SetStatus(L.T("Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
+        if (open) VbCableInstaller.OpenOfficialPage();
+    }
+
+    /// <summary>The downloaded installer isn't signed by VB-Audio: it was not run. Open the official page and say so.</summary>
+    internal void ShowNotVerifiedFallback(bool open = true)
+    {
+        SetStatus(L.T("The download could not be verified as VB-Audio's, so EasyVocal did not run it. Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
         if (open) VbCableInstaller.OpenOfficialPage();
     }
 
