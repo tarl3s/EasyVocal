@@ -269,7 +269,7 @@ Rules: switching voices (or Bypass on/off) **crossfades over 20 ms** between the
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Implement** `Limiter` and `VoiceChain`.
 - [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Tune by ear.** Add a skipped test `RenderPresets` (un-skip locally) that writes `%TEMP%\EV_presets\<id>.wav` (a `[Fact(Skip=…)]` you un-skip locally) by running a recorded voice WAV the developer supplies at `%TEMP%\EV_presets\input.wav` through each preset. Adjust the table values in `BuiltIns.cs` until each sounds like its name; keep tests green.
+- [ ] **Step 5: Tune by ear.** Add a skipped test `RenderPresets` (un-skip locally) that writes `%TEMP%\EV_presets\<id>.wav` by running a recorded voice WAV the developer supplies at `%TEMP%\EV_presets\input.wav` through each preset. Adjust the table values in `BuiltIns.cs` until each sounds like its name; keep tests green.
 - [ ] **Step 6: Commit** `"Add voice chain, limiter and tuned built-in voices"`
 
 ---
