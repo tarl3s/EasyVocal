@@ -733,10 +733,10 @@ public sealed class AppController : IDisposable
     /// <summary>The virtual cable is missing, but the mic and the headphones work (the voices can be tried with Hear me).</summary>
     public bool MonitorOnly => engine.MonitorOnly;
 
-    /// <summary>What a session would open now (the mic pick has no side effect worth noting: it only times a missing mic).</summary>
-    private AudioRoutes PickRoutes(IReadOnlyList<DeviceInfo> inputs, IReadOnlyList<DeviceInfo> outputs, out MicPick mic)
+    /// <summary>What a session would open now (asking the mic picker only times how long a chosen mic has been missing).</summary>
+    private AudioRoutes PickRoutes(IReadOnlyList<DeviceInfo> inputs, IReadOnlyList<DeviceInfo> outputs)
     {
-        mic = micPicker.Pick(Settings.MicDeviceId, inputs, DateTime.UtcNow);
+        var mic = micPicker.Pick(Settings.MicDeviceId, inputs, DateTime.UtcNow);
         var call = DeviceRules.PickCall(Settings.OutputDeviceId, outputs);
         return new AudioRoutes(mic.Id, call, DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, call));
     }
@@ -808,7 +808,7 @@ public sealed class AppController : IDisposable
         {
             // Only when this session would now open other devices (a mic came back, new default headphones…), or its
             // headphones stopped working: they never come back by themselves. An unrelated device changes nothing.
-            var wanted = PickRoutes(DeviceList.Inputs(), DeviceList.Outputs(), out _);
+            var wanted = PickRoutes(DeviceList.Inputs(), DeviceList.Outputs());
             var inUse = new AudioRoutes(usedMic, usedCall, usedMonitor);
             bool restart = AudioRoutes.NeedsRestart(inUse, wanted, engine.MonitorLost);
             AppLog.Info("Devices changed (engine Running): " + (restart ? "restarting the audio" : "nothing to do"));
