@@ -44,5 +44,14 @@ public static class DeviceRules
         return first;
     }
 
+    /// <summary>The devices a person may pick as microphone or headphones: everything except VB-CABLE's own ends.</summary>
+    public static List<DeviceInfo> ExcludeVirtualCable(IEnumerable<DeviceInfo> devices)
+    {
+        var list = new List<DeviceInfo>();
+        foreach (var d in devices)
+            if (!IsVirtualCable(d.Name)) list.Add(d);
+        return list;
+    }
+
     private static bool Has(string name, string part) => name.Contains(part, StringComparison.OrdinalIgnoreCase);
 }

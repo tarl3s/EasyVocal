@@ -1,0 +1,241 @@
+using System.Windows;
+using System.Windows.Controls;
+using EasyVocal.Audio;
+using EasyVocal.Core.Engine;
+using EasyVocal.Core.Text;
+
+namespace EasyVocal;
+
+/// <summary>
+/// The ⚙ window: which microphone, call output and headphones to use, language, start with Windows, ask before
+/// quitting, the general hotkeys, and "Open setup again". Every change applies at once (there is no Save button);
+/// a device change restarts the audio.
+/// </summary>
+public partial class SettingsWindow : Window
+{
+    private readonly AppController controller;
+    private ComboBoxItem? micShown;
+    private bool loading;
+
+    public SettingsWindow(AppController controller)
+    {
+        this.controller = controller;
+        InitializeComponent();
+        DarkTitleBar.Use(this);
+        MaxHeight = Math.Max(400, SystemParameters.WorkArea.Height - 40);
+        BuildHotkeyRows();
+        Load();
+    }
+
+    public static void Open(AppController controller, Window? owner)
+    {
+        var window = new SettingsWindow(controller);
+        if (owner is { IsVisible: true }) window.Owner = owner;
+        else window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        window.ShowDialog();
+    }
+
+    private void Load()
+    {
+        loading = true;
+        try
+        {
+            var s = controller.Settings;
+            var inputs = DeviceList.Inputs();
+            var outputs = DeviceList.Outputs();
+
+            Fill(MicBox, L.T("Automatic (Windows default)"), inputs, s.MicDeviceId);
+            micShown = MicBox.SelectedItem as ComboBoxItem;
+            MicProblem.Visibility = Visibility.Collapsed;
+
+            Fill(OutputBox, L.T("Automatic (CABLE Input)"), outputs, s.OutputDeviceId);
+            Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(outputs), s.MonitorDeviceId);
+
+            LanguageBox.Items.Clear();
+            var languages = new (string Code, string Name)[]
+            {
+                ("auto", L.T("Automatic")), ("en", "English"), ("pt-BR", "Português (Brasil)"),
+            };
+            foreach (var (code, name) in languages)
+            {
+                var item = new ComboBoxItem { Content = name, Tag = code };
+                LanguageBox.Items.Add(item);
+                if (string.Equals(code, s.Language, StringComparison.OrdinalIgnoreCase)) LanguageBox.SelectedItem = item;
+            }
+            LanguageBox.SelectedItem ??= LanguageBox.Items[0];
+
+            StartBox.IsChecked = s.StartWithWindows;
+            AskQuitBox.IsChecked = s.ConfirmQuit;
+            RefreshHotkeyRows();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    /// <summary>The first item is the automatic choice (no device id). A saved device that is unplugged stays listed so it isn't lost.</summary>
+    private static void Fill(ComboBox box, string autoLabel, IEnumerable<DeviceInfo> devices, string? savedId)
+    {
+        box.Items.Clear();
+        var auto = new ComboBoxItem { Content = autoLabel };
+        box.Items.Add(auto);
+        ComboBoxItem selected = auto;
+        bool found = savedId == null;
+        foreach (var device in devices)
+        {
+            var item = new ComboBoxItem { Content = device.Name, Tag = device };
+            box.Items.Add(item);
+            if (device.Id == savedId)
+            {
+                selected = item;
+                found = true;
+            }
+        }
+        if (!found)
+        {
+            var gone = new ComboBoxItem { Content = L.T("Device not connected"), Tag = new DeviceInfo(savedId!, L.T("Device not connected"), false) };
+            box.Items.Add(gone);
+            selected = gone;
+        }
+        box.SelectedItem = selected;
+    }
+
+    private static string? IdOf(ComboBox box) => ((box.SelectedItem as ComboBoxItem)?.Tag as DeviceInfo)?.Id;
+
+    // ---------- devices ----------
+
+    private void MicBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading || MicBox.SelectedItem is not ComboBoxItem item) return;
+        if ((item.Tag as DeviceInfo) is { } device && DeviceRules.IsVirtualCable(device.Name))
+        {
+            // The cable's output is the virtual microphone EasyVocal itself feeds: listening to it would loop the voice.
+            MicProblem.Text = L.T("That is EasyVocal's own output — using it as the microphone would loop your voice.");
+            MicProblem.Visibility = Visibility.Visible;
+            loading = true;
+            MicBox.SelectedItem = micShown;
+            loading = false;
+            return;
+        }
+        MicProblem.Visibility = Visibility.Collapsed;
+        micShown = item;
+        controller.Settings.MicDeviceId = IdOf(MicBox);
+        DevicesChanged();
+    }
+
+    private void OutputBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading) return;
+        controller.Settings.OutputDeviceId = IdOf(OutputBox);
+        DevicesChanged();
+    }
+
+    private void MonitorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading) return;
+        controller.Settings.MonitorDeviceId = IdOf(MonitorBox);
+        DevicesChanged();
+    }
+
+    private void DevicesChanged()
+    {
+        controller.Save();
+        controller.RestartAudio();
+    }
+
+    // ---------- general ----------
+
+    private void LanguageBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (loading || LanguageBox.SelectedItem is not ComboBoxItem { Tag: string code }) return;
+        controller.Settings.Language = code;
+        controller.Save();
+    }
+
+    private void StartBox_Click(object sender, RoutedEventArgs e)
+    {
+        bool on = StartBox.IsChecked == true;
+        if (controller.SetStartWithWindows(on)) return;
+        StartBox.IsChecked = !on;
+        AskDialog.Tell(this, L.T("Windows would not let EasyVocal start with it. You can try again in Settings."));
+    }
+
+    private void AskQuitBox_Click(object sender, RoutedEventArgs e)
+    {
+        controller.Settings.ConfirmQuit = AskQuitBox.IsChecked == true;
+        controller.Save();
+    }
+
+    private void SetupAgainButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetupWindow.Open(controller, this);
+        Load(); // setup may have changed the microphone and "Start with Windows"
+    }
+
+    // ---------- general hotkeys ----------
+
+    private static readonly string[] GeneralIds = { "toggleFilter", "stopSounds", "muteMic" };
+
+    private readonly Dictionary<string, Button> hotkeyButtons = new();
+
+    /// <summary>For the smoke test.</summary>
+    internal Button HotkeyButton(string id) => hotkeyButtons[id];
+
+    private static string GeneralLabel(string id) => id switch
+    {
+        "toggleFilter" => L.T("Filter on/off"),
+        "stopSounds" => L.T("Stop all sounds"),
+        _ => L.T("Mute mic"),
+    };
+
+    private void BuildHotkeyRows()
+    {
+        foreach (var id in GeneralIds)
+        {
+            int row = HotkeyGrid.RowDefinitions.Count;
+            HotkeyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var label = new TextBlock { Text = GeneralLabel(id), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 12, 4) };
+            var button = new Button { MinWidth = 130, Margin = new Thickness(0, 3, 0, 3), ToolTip = L.T("Set hotkey…") };
+            var key = id;
+            button.Click += (_, _) => AssignGeneral(key, button);
+            Grid.SetRow(label, row);
+            Grid.SetRow(button, row);
+            Grid.SetColumn(button, 1);
+            HotkeyGrid.Children.Add(label);
+            HotkeyGrid.Children.Add(button);
+            hotkeyButtons[id] = button;
+        }
+    }
+
+    private void RefreshHotkeyRows()
+    {
+        foreach (var (id, button) in hotkeyButtons)
+            button.Content = controller.Settings.GeneralHotkeys.TryGetValue(id, out var key) && !string.IsNullOrEmpty(key) ? key : L.T("Not set");
+    }
+
+    /// <summary>Asks for a key and registers it; if Windows refuses it (another app owns it) the old one comes back and the person is told.</summary>
+    private void AssignGeneral(string id, Button button)
+    {
+        var map = controller.Settings.GeneralHotkeys;
+        map.TryGetValue(id, out var current);
+        var action = "general:" + id;
+        if (!HotkeyCaptureDialog.Pick(this, controller, action, GeneralLabel(id), current, out var chosen)) return;
+        SetGeneral(id, chosen);
+        controller.RebuildHotkeys(); // unregisters first; refused keys are reported through RefusedActions
+        if (chosen != null && controller.RefusedActions.Contains(action))
+        {
+            SetGeneral(id, current);
+            controller.RebuildHotkeys();
+            AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", chosen));
+        }
+        RefreshHotkeyRows();
+    }
+
+    private void SetGeneral(string id, string? key)
+    {
+        if (string.IsNullOrEmpty(key)) controller.Settings.GeneralHotkeys.Remove(id);
+        else controller.Settings.GeneralHotkeys[id] = key;
+        controller.Save();
+    }
+}

@@ -232,6 +232,33 @@ public sealed class AppController : IDisposable
         }
     }
 
+    // ---------- start with Windows ----------
+
+    /// <summary>Where "Start with Windows" is written: the real Run key, or a throwaway one in the smoke test.</summary>
+    public StartupRegistration Startup { get; set; } = StartupRegistration.Default;
+
+    /// <summary>Turns "Start with Windows" on or off. False (nothing changed) when Windows refused the registry write.</summary>
+    public bool SetStartWithWindows(bool on)
+    {
+        try { Startup.Set(on); }
+        catch (Exception ex)
+        {
+            AppLog.Error("Changing 'Start with Windows' failed", ex);
+            return false;
+        }
+        Settings.StartWithWindows = on;
+        Save();
+        return true;
+    }
+
+    /// <summary>When the person chose to start with Windows, keeps the registered program path right after EasyVocal was moved or updated.</summary>
+    public void RefreshStartup()
+    {
+        if (!Settings.StartWithWindows) return;
+        try { Startup.Refresh(); }
+        catch (Exception ex) { AppLog.Error("Refreshing 'Start with Windows' failed", ex); }
+    }
+
     // ---------- voices ----------
 
     /// <summary>Makes a visible voice the active one (and turns the filter on: picking a voice means wanting to hear it).</summary>

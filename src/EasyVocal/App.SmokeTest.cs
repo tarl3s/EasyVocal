@@ -1,9 +1,12 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Win32;
+using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
@@ -177,7 +180,110 @@ public partial class App
         dialog.Close();
         other.Hotkey = null;
         c.Save();
+
+        SmokeSetupAndSettings(main, c, Png);
     }
+
+    // ---------- first-run setup and settings ----------
+
+    /// <summary>"Start with Windows" in the smoke test goes to a throwaway key, never the real Run key.</summary>
+    private static readonly StartupRegistration SmokeStartup = new(@"Software\EasyVocalTest\Smoke", "EasyVocalSmoke");
+
+    private void SmokeSetupAndSettings(MainWindow main, AppController c, Func<string, string> Png)
+    {
+        bool realBefore = StartupRegistration.Default.IsEnabled();
+        c.Settings.SetupDone = false;
+        c.Settings.StartWithWindows = false;
+        try
+        {
+            // Setup, virtual microphone missing (the probe is faked; Install is never pressed: nothing is downloaded).
+            Dialog(new SetupWindow(c, () => false) { Owner = main }, w =>
+            {
+                Check(w.CableMissingPanel.Visibility == Visibility.Visible && w.InstallButton.IsEnabled
+                      && w.CableReadyPanel.Visibility != Visibility.Visible, "setup offers Install when the virtual microphone is missing");
+                Check(w.StartBox.IsChecked == true, "setup starts with 'Start with Windows' ticked on the first run");
+                Check(w.GuideTabs.Items.Count == 3, "setup has the Discord, WhatsApp and Other guides");
+                SnapshotWindow(w, Png("setup_missing"));
+                w.GuideTabs.SelectedIndex = 1;
+                w.UpdateLayout();
+                SnapshotWindow(w, Png("setup_whatsapp"));
+                w.GuideTabs.SelectedIndex = 2;
+                w.UpdateLayout();
+                SnapshotWindow(w, Png("setup_other"));
+                w.ShowRestartMessage();
+                w.UpdateLayout();
+                Check(w.CableStatus.Text == L.T("Restart your PC to finish installing, then open EasyVocal again."), "setup says to restart when the device never shows up");
+                SnapshotWindow(w, Png("setup_restart"));
+                w.ShowOfficialPageFallback(open: false);
+                w.UpdateLayout();
+                SnapshotWindow(w, Png("setup_fallback"));
+            });
+            Check(!c.Settings.SetupDone, "closing setup without Done doesn't finish it");
+
+            // Setup, virtual microphone ready: Done finishes it and writes the (throwaway) startup entry.
+            Dialog(new SetupWindow(c, () => true) { Owner = main }, w =>
+            {
+                Check(w.CableReadyPanel.Visibility == Visibility.Visible && w.CableMissingPanel.Visibility != Visibility.Visible,
+                    "setup shows the tick when the virtual microphone is there");
+                SnapshotWindow(w, Png("setup_ready"));
+                w.DoneButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            });
+            Check(c.Settings.SetupDone && c.Settings.StartWithWindows && SmokeStartup.IsEnabled(), "Done finishes the setup and turns on 'Start with Windows'");
+            Check(SmokeStartup.Command.EndsWith(" --tray", StringComparison.Ordinal), "the startup entry starts EasyVocal with --tray");
+
+            // Settings.
+            c.Settings.GeneralHotkeys["muteMic"] = "Ctrl+F9";
+            string? micBefore = c.Settings.MicDeviceId;
+            Dialog(new SettingsWindow(c) { Owner = main }, w =>
+            {
+                Check(w.StartBox.IsChecked == true, "settings shows 'Start with Windows' on");
+                Check(w.HotkeyButton("muteMic").Content as string == "Ctrl+F9" && w.HotkeyButton("stopSounds").Content as string == L.T("Not set"),
+                    "settings lists the general hotkeys");
+                Check(w.LanguageNote.Visibility == Visibility.Visible, "settings says the language changes on restart");
+                SnapshotWindow(w, Png("settings"));
+
+                // A CABLE device as microphone is refused.
+                var cable = new ComboBoxItem
+                {
+                    Content = "CABLE Output (VB-Audio Virtual Cable)",
+                    Tag = new DeviceInfo("fake-cable", "CABLE Output (VB-Audio Virtual Cable)", false),
+                };
+                w.MicBox.Items.Add(cable);
+                var before = w.MicBox.SelectedItem;
+                w.MicBox.SelectedItem = cable;
+                w.UpdateLayout();
+                Check(w.MicProblem.Visibility == Visibility.Visible
+                      && w.MicProblem.Text == L.T("That is EasyVocal's own output — using it as the microphone would loop your voice.")
+                      && ReferenceEquals(w.MicBox.SelectedItem, before) && c.Settings.MicDeviceId == micBefore,
+                    "a CABLE device is refused as the microphone");
+                SnapshotWindow(w, Png("settings_refused"));
+                w.MicBox.Items.Remove(cable);
+
+                // Switches apply at once.
+                w.LanguageBox.SelectedIndex = 2;
+                Check(c.Settings.Language == "pt-BR", "picking a language is saved");
+                w.LanguageBox.SelectedIndex = 0;
+                Check(c.Settings.Language == "auto", "the language can go back to Automatic");
+                w.AskQuitBox.IsChecked = false;
+                w.AskQuitBox.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Check(!c.Settings.ConfirmQuit, "'Ask before quitting' is saved");
+                w.AskQuitBox.IsChecked = true;
+                w.AskQuitBox.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                w.StartBox.IsChecked = false;
+                w.StartBox.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Check(!c.Settings.StartWithWindows && !SmokeStartup.IsEnabled(), "turning off 'Start with Windows' removes the startup entry");
+            });
+            c.Settings.GeneralHotkeys.Remove("muteMic");
+            c.Save();
+        }
+        finally
+        {
+            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\EasyVocalTest", throwOnMissingSubKey: false); }
+            catch (Exception ex) { AppLog.Error("Cleaning the smoke test registry key failed", ex); }
+        }
+        Check(StartupRegistration.Default.IsEnabled() == realBefore, "the real 'Start with Windows' entry was not touched");
+    }
+
 
     /// <summary>
     /// Shows a dialog window, runs <paramref name="whileOpen"/> once it has drawn, then closes it if it is still open.

@@ -163,7 +163,7 @@ public partial class MainWindow : Window
         if (WindowState == WindowState.Minimized) return;
         // Peak in dB over the last 60 dB, falling back slowly so short peaks stay visible.
         double level = controller.InputLevel;
-        double fraction = level <= 0.001 ? 0 : Math.Clamp((20 * Math.Log10(level) + 60) / 60, 0, 1);
+        double fraction = Audio.MicMeter.BarFraction(level);
         meterShown = Math.Max(fraction, meterShown - 0.04);
         MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
     }
@@ -530,11 +530,9 @@ public partial class MainWindow : Window
 
     private void HearMeButton_Click(object sender, RoutedEventArgs e) => controller.HearMe = HearMeButton.IsChecked == true;
 
-    // TODO(Task 10): open the Settings window.
-    private void SettingsButton_Click(object sender, RoutedEventArgs e) { }
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 
-    // TODO(Task 10): open the Setup window (virtual microphone install / pick).
-    private void FixButton_Click(object sender, RoutedEventArgs e) { }
+    private void FixButton_Click(object sender, RoutedEventArgs e) => SetupWindow.Open(controller, this);
 
     private void StopAllButton_Click(object sender, RoutedEventArgs e) => controller.StopAllSounds();
 

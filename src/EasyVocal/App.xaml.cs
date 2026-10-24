@@ -14,7 +14,7 @@ namespace EasyVocal;
 /// Startup: one instance only (a second launch shows the first one's window and exits), settings, language,
 /// the controller, the main window and the tray. Quitting happens only from the tray (closing the window hides it).
 /// <para>Arguments: <c>--data &lt;folder&gt;</c> uses another data folder (development and tests);
-/// <c>--smoketest</c> starts normally, quits by itself after 3 s and logs "Smoke test passed".</para>
+/// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> starts normally, quits by itself after 3 s and logs "Smoke test passed".</para>
 /// </summary>
 public partial class App : Application
 {
@@ -34,11 +34,12 @@ public partial class App : Application
         base.OnStartup(e);
 
         string dataFolder = SettingsStore.DefaultFolder;
-        bool smokeTest = false;
+        bool smokeTest = false, startHidden = false;
         for (int i = 0; i < e.Args.Length; i++)
         {
             if (e.Args[i] == "--data" && i + 1 < e.Args.Length) dataFolder = Path.GetFullPath(e.Args[++i]);
             else if (e.Args[i] == "--smoketest") smokeTest = true;
+            else if (e.Args[i] == "--tray") startHidden = true;
         }
 
         // Single instance: the first owns the mutex; a later launch wakes it to show its window, then leaves.
@@ -71,6 +72,9 @@ public partial class App : Application
         };
 
         controller = new AppController(dataFolder);
+        // The smoke test must never touch the real "Start with Windows" entry.
+        if (smokeTest) controller.Startup = SmokeStartup;
+        controller.RefreshStartup();
         var language = L.Resolve(controller.Settings.Language);
         L.Load(language == "en" ? null : ReadLanguage(language), language);
 
@@ -78,14 +82,16 @@ public partial class App : Application
         MainWindow = window;
         tray = new Tray(controller, ShowMainWindow, () => Quit(ask: true));
         window.HiddenToTray += () => tray?.ShowStillRunningTip();
-        window.Show();
-        // TODO(Task 10): open the Setup window when !controller.Settings.SetupDone; start hidden with --tray.
+        if (!startHidden) window.Show();
 
         // Opening the devices takes a moment: let the window paint first.
         var started = controller;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
-            if (!quitting && window != null) started.Start(window);
+            if (quitting || window == null) return;
+            started.Start(window);
+            // First run: the setup comes first (not in the smoke test, which opens it itself and must never download anything).
+            if (!started.Settings.SetupDone && !smokeTest) SetupWindow.Open(started, window.IsVisible ? window : null);
         });
 
         if (smokeTest) RunSmokeTest(dataFolder);
