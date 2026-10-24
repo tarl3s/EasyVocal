@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
 
@@ -136,7 +137,7 @@ public class LocalizerTests
         // Built-in names are translated where they are shown.
         foreach (var v in BuiltInVoices.All()) yield return v.Name;
         foreach (var s in StarterSounds.Items()) yield return s.Name;
-        foreach (var label in new[] { "Filter on/off", "Stop all sounds", "Mute mic" }) yield return label;
+        foreach (var (_, label) in HotkeyMap.General) yield return label;
     }
 
     private static string Unescape(string s)

@@ -4,11 +4,27 @@ namespace EasyVocal.Core.Hotkeys;
 
 public static class HotkeyMap
 {
-    /// <summary>Fixed English labels for the general actions; the UI translates them.</summary>
-    private static readonly (string Id, string Label)[] General =
+    // The general actions' ids are keys of AppSettings.GeneralHotkeys: persisted, never rename.
+    public const string ToggleFilter = "toggleFilter";
+    public const string StopSounds = "stopSounds";
+    public const string MuteMic = "muteMic";
+
+    /// <summary>
+    /// The general actions in the order Settings lists them, with fixed English labels (the UI translates them).
+    /// The one list of them: Settings' rows, hotkey names and the registered hotkeys all come from here.
+    /// </summary>
+    public static readonly IReadOnlyList<(string Id, string Label)> General = new[]
     {
-        ("toggleFilter", "Filter on/off"), ("stopSounds", "Stop all sounds"), ("muteMic", "Mute mic"),
+        (ToggleFilter, "Filter on/off"), (StopSounds, "Stop all sounds"), (MuteMic, "Mute mic"),
     };
+
+    /// <summary>The English label of a general action ("muteMic" → "Mute mic"), or null for an unknown id.</summary>
+    public static string? GeneralLabel(string id)
+    {
+        foreach (var (gid, label) in General)
+            if (gid == id) return label;
+        return null;
+    }
 
     public static IReadOnlyList<(string ActionId, Hotkey Key)> All(AppSettings s)
     {
@@ -28,23 +44,5 @@ public static class HotkeyMap
         foreach (var (id, k) in All(s))
             if (k == key && id != exceptActionId) return id;
         return null;
-    }
-
-    /// <summary>
-    /// The stored (untranslated) name of the other item that already uses the key, or null. To show it, translate
-    /// only built-in names: the person's own names are shown as typed.
-    /// </summary>
-    public static string? WhoUses(AppSettings s, Hotkey key, string exceptActionId)
-    {
-        var id = WhoUsesAction(s, key, exceptActionId);
-        if (id == null) return null;
-        var colon = id.IndexOf(':');
-        var rest = id[(colon + 1)..];
-        return id[..colon] switch
-        {
-            "voice" => s.Voices.First(v => v.Id == rest).Name,
-            "sound" => s.Sounds.First(x => x.Id == rest).Name,
-            _ => General.First(g => g.Id == rest).Label,
-        };
     }
 }

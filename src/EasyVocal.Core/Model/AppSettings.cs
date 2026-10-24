@@ -80,6 +80,6 @@ public class AppSettings
     public bool TrayTipShown { get; set; }
     public List<VoicePreset> Voices { get; set; } = new();
     public List<SoundItem> Sounds { get; set; } = new();
-    /// <summary>Keys: "toggleFilter", "stopSounds", "muteMic".</summary>
+    /// <summary>Keys: the ids of <see cref="Hotkeys.HotkeyMap.General"/> ("toggleFilter", "stopSounds", "muteMic").</summary>
     public Dictionary<string, string> GeneralHotkeys { get; set; } = new();
 }

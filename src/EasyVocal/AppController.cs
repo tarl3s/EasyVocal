@@ -706,13 +706,7 @@ public sealed class AppController : IDisposable
         {
             "voice" when FindVoice(id) is { } v => DisplayName(v),
             "sound" when FindSound(id) is { } s => DisplayName(s),
-            _ => id switch
-            {
-                "toggleFilter" => L.T("Filter on/off"),
-                "stopSounds" => L.T("Stop all sounds"),
-                "muteMic" => L.T("Mute mic"),
-                _ => id,
-            },
+            _ => HotkeyMap.GeneralLabel(id) is { } label ? L.T(label) : id,
         };
     }
 
@@ -731,9 +725,9 @@ public sealed class AppController : IDisposable
                 case "general":
                     switch (id)
                     {
-                        case "toggleFilter": FilterEnabled = !FilterEnabled; break;
-                        case "stopSounds": StopAllSounds(); break;
-                        case "muteMic": MicMuted = !MicMuted; break;
+                        case HotkeyMap.ToggleFilter: FilterEnabled = !FilterEnabled; break;
+                        case HotkeyMap.StopSounds: StopAllSounds(); break;
+                        case HotkeyMap.MuteMic: MicMuted = !MicMuted; break;
                     }
                     break;
             }

@@ -246,12 +246,12 @@ public partial class App
             Check(SmokeStartup.Command.EndsWith(" --tray", StringComparison.Ordinal), "the startup entry starts EasyVocal with --tray");
 
             // Settings.
-            c.Settings.GeneralHotkeys["muteMic"] = "Ctrl+F9";
+            c.Settings.GeneralHotkeys[HotkeyMap.MuteMic] = "Ctrl+F9";
             string? micBefore = c.Settings.MicDeviceId;
             Dialog(new SettingsWindow(c) { Owner = main }, w =>
             {
                 Check(w.StartBox.IsChecked == true, "settings shows 'Start with Windows' on");
-                Check(w.HotkeyButton("muteMic").Content as string == "Ctrl+F9" && w.HotkeyButton("stopSounds").Content as string == L.T("Not set"),
+                Check(w.HotkeyButton(HotkeyMap.MuteMic).Content as string == "Ctrl+F9" && w.HotkeyButton(HotkeyMap.StopSounds).Content as string == L.T("Not set"),
                     "settings lists the general hotkeys");
                 Check(w.LanguageNote.Visibility == Visibility.Visible, "settings says the language changes on restart");
                 SnapshotWindow(w, Png("settings"));
@@ -287,7 +287,7 @@ public partial class App
                 w.StartBox.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 Check(!c.Settings.StartWithWindows && !SmokeStartup.IsEnabled(), "turning off 'Start with Windows' removes the startup entry");
             });
-            c.Settings.GeneralHotkeys.Remove("muteMic");
+            c.Settings.GeneralHotkeys.Remove(HotkeyMap.MuteMic);
             c.Save();
         }
         finally

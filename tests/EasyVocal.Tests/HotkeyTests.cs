@@ -62,17 +62,19 @@ public class HotkeyTests
     };
 
     [Fact]
-    public void WhoUses_FindsOtherItem()
+    public void WhoUsesAction_IgnoresSelfAndHidden()
     {
-        Assert.Equal("Airhorn", HotkeyMap.WhoUses(Settings(), K("7"), "voice:robot"));
-        Assert.Equal("Mute mic", HotkeyMap.WhoUses(Settings(), K("F9"), "voice:robot"));
+        Assert.Null(HotkeyMap.WhoUsesAction(Settings(), K("7"), "sound:airhorn"));
+        Assert.Null(HotkeyMap.WhoUsesAction(Settings(), K("Ctrl+2"), "sound:airhorn"));
     }
 
     [Fact]
-    public void WhoUses_IgnoresSelfAndHidden()
+    public void General_IsTheOneListOfGeneralActions()
     {
-        Assert.Null(HotkeyMap.WhoUses(Settings(), K("7"), "sound:airhorn"));
-        Assert.Null(HotkeyMap.WhoUses(Settings(), K("Ctrl+2"), "sound:airhorn"));
+        Assert.Equal(new[] { "toggleFilter", "stopSounds", "muteMic" }, HotkeyMap.General.Select(g => g.Id)); // persisted keys
+        Assert.Equal("Mute mic", HotkeyMap.GeneralLabel(HotkeyMap.MuteMic));
+        Assert.Equal("Filter on/off", HotkeyMap.GeneralLabel(HotkeyMap.ToggleFilter));
+        Assert.Null(HotkeyMap.GeneralLabel("bogus"));
     }
 
     [Fact]

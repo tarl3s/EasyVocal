@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using EasyVocal.Core.Engine;
+using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
@@ -146,34 +147,25 @@ public partial class SettingsWindow : Window
 
     // ---------- general hotkeys ----------
 
-    private static readonly string[] GeneralIds = { "toggleFilter", "stopSounds", "muteMic" };
-
     private readonly Dictionary<string, Button> hotkeyButtons = new();
 
     /// <summary>For the smoke test.</summary>
     internal Button HotkeyButton(string id) => hotkeyButtons[id];
 
-    private static string GeneralLabel(string id) => id switch
-    {
-        "toggleFilter" => L.T("Filter on/off"),
-        "stopSounds" => L.T("Stop all sounds"),
-        _ => L.T("Mute mic"),
-    };
-
     private void BuildHotkeyRows()
     {
-        foreach (var id in GeneralIds)
+        foreach (var (id, label) in HotkeyMap.General)
         {
             int row = HotkeyGrid.RowDefinitions.Count;
             HotkeyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            var label = new TextBlock { Text = GeneralLabel(id), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 12, 4) };
+            var text = new TextBlock { Text = L.T(label), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 12, 4) };
             var button = new Button { MinWidth = 130, Margin = new Thickness(0, 3, 0, 3), ToolTip = L.T("Set hotkey…") };
             var key = id;
-            button.Click += (_, _) => AssignGeneral(key, button);
-            Grid.SetRow(label, row);
+            button.Click += (_, _) => AssignGeneral(key);
+            Grid.SetRow(text, row);
             Grid.SetRow(button, row);
             Grid.SetColumn(button, 1);
-            HotkeyGrid.Children.Add(label);
+            HotkeyGrid.Children.Add(text);
             HotkeyGrid.Children.Add(button);
             hotkeyButtons[id] = button;
         }
@@ -186,12 +178,12 @@ public partial class SettingsWindow : Window
     }
 
     /// <summary>Asks for a key and registers it; if Windows refuses it (another app owns it) the old one comes back and the person is told.</summary>
-    private void AssignGeneral(string id, Button button)
+    private void AssignGeneral(string id)
     {
         var map = controller.Settings.GeneralHotkeys;
         map.TryGetValue(id, out var current);
         var action = "general:" + id;
-        if (!HotkeyCaptureDialog.Pick(this, controller, action, GeneralLabel(id), current, out var chosen)) return;
+        if (!HotkeyCaptureDialog.Pick(this, controller, action, controller.ActionDisplayName(action), current, out var chosen)) return;
         SetGeneral(id, chosen);
         controller.RebuildHotkeys(); // unregisters first; refused keys are reported through RefusedActions
         if (chosen != null && controller.RefusedActions.Contains(action))
