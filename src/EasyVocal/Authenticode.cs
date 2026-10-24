@@ -21,8 +21,11 @@ internal enum SignatureCheck
 /// </summary>
 internal static class Authenticode
 {
-    /// <summary>The names VB-Audio's certificate may carry in its CN or O field (compared without case).</summary>
-    private static readonly string[] VbAudioNames = { "vb-audio software", "vb-audio", "vb audio software", "vincent burel" };
+    /// <summary>
+    /// The names VB-Audio's certificate may carry in its CN or O field (compared without case). Today's VB-CABLE installers
+    /// are signed "CN=BUREL VINCENT Entrepreneur individuel, O=BUREL VINCENT Entrepreneur individuel, …, C=FR".
+    /// </summary>
+    private static readonly string[] VbAudioNames = { "vb-audio software", "vb-audio", "vb audio software", "vincent burel", "burel vincent entrepreneur individuel" };
 
     /// <summary>Trusted by Windows AND signed by VB-Audio.</summary>
     public static SignatureCheck Check(string path)

@@ -262,6 +262,12 @@ public class AuthenticodeTests : IDisposable
     [InlineData("O=Vincent Burel, CN=Something Else", true)]
     [InlineData("cn=vb-audio software", true)]
     [InlineData("CN=VB-Audio Software;O=Other", true)]
+    [InlineData("CN=BUREL VINCENT Entrepreneur individuel, O=BUREL VINCENT Entrepreneur individuel, C=FR, SERIALNUMBER=423 734 177", true)] // the real VB-CABLE signer
+    [InlineData("CN=burel vincent entrepreneur individuel", true)]
+    [InlineData("CN=BUREL VINCENT Entrepreneur individuel Evil", false)]
+    [InlineData("CN=Not BUREL VINCENT Entrepreneur individuel", false)]
+    [InlineData("CN=BUREL VINCENT Entrepreneur", false)]
+    [InlineData("CN=Evil, OU=BUREL VINCENT Entrepreneur individuel", false)]
     [InlineData("CN=Microsoft Corporation, O=Microsoft Corporation, C=US", false)]
     [InlineData("CN=Not VB-Audio Software", false)]
     [InlineData("CN=VB-Audio Software.evil.example", false)]
