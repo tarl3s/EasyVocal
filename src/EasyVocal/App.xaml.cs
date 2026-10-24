@@ -80,6 +80,11 @@ public partial class App : Application
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
+        // A box can be left without LostKeyboardFocus (its dialog closed while it had the keyboard): look again whenever
+        // a window goes away, when another app takes the keyboard, and before the hotkeys are registered.
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.UnloadedEvent, new RoutedEventHandler(OnWindowUnloaded));
+        Deactivated += (_, _) => controller?.SetTyping(false);
+        controller.TypingProbe = () => Keyboard.FocusedElement is TextBoxBase { IsVisible: true };
         // The smoke test must never touch the real "Start with Windows" entry.
         if (smokeTest) controller.Startup = SmokeStartup;
         controller.RefreshStartup();
@@ -107,6 +112,10 @@ public partial class App : Application
 
     private void OnTextFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>
         controller?.SetTyping(e.NewFocus is TextBoxBase);
+
+    // Once the closing window has handed the keyboard on: is a box of ours still typing?
+    private void OnWindowUnloaded(object sender, RoutedEventArgs e) =>
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => controller?.SetTyping(controller.TypingProbe?.Invoke() == true));
 
     /// <summary>Brings the window back from the tray (also when EasyVocal is launched a second time).</summary>
     private void ShowMainWindow()

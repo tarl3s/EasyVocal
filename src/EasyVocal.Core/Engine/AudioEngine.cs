@@ -16,7 +16,8 @@ namespace EasyVocal.Core.Engine;
 /// When an output holds more than 60 ms (the mic's clock runs faster than the device's) its oldest audio is
 /// trimmed back to 20 ms with a short crossfade, so latency never creeps up and nothing is heard skipping.
 /// Without the virtual cable the session still runs with the monitor only (State <see cref="EngineState.NoVirtualCable"/>),
-/// so the voices can be tried with Hear me; the cable is attached as soon as it shows up. Whenever the engine leaves
+/// so the voices can be tried with Hear me; the cable is attached as soon as it shows up (and headphones that stopped
+/// working meanwhile are opened again by <see cref="TryRecover"/>). Whenever the engine leaves
 /// <see cref="EngineState.Running"/> every sound is stopped (they only advance while the mic delivers audio).
 /// </para>
 /// <para>
@@ -63,11 +64,16 @@ public sealed class AudioEngine : IDisposable
     {
         public IAudioInput? Input;
         public volatile IAudioOutput? Call;  // null while the virtual cable is missing (monitor-only session)
-        public IAudioOutput? Monitor;
+        public volatile IAudioOutput? Monitor; // replaced by TryRecover in a monitor-only session whose monitor failed
+        /// <summary>The monitor device that stopped working (the audio thread never writes to it again).</summary>
+        public volatile IAudioOutput? FailedMonitor;
+        public IAudioOutput? MonitorInUse;   // audio thread: the monitor its limiter last fed
         public Action<float[], int>? OnSamples;
         public Action<Exception?>? OnStopped;
         public volatile bool Failed;
-        public volatile bool MonitorFailed;
+
+        /// <summary>The current monitor stopped working. A replacement monitor clears this by itself.</summary>
+        public bool MonitorFailed => Monitor is { } m && ReferenceEquals(FailedMonitor, m);
         public readonly float[] VoiceBuf = new float[Block];
         public readonly float[] SoundsBuf = new float[Block];
         public readonly float[] CallBuf = new float[Block];
@@ -148,8 +154,13 @@ public sealed class AudioEngine : IDisposable
             if (now == EngineState.Stopped) return false;
             Session? live;
             lock (stateLock) live = session;
-            // A monitor-only session keeps its mic running: only the missing cable is looked for again.
-            if (now == EngineState.NoVirtualCable && live is { Failed: false, Call: null }) return AttachCall(live);
+            // A monitor-only session keeps its mic running: only the missing cable is looked for again, and the
+            // headphones when they stopped working or weren't there (nothing else would ever bring them back).
+            if (now == EngineState.NoVirtualCable && live is { Failed: false, Call: null })
+            {
+                if (live.Monitor == null || live.MonitorFailed) ReplaceMonitor(live);
+                return AttachCall(live);
+            }
             TearDown();
             Build();
             return State == EngineState.Running;
@@ -228,6 +239,40 @@ public sealed class AudioEngine : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// UI thread, under <see cref="gate"/>: opens the headphones again for a running monitor-only session whose
+    /// monitor failed or was missing. Still none (or it fails to start): the session goes on as it is.
+    /// </summary>
+    private void ReplaceMonitor(Session live)
+    {
+        IAudioOutput? fresh;
+        try { fresh = makeMonitor(); }
+        catch (Exception) { return; }
+        if (fresh == null) return;
+        try
+        {
+            fresh.Start();
+        }
+        catch (Exception)
+        {
+            TryDispose(fresh);
+            return;
+        }
+        IAudioOutput? old = null;
+        bool swapped = false;
+        lock (stateLock)
+        {
+            if (!live.Failed && ReferenceEquals(session, live))
+            {
+                old = live.Monitor;
+                live.Monitor = fresh; // the audio thread writes to it from its next block
+                swapped = true;
+            }
+        }
+        // The old one had failed (or there was none): the audio thread no longer writes to it.
+        TryDispose(swapped ? old : fresh);
+    }
+
     public void Dispose() => Stop();
 
     // ---------- lifecycle (UI thread, under <gate>) ----------
@@ -287,7 +332,7 @@ public sealed class AudioEngine : IDisposable
             return;
         }
         try { s.Monitor?.Start(); }
-        catch (Exception) { s.MonitorFailed = true; }
+        catch (Exception) { s.FailedMonitor = s.Monitor; }
         try
         {
             s.Input.Start();
@@ -378,7 +423,7 @@ public sealed class AudioEngine : IDisposable
 
     /// <summary>
     /// Leaving Running stops every sound: they only move on while the mic delivers audio, so they would otherwise
-    /// wait and play late when it comes back. (Any thread: the mixer only queues the command.)
+    /// wait and play late when it comes back. (Any thread, the audio thread included: <see cref="SoundMixer.StopAll"/> takes no lock.)
     /// </summary>
     private void AfterChange(EngineState before, EngineState next)
     {
@@ -462,17 +507,18 @@ public sealed class AudioEngine : IDisposable
         }
 
         var monitor = s.Monitor;
-        if (monitor == null || s.MonitorFailed) return;
+        if (monitor == null || ReferenceEquals(monitor, s.FailedMonitor)) return;
         float meTarget = hearMe ? 1f : 0f, soundsTarget = hearSounds ? 1f : 0f;
         if (meTarget == 0f && soundsTarget == 0f && meGain == 0f && soundsGain == 0f)
         {
             monitorWasSilent = true;
             return;
         }
-        if (monitorWasSilent)
+        if (monitorWasSilent || !ReferenceEquals(monitor, s.MonitorInUse))
         {
-            s.MonitorLimiter.Reset(); // do not replay the few samples it held when it was last used
+            s.MonitorLimiter.Reset(); // do not replay the few samples it held when it was last used (or for other headphones)
             monitorWasSilent = false;
+            s.MonitorInUse = monitor;
         }
 
         // voice and sounds are not needed any more: scale them in place and sum.
@@ -488,7 +534,7 @@ public sealed class AudioEngine : IDisposable
         }
         catch (Exception)
         {
-            s.MonitorFailed = true; // the speakers went away: the call carries on, the monitor stays off
+            s.FailedMonitor = monitor; // the speakers went away: the call carries on, this monitor stays off
         }
     }
 

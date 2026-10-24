@@ -164,6 +164,34 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void SaveAfterRecoveringFromBak_KeepsTheGoodBackup()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Language = "good";
+        SettingsStore.Save(tmp, s);
+        SettingsStore.Save(tmp, s); // settings.json.bak holds "good" too
+        File.WriteAllText(SettingsPath, "{ \"Voices\": [ {");
+
+        var file = new SettingsFile(tmp);
+        var loaded = file.Load();
+        Assert.Equal("good", loaded.Language);
+        Assert.Equal("{ \"Voices\": [ {", File.ReadAllText(SettingsPath + ".bad")); // the damaged file is kept
+
+        loaded.Language = "after";
+        Assert.True(file.Save(loaded));
+        // The damaged file never lands in .bak: the good backup survives the first save after the recovery.
+        Assert.Equal("good", JsonLanguage(File.ReadAllText(SettingsPath + ".bak")));
+        Assert.Equal("after", JsonLanguage(File.ReadAllText(SettingsPath)));
+
+        loaded.Language = "later";
+        Assert.True(file.Save(loaded));
+        Assert.Equal("after", JsonLanguage(File.ReadAllText(SettingsPath + ".bak"))); // the usual rotation afterwards
+    }
+
+    private static string? JsonLanguage(string json) =>
+        System.Text.Json.JsonDocument.Parse(json).RootElement.GetProperty("Language").GetString();
+
+    [Fact]
     public void Load_LockedFile_DefaultsAndReadOnlySession()
     {
         var s = SettingsStore.Load(tmp);

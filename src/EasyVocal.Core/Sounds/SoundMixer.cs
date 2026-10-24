@@ -6,15 +6,21 @@ using System.Threading;
 namespace EasyVocal.Core.Sounds;
 
 /// <summary>
-/// Plays soundboard sounds on top of the voice. The UI thread calls <see cref="Toggle"/>, <see cref="StopAll"/>,
-/// <see cref="Set"/> and <see cref="Remove"/>; they only enqueue commands. The audio thread calls
-/// <see cref="MixInto"/> every block, which drains the queue and mixes without locks or allocations.
+/// Plays soundboard sounds on top of the voice. The UI thread calls <see cref="Toggle"/>, <see cref="Stop"/>,
+/// <see cref="Set"/> and <see cref="Remove"/>; they only enqueue commands. <see cref="StopAll"/> may be called from
+/// any thread, the audio thread included: it takes no lock at all. The audio thread calls <see cref="MixInto"/>
+/// every block, which drains the queue and mixes without locks or allocations.
+/// <para>
+/// Every play gets a token that only grows. <see cref="StopAll"/> only raises a watermark: every play whose token is
+/// at or below it counts as stopped (<see cref="IsPlaying"/> says so at once, and <see cref="MixInto"/> silences it
+/// in its next block), so nothing has to be cleared or locked.
+/// </para>
 /// </summary>
 public sealed class SoundMixer
 {
     public const int MaxVoices = 16;
 
-    private enum CommandKind { Start, Stop, StopAll }
+    private enum CommandKind { Start, Stop }
 
     private readonly struct Command
     {
@@ -43,12 +49,14 @@ public sealed class SoundMixer
     // Sample arrays are never mutated: Set swaps the reference, voices keep the array they started with.
     private readonly ConcurrentDictionary<string, float[]> _sounds = new();
     // id -> token of the play that is (or is about to be) sounding. Written by the UI side; the audio thread only
-    // removes the exact (id, token) pair of a play that ended by itself.
+    // removes the exact (id, token) pair of a play that ended by itself. An entry at or below the stop watermark is
+    // left over from before a StopAll and means "not playing".
     private readonly ConcurrentDictionary<string, int> _playing = new();
     private readonly ConcurrentQueue<Command> _commands = new();
     private readonly Voice[] _voices = new Voice[MaxVoices]; // audio thread only
     private long _order;
     private int _token;
+    private int _stoppedUpTo; // every play with a token <= this was stopped by StopAll (only grows)
 
     public SoundMixer()
     {
@@ -86,14 +94,13 @@ public sealed class SoundMixer
     public void Remove(string id)
     {
         _sounds.TryRemove(id, out _);
-        if (_playing.TryRemove(id, out int token))
-            _commands.Enqueue(new Command(CommandKind.Stop, id, null, 0, token));
+        Stop(id);
     }
 
     /// <summary>Starts the sound, or stops it when it is already playing. True = it started.</summary>
     public bool Toggle(string id, float volume)
     {
-        if (_playing.TryRemove(id, out int old))
+        if (_playing.TryRemove(id, out int old) && Live(old))
         {
             _commands.Enqueue(new Command(CommandKind.Stop, id, null, 0, old));
             return false;
@@ -112,28 +119,41 @@ public sealed class SoundMixer
     /// </summary>
     public void Stop(string id)
     {
-        if (_playing.TryRemove(id, out int token))
+        if (_playing.TryRemove(id, out int token) && Live(token))
             _commands.Enqueue(new Command(CommandKind.Stop, id, null, 0, token));
     }
 
+    /// <summary>Stops every sound. Any thread and lock-free: the engine calls it from the audio thread when the audio stops.</summary>
     public void StopAll()
     {
-        _playing.Clear();
-        _commands.Enqueue(new Command(CommandKind.StopAll, "", null, 0, 0));
+        int upTo = Volatile.Read(ref _token);
+        for (;;)
+        {
+            int was = Volatile.Read(ref _stoppedUpTo);
+            if (upTo <= was || Interlocked.CompareExchange(ref _stoppedUpTo, upTo, was) == was) return;
+        }
     }
 
     /// <summary>True from the moment a sound is started until it ends or is stopped.</summary>
-    public bool IsPlaying(string id) => _playing.ContainsKey(id);
+    public bool IsPlaying(string id) => _playing.TryGetValue(id, out int token) && Live(token);
+
+    private bool Live(int token) => token > Volatile.Read(ref _stoppedUpTo);
 
     /// <summary>Audio thread: adds every playing sound to <paramref name="target"/>.</summary>
     public void MixInto(Span<float> target)
     {
-        while (_commands.TryDequeue(out var cmd)) Apply(cmd);
+        int stoppedUpTo = Volatile.Read(ref _stoppedUpTo);
+        while (_commands.TryDequeue(out var cmd)) Apply(cmd, stoppedUpTo);
 
         for (int v = 0; v < _voices.Length; v++)
         {
             var voice = _voices[v];
             if (!voice.Active) continue;
+            if (voice.Token <= stoppedUpTo)
+            {
+                End(voice, naturalEnd: false); // stopped by StopAll
+                continue;
+            }
             var samples = voice.Samples;
             int pos = voice.Position;
             int n = Math.Min(target.Length, samples.Length - pos);
@@ -144,24 +164,17 @@ public sealed class SoundMixer
         }
     }
 
-    private void Apply(in Command cmd)
+    private void Apply(in Command cmd, int stoppedUpTo)
     {
-        switch (cmd.Kind)
+        if (cmd.Kind == CommandKind.Start)
         {
-            case CommandKind.Start:
-                Start(cmd);
-                break;
-            case CommandKind.Stop:
-                for (int i = 0; i < _voices.Length; i++)
-                {
-                    var voice = _voices[i];
-                    if (voice.Active && voice.Token == cmd.Token && voice.Id == cmd.Id) End(voice, naturalEnd: false);
-                }
-                break;
-            default:
-                for (int i = 0; i < _voices.Length; i++)
-                    if (_voices[i].Active) End(_voices[i], naturalEnd: false);
-                break;
+            if (cmd.Token > stoppedUpTo) Start(cmd); // a play StopAll already stopped never starts
+            return;
+        }
+        for (int i = 0; i < _voices.Length; i++)
+        {
+            var voice = _voices[i];
+            if (voice.Active && voice.Token == cmd.Token && voice.Id == cmd.Id) End(voice, naturalEnd: false);
         }
     }
 

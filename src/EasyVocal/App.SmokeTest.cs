@@ -93,8 +93,13 @@ public partial class App
             w.HearToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Check(w.SaveButton.Content as string == L.T("Save as new filter"), "a built-in voice offers 'Save as new filter'");
             SnapshotWindow(w, Png("filter_editor"));
+            // As if the name box had the keyboard and never reported losing it: no text box will lose focus on close.
+            w.HearToggle.Focus();
+            c.SetTyping(true);
         });
         Check(c.HearMe == hearBefore && c.HearingMe == hearBefore, "Hear me is put back after the filter editor");
+        await Task.Delay(150);
+        Check(!c.IsTyping, "the hotkeys come back after a dialog closes with its text box focused");
 
         Dialog(new FilterEditorWindow(c, null) { Owner = main }, w =>
         {

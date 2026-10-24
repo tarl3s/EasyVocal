@@ -619,6 +619,7 @@ public sealed class AppController : IDisposable
     {
         if (hotkeys == null || disposed) return;
         hotkeys.UnregisterAll();
+        if (typing && TypingProbe?.Invoke() == false) typing = false; // the box was left without telling us
         if (captureSuspends > 0 || typing) return; // taken back by ResumeHotkeys / SetTyping(false)
         var problems = new List<string>();
         var refused = new HashSet<string>();
@@ -663,6 +664,18 @@ public sealed class AppController : IDisposable
         if (on) hotkeys?.UnregisterAll();
         else RebuildHotkeys();
     }
+
+    /// <summary>True when one of our text boxes really has the keyboard now (set by the app; null = trust <see cref="SetTyping"/>).</summary>
+    public Func<bool>? TypingProbe { get; set; }
+
+    /// <summary>The hotkeys are let go because a text box has the keyboard.</summary>
+    internal bool IsTyping => typing;
+
+    /// <summary>How many hotkeys Windows holds for us right now.</summary>
+    internal int RegisteredHotkeyCount => hotkeys?.Count ?? 0;
+
+    /// <summary>For the e2e test: Windows reporting the press of the hotkey registered for <paramref name="action"/>.</summary>
+    internal bool SimulateHotkeyPress(string action) => hotkeys?.SimulatePress(action) ?? false;
 
     /// <summary>True when Windows would accept this combination now. Only meaningful after <see cref="SuspendHotkeys"/>.</summary>
     public bool IsHotkeyFree(Hotkey key) => hotkeys?.IsFree(key) ?? true;

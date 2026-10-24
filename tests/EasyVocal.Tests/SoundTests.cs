@@ -297,6 +297,61 @@ public class SoundTests : IDisposable
     }
 
     [Fact]
+    public void Mixer_StopAllBeforeTheStartWasMixed_NeverStarts()
+    {
+        var m = new SoundMixer();
+        int started = 0;
+        m.PlayingChanged += (_, on) => { if (on) started++; };
+        m.Set("a", Constant(0.2f, Sr));
+        m.Toggle("a", 1);   // queued, not mixed yet
+        m.StopAll();
+        Assert.False(m.IsPlaying("a"));
+        Assert.Equal(0, Signals.Peak(MixBlock(m)));
+        Assert.Equal(0, started);
+    }
+
+    [Fact]
+    public void Mixer_StopAllThenToggleBeforeTheNextBlock_PlaysOnce()
+    {
+        var m = new SoundMixer();
+        m.Set("a", Constant(0.2f, Sr));
+        m.Toggle("a", 1);
+        MixBlock(m);
+        m.StopAll();                      // e.g. from the audio thread
+        Assert.True(m.Toggle("a", 1));    // a fresh play, not a "stop" of the old one
+        Assert.True(m.IsPlaying("a"));
+        var block = MixBlock(m);
+        Assert.Equal(0.2f, block[0], 5);  // the old play is gone, only the new one sounds
+        Assert.True(m.IsPlaying("a"));
+        Assert.False(m.Toggle("a", 1));   // and the next click stops it
+        Assert.Equal(0, Signals.Peak(MixBlock(m)));
+    }
+
+    [Fact]
+    public void Mixer_StopAllFromAnotherThread_WhileTheUiToggles_StaysConsistent()
+    {
+        var m = new SoundMixer();
+        m.Set("a", Constant(0.1f, Sr * 10));
+        var stopper = new System.Threading.Thread(() =>
+        {
+            for (int i = 0; i < 20000; i++) m.StopAll();
+        });
+        stopper.Start();
+        for (int i = 0; i < 20000; i++)
+        {
+            m.Toggle("a", 1);
+            MixBlock(m);
+        }
+        stopper.Join();
+        m.StopAll();
+        MixBlock(m);
+        Assert.False(m.IsPlaying("a"));
+        Assert.Equal(0, Signals.Peak(MixBlock(m)));
+        Assert.True(m.Toggle("a", 1));
+        Assert.Equal(0.1f, MixBlock(m)[0], 5);
+    }
+
+    [Fact]
     public void Mixer_MoreThan16Voices_OldestStops()
     {
         var m = new SoundMixer();

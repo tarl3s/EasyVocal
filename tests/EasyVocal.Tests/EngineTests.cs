@@ -427,6 +427,54 @@ public class EngineTests
     }
 
     [Fact]
+    public void MonitorOnly_HeadphonesFail_TryRecoverOpensThemAgain()
+    {
+        using var rig = new Rig { CallFactory = () => throw new NoVirtualCableException() };
+        rig.Engine.HearMe = true;
+        rig.Engine.FilterEnabled = false;
+        rig.Engine.Start();
+        var first = rig.Monitor;
+        first.ThrowOnWrite = true; // headphones unplugged
+        rig.Mic.Feed(Signals.Sine(200, 0.05, 0.4f));
+        Assert.True(rig.Engine.MonitorLost);
+
+        Assert.False(rig.Engine.TryRecover()); // the cable is still missing…
+        Assert.Equal(2, rig.Monitors.Count);    // …but the headphones are opened again
+        Assert.True(first.Disposed);
+        Assert.False(rig.Engine.MonitorLost);
+        Assert.True(rig.Engine.MonitorOnly);
+        Assert.Single(rig.Inputs);              // the mic keeps running
+        Assert.Equal(1, rig.Monitor.StartCount);
+
+        var voice = Signals.Sine(200, 0.2, 0.4f);
+        rig.Mic.Feed(voice);
+        AssertDelayedCopy(voice, rig.Monitor.Written);
+
+        Assert.False(rig.Engine.TryRecover());
+        Assert.Equal(2, rig.Monitors.Count);    // working headphones are left alone
+    }
+
+    [Fact]
+    public void MonitorOnly_NoHeadphonesAtStart_TryRecoverOpensThemWhenTheyAppear()
+    {
+        using var rig = new Rig { CallFactory = () => throw new NoVirtualCableException(), WithMonitor = false };
+        rig.Engine.HearMe = true;
+        rig.Engine.FilterEnabled = false;
+        rig.Engine.Start();
+        Assert.True(rig.Engine.MonitorOnly);
+        Assert.False(rig.Engine.TryRecover());
+        Assert.Empty(rig.Monitors);
+
+        rig.WithMonitor = true; // plugged in
+        Assert.False(rig.Engine.TryRecover());
+        Assert.Single(rig.Monitors);
+        Assert.Single(rig.Inputs);
+        var voice = Signals.Sine(200, 0.1, 0.4f);
+        rig.Mic.Feed(voice);
+        AssertDelayedCopy(voice, rig.Monitor.Written);
+    }
+
+    [Fact]
     public void MonitorFails_MonitorLostIsReported()
     {
         using var rig = new Rig();

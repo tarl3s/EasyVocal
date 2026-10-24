@@ -53,6 +53,28 @@ public sealed class GlobalHotkeys : IDisposable
         return true;
     }
 
+    /// <summary>How many hotkeys are registered now.</summary>
+    public int Count => _actions.Count;
+
+    /// <summary>
+    /// For the e2e test: sends this window the WM_HOTKEY Windows would send for the action's hotkey, so the press
+    /// goes through the same path as a real one. False when that action has no registered hotkey.
+    /// </summary>
+    internal bool SimulatePress(string actionId)
+    {
+        if (_disposed) return false;
+        foreach (var (id, action) in _actions)
+        {
+            if (action != actionId) continue;
+            SendMessage(_source.Handle, WM_HOTKEY, (IntPtr)id, IntPtr.Zero);
+            return true;
+        }
+        return false;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
     public void UnregisterAll()
     {
         foreach (var id in _actions.Keys) UnregisterHotKey(_source.Handle, id);

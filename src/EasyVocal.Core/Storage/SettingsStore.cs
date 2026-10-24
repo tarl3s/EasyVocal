@@ -56,7 +56,7 @@ public static class SettingsStore
     public static AppSettings Load(string folder) => Load(folder, out _);
 
     /// <summary>
-    /// Reads settings.json. A damaged file is kept as settings.json.bad and the previous good copy
+    /// Reads settings.json. A damaged file is moved to settings.json.bad and the previous good copy
     /// (settings.json.bak) is used instead; with neither, defaults. <paramref name="couldNotRead"/> is true when
     /// settings.json exists but could not be read at all (another program holds it, no permission): the caller
     /// must not save over it this session.
@@ -75,7 +75,9 @@ public static class SettingsStore
         else if (text != null)
         {
             s = Parse(text);
-            if (s == null) KeepBadCopy(path);
+            // The damaged file is kept as .bad and moved out of the way: the next Save would otherwise put it in
+            // .bak, over the good backup this load is about to use.
+            if (s == null && KeepBadCopy(path)) TryDelete(path);
         }
         if (s == null && File.Exists(backup))
         {
@@ -149,9 +151,21 @@ public static class SettingsStore
         catch (Exception) { return null; }
     }
 
-    private static void KeepBadCopy(string path)
+    /// <summary>True when the damaged file is now safe in settings.json.bad.</summary>
+    private static bool KeepBadCopy(string path)
     {
-        try { File.Copy(path, path + ".bad", overwrite: true); } catch { }
+        try
+        {
+            File.Copy(path, path + ".bad", overwrite: true);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception) { /* left in place: the worst case is the old behaviour */ }
     }
 
     private static AppSettings Normalize(AppSettings s)
