@@ -10,6 +10,8 @@ public sealed class GlobalHotkeys : IDisposable
 {
     private const int WM_HOTKEY = 0x0312;
     private const uint MOD_NOREPEAT = 0x4000;
+    /// <summary>The highest id an application may use; <see cref="IsFree"/> borrows it, the real ones count up from 1.</summary>
+    private const int ProbeId = 0xBFFF;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
@@ -34,6 +36,7 @@ public sealed class GlobalHotkeys : IDisposable
     public bool Register(string actionId, Hotkey key)
     {
         if (_disposed) return false;
+        if (_nextId >= ProbeId) return false; // can't happen: ids start over at every UnregisterAll
         var id = _nextId++;
         if (!RegisterHotKey(_source.Handle, id, (uint)key.Mods | MOD_NOREPEAT, (uint)key.VirtualKey)) return false;
         _actions[id] = actionId;
@@ -47,14 +50,16 @@ public sealed class GlobalHotkeys : IDisposable
     public bool IsFree(Hotkey key)
     {
         if (_disposed) return false;
-        const int probeId = 0xBFFF; // the highest id an application may use; the real ones count up from 1
-        if (!RegisterHotKey(_source.Handle, probeId, (uint)key.Mods | MOD_NOREPEAT, (uint)key.VirtualKey)) return false;
-        UnregisterHotKey(_source.Handle, probeId);
+        if (!RegisterHotKey(_source.Handle, ProbeId, (uint)key.Mods | MOD_NOREPEAT, (uint)key.VirtualKey)) return false;
+        UnregisterHotKey(_source.Handle, ProbeId);
         return true;
     }
 
     /// <summary>How many hotkeys are registered now.</summary>
     public int Count => _actions.Count;
+
+    /// <summary>The highest id in use (0 when none): at most the number of keys asked for since the last <see cref="UnregisterAll"/>.</summary>
+    internal int HighestId => _actions.Count == 0 ? 0 : _actions.Keys.Max();
 
     /// <summary>
     /// For the e2e test: sends this window the WM_HOTKEY Windows would send for the action's hotkey, so the press
@@ -75,10 +80,12 @@ public sealed class GlobalHotkeys : IDisposable
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
+    /// <summary>Lets go of every hotkey. The ids start over (this runs on every text-box focus change).</summary>
     public void UnregisterAll()
     {
         foreach (var id in _actions.Keys) UnregisterHotKey(_source.Handle, id);
         _actions.Clear();
+        _nextId = 1;
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)

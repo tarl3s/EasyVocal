@@ -250,6 +250,9 @@ public partial class App
             Expect(c.ActiveVoice.Id == "chipmunk", "pressing the hotkey switches to Chipmunk");
             var (got, _) = await Record(Call, settleMs: 200);
             Expect(E2ESignal.Pitch(got) > 200, "the call has the Chipmunk voice");
+            for (int i = 0; i < 50; i++) { c.SetTyping(true); c.SetTyping(false); } // a text box gaining and losing the keyboard
+            Expect(c.RegisteredHotkeyCount == 1 && c.HighestHotkeyId == 1, $"hotkey ids start over on every rebuild (highest {c.HighestHotkeyId})");
+            Expect(c.SimulateHotkeyPress("voice:chipmunk"), "the hotkey still works after the rebuilds");
         });
 
         await Step("7  filter editor: live preview on the call and the headphones, Cancel puts everything back, hotkeys come back", async () =>

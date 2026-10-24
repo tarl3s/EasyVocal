@@ -678,6 +678,9 @@ public sealed class AppController : IDisposable
     /// <summary>How many hotkeys Windows holds for us right now.</summary>
     internal int RegisteredHotkeyCount => hotkeys?.Count ?? 0;
 
+    /// <summary>The highest hotkey id in use (the e2e test checks it doesn't keep growing).</summary>
+    internal int HighestHotkeyId => hotkeys?.HighestId ?? 0;
+
     /// <summary>The headphones of the running session stopped working (unplugged).</summary>
     internal bool MonitorLost => engine.MonitorLost;
 
