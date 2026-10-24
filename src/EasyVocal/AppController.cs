@@ -35,6 +35,7 @@ public sealed class AppController : IDisposable
     private readonly SoundMixer mixer = new();
     private readonly AudioEngine engine;
     private readonly SettingsFile settingsFile;
+    private readonly IAudioDevices devices;
     private readonly DispatcherTimer saveTimer, recoverTimer, deviceTimer;
     private GlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
@@ -53,9 +54,11 @@ public sealed class AppController : IDisposable
     private bool started, disposed, savePending;
 
     /// <param name="dataFolder">Where settings.json and the Sounds folder live (normally <see cref="SettingsStore.DefaultFolder"/>).</param>
-    public AppController(string dataFolder)
+    /// <param name="devices">The microphones and playback devices to use; null = the real ones (the e2e test passes its own).</param>
+    public AppController(string dataFolder, IAudioDevices? devices = null)
     {
         ui = Dispatcher.CurrentDispatcher;
+        this.devices = devices ?? WindowsAudioDevices.Instance;
         DataFolder = dataFolder;
         SoundsFolder = Path.Combine(dataFolder, "Sounds");
         FirstRun = !File.Exists(Path.Combine(dataFolder, "settings.json"));
@@ -123,7 +126,7 @@ public sealed class AppController : IDisposable
         hotkeys.Pressed += OnHotkey;
         RebuildHotkeys();
 
-        DeviceList.Changed += OnDevicesChanged;
+        devices.Changed += OnDevicesChanged;
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio started: " + engine.State);
@@ -152,7 +155,7 @@ public sealed class AppController : IDisposable
         deviceTimer.Stop();
         if (started)
         {
-            DeviceList.Changed -= OnDevicesChanged;
+            devices.Changed -= OnDevicesChanged;
             if (hotkeys != null)
             {
                 hotkeys.Pressed -= OnHotkey;
@@ -674,6 +677,12 @@ public sealed class AppController : IDisposable
     /// <summary>How many hotkeys Windows holds for us right now.</summary>
     internal int RegisteredHotkeyCount => hotkeys?.Count ?? 0;
 
+    /// <summary>The headphones of the running session stopped working (unplugged).</summary>
+    internal bool MonitorLost => engine.MonitorLost;
+
+    /// <summary>The sound's file is decoded and ready to play.</summary>
+    internal bool IsSoundLoaded(string soundId) => mixer.TryGet(soundId, out _);
+
     /// <summary>For the e2e test: Windows reporting the press of the hotkey registered for <paramref name="action"/>.</summary>
     internal bool SimulateHotkeyPress(string action) => hotkeys?.SimulatePress(action) ?? false;
 
@@ -761,9 +770,9 @@ public sealed class AppController : IDisposable
         micInUse = null;
         usedMic = null;
         // Never pass null: null means Windows' default microphone, which could be the virtual cable (a feedback loop).
-        var pick = micPicker.Pick(Settings.MicDeviceId, DeviceList.Inputs(), DateTime.UtcNow);
+        var pick = micPicker.Pick(Settings.MicDeviceId, devices.Inputs(), DateTime.UtcNow);
         var id = pick.Id ?? throw new InvalidOperationException("No microphone is connected.");
-        var input = new WasapiMicInput(id);
+        var input = devices.OpenMic(id);
         if (pick.Fallback) AppLog.Info("The chosen microphone is missing: using " + pick.Name + " for now");
         micInUse = pick;
         usedMic = id;
@@ -773,8 +782,8 @@ public sealed class AppController : IDisposable
     private IAudioOutput MakeCallOutput()
     {
         usedCall = null;
-        var id = DeviceRules.PickCall(Settings.OutputDeviceId, DeviceList.Outputs()) ?? throw new NoVirtualCableException();
-        var output = new WasapiSpeakerOutput(id);
+        var id = DeviceRules.PickCall(Settings.OutputDeviceId, devices.Outputs()) ?? throw new NoVirtualCableException();
+        var output = devices.OpenSpeaker(id);
         usedCall = id;
         return output;
     }
@@ -783,21 +792,21 @@ public sealed class AppController : IDisposable
     private IAudioOutput? MakeMonitor()
     {
         usedMonitor = null;
-        var outputs = DeviceList.Outputs();
+        var outputs = devices.Outputs();
         var id = DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
         if (id == null) return null;
-        var output = new WasapiSpeakerOutput(id);
+        var output = devices.OpenSpeaker(id);
         usedMonitor = id;
         return output;
     }
 
     /// <summary>Every active device and which ones are the defaults: a change means the engine may pick other devices.</summary>
-    private static string DeviceFingerprint()
+    private string DeviceFingerprint()
     {
         var sb = new StringBuilder();
-        foreach (var d in DeviceList.Inputs()) sb.Append(d.Id).Append(d.IsDefault ? "*|" : "|");
+        foreach (var d in devices.Inputs()) sb.Append(d.Id).Append(d.IsDefault ? "*|" : "|");
         sb.Append('#');
-        foreach (var d in DeviceList.Outputs()) sb.Append(d.Id).Append(d.IsDefault ? "*|" : "|");
+        foreach (var d in devices.Outputs()) sb.Append(d.Id).Append(d.IsDefault ? "*|" : "|");
         return sb.ToString();
     }
 
@@ -821,7 +830,7 @@ public sealed class AppController : IDisposable
         {
             // Only when this session would now open other devices (a mic came back, new default headphones…), or its
             // headphones stopped working: they never come back by themselves. An unrelated device changes nothing.
-            var wanted = PickRoutes(DeviceList.Inputs(), DeviceList.Outputs());
+            var wanted = PickRoutes(devices.Inputs(), devices.Outputs());
             var inUse = new AudioRoutes(usedMic, usedCall, usedMonitor);
             bool restart = AudioRoutes.NeedsRestart(inUse, wanted, engine.MonitorLost);
             AppLog.Info("Devices changed (engine Running): " + (restart ? "restarting the audio" : "nothing to do"));

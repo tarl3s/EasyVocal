@@ -33,6 +33,28 @@ public class AppArgsTests
     }
 
     [Fact]
+    public void E2EWithoutData_IsRefused()
+    {
+        var args = AppArgs.Parse(new[] { "--e2e" });
+        Assert.True(args.E2E);
+        Assert.True(args.TestMode);
+        Assert.False(args.Allowed);
+        Assert.False(AppArgs.Parse(new[] { "--e2e-relaunch" }).Allowed);
+    }
+
+    [Fact]
+    public void E2EWithData_IsAllowed()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "EV_args_e2e");
+        var args = AppArgs.Parse(new[] { "--data", folder, "--e2e" });
+        Assert.True(args.Allowed);
+        Assert.False(args.E2ERelaunch);
+        Assert.False(args.SmokeTest);
+        var relaunch = AppArgs.Parse(new[] { "--data", folder, "--e2e-relaunch" });
+        Assert.True(relaunch.E2E && relaunch.E2ERelaunch && relaunch.Allowed);
+    }
+
+    [Fact]
     public void DataWithoutAFolder_IsIgnored()
     {
         var args = AppArgs.Parse(new[] { "--smoketest", "--data" });
