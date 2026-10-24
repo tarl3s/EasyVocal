@@ -22,7 +22,7 @@ public interface IAudioDevices
     /// <summary>Opens a playback device by endpoint id. Throws when it can't be opened.</summary>
     IAudioOutput OpenSpeaker(string id);
 
-    /// <summary>The device list may have changed. Raised on any thread (see <see cref="DeviceList.Changed"/>).</summary>
+    /// <summary>The device list may have changed. Raised on any thread (see <see cref="DeviceList.Changed"/>): post to the UI thread.</summary>
     event Action? Changed;
 }
 

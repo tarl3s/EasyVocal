@@ -83,6 +83,9 @@ public sealed class AppController : IDisposable
     /// <summary>No settings.json existed when the app started.</summary>
     public bool FirstRun { get; }
 
+    /// <summary>The microphones and playback devices every window lists and opens (the e2e test swaps in its own).</summary>
+    public IAudioDevices Devices => devices;
+
     public AppSettings Settings { get; }
 
     /// <summary>Something the windows show changed (state, toggles, active voice, a sound started or ended…). UI thread.</summary>

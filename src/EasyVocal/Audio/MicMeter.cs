@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using EasyVocal.Core.Engine;
 
 namespace EasyVocal.Audio;
 
@@ -9,15 +10,16 @@ namespace EasyVocal.Audio;
 /// </summary>
 public sealed class MicMeter : IDisposable
 {
-    private WasapiMicInput? input;
+    private IAudioInput? input;
     private float peak;
 
+    /// <param name="devices">Where the microphone is opened (the controller's devices: the real ones, or the e2e test's).</param>
     /// <param name="deviceId">The endpoint id of the microphone to listen to.</param>
-    public MicMeter(string deviceId)
+    public MicMeter(IAudioDevices devices, string deviceId)
     {
         try
         {
-            input = new WasapiMicInput(deviceId);
+            input = devices.OpenMic(deviceId);
             input.Samples += OnSamples;
             input.Start();
         }

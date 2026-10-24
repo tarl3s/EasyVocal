@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using EasyVocal.Audio;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Text;
 
@@ -41,8 +40,8 @@ public partial class SettingsWindow : Window
         try
         {
             var s = controller.Settings;
-            var inputs = DeviceList.Inputs();
-            var outputs = DeviceList.Outputs();
+            var inputs = controller.Devices.Inputs();
+            var outputs = controller.Devices.Outputs();
 
             DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), inputs, s.MicDeviceId);
             micShown = MicBox.SelectedItem as ComboBoxItem;

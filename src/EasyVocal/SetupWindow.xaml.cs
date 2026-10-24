@@ -36,7 +36,7 @@ public partial class SetupWindow : Window
     public SetupWindow(AppController controller, Func<bool>? cableProbe = null)
     {
         this.controller = controller;
-        this.cableProbe = cableProbe ?? (() => DeviceRules.FindVirtualCable(DeviceList.Outputs()) != null);
+        this.cableProbe = cableProbe ?? (() => DeviceRules.FindVirtualCable(controller.Devices.Outputs()) != null);
         InitializeComponent();
         DarkTitleBar.Use(this);
         MaxHeight = Math.Max(400, SystemParameters.WorkArea.Height - 40);
@@ -52,7 +52,7 @@ public partial class SetupWindow : Window
         cableWasReady = this.cableProbe(); // already there when the window opened: no audio restart needed
         RefreshCable();
         FillMics();
-        DeviceList.Changed += OnDevicesChanged;
+        controller.Devices.Changed += OnDevicesChanged;
         meterTimer.Start();
     }
 
@@ -203,7 +203,7 @@ public partial class SetupWindow : Window
     /// <summary>Lists the real microphones (VB-CABLE's own end is never offered) and keeps the choice; restarts the level bar.</summary>
     private void FillMics()
     {
-        var inputs = DeviceList.Inputs();
+        var inputs = controller.Devices.Inputs();
         var mics = DeviceRules.ExcludeVirtualCable(inputs);
         var fingerprint = string.Join("|", mics.Select(m => m.Id)) + "#" + controller.Settings.MicDeviceId;
         if (fingerprint == micFingerprint) return;
@@ -228,7 +228,7 @@ public partial class SetupWindow : Window
         meter?.Dispose();
         meter = null;
         var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(inputs)?.Id;
-        if (id != null) meter = new MicMeter(id); // an unplugged choice can't be opened: the bar just stays empty
+        if (id != null) meter = new MicMeter(controller.Devices, id); // an unplugged choice can't be opened: the bar just stays empty
     }
 
     private void MicBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -240,7 +240,7 @@ public partial class SetupWindow : Window
         controller.Save();
         controller.RestartAudio();
         micFingerprint = ""; // the next list refresh must see the new choice
-        StartMeter(DeviceList.Inputs());
+        StartMeter(controller.Devices.Inputs());
     }
 
     private void UpdateMeter()
@@ -345,7 +345,7 @@ public partial class SetupWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         closed = true;
-        DeviceList.Changed -= OnDevicesChanged;
+        controller.Devices.Changed -= OnDevicesChanged;
         meterTimer.Stop();
         waitTimer.Stop();
         cancelInstall?.Cancel();

@@ -23,17 +23,25 @@ internal sealed class TestAudioDevices : IAudioDevices
     private readonly float[] voice = E2ESignal.Voice();
     private readonly Dictionary<string, CaptureOutput> latest = new();
     private bool micPresent = true, headphonesPresent = true, cablePresent;
-    private TestMic? mic;
+    private readonly List<TestMic> mics = new(); // every one opened (the engine's, and the setup window's level meter)
 
     public TestAudioDevices(bool cablePresent) => this.cablePresent = cablePresent;
 
     /// <summary>The loop the microphone plays (mono 48 kHz, <see cref="E2ESignal.LoopSeconds"/> long).</summary>
     public float[] VoiceLoop => voice;
 
-    /// <summary>The microphone opened last (the one the engine listens to while it runs).</summary>
+    /// <summary>The microphone opened last and still open (the one the engine listens to while it runs).</summary>
     public TestMic? Mic
     {
-        get { lock (sync) return mic; }
+        get
+        {
+            lock (sync)
+            {
+                for (int i = mics.Count - 1; i >= 0; i--)
+                    if (!mics[i].Disposed) return mics[i];
+                return mics.Count > 0 ? mics[^1] : null;
+            }
+        }
     }
 
     /// <summary>The device opened last with this id (VB-CABLE = <see cref="CableId"/>, headphones = <see cref="HeadphonesId"/>).</summary>
@@ -86,7 +94,9 @@ internal sealed class TestAudioDevices : IAudioDevices
         lock (sync)
         {
             if (id != MicId || !micPresent) throw new IOException("No such microphone: " + id);
-            mic = new TestMic(voice);
+            var mic = new TestMic(voice);
+            mics.RemoveAll(m => m.Disposed);
+            mics.Add(mic);
             return mic;
         }
     }
@@ -116,16 +126,16 @@ internal sealed class TestAudioDevices : IAudioDevices
         if (!present && latest.TryGetValue(HeadphonesId, out var o)) o.Failing = true;
     });
 
-    /// <summary>Unplugs the microphone (its capture ends with an IOException, like WASAPI's) or plugs it back.</summary>
+    /// <summary>Unplugs the microphone (every capture of it ends with an IOException, like WASAPI's) or plugs it back.</summary>
     public void SetMic(bool present)
     {
-        TestMic? gone = null;
+        TestMic[] gone = Array.Empty<TestMic>();
         Change(() =>
         {
             micPresent = present;
-            if (!present) gone = mic;
+            if (!present) gone = mics.ToArray();
         });
-        gone?.Fail(new IOException("The microphone was unplugged (e2e)."));
+        foreach (var m in gone) m.Fail(new IOException("The microphone was unplugged (e2e)."));
     }
 
     private void Change(Action change)
@@ -192,6 +202,9 @@ internal sealed class TestMic : IAudioInput
             Thread.Sleep(2);
         }
     }
+
+    /// <summary>Closed by whoever opened it.</summary>
+    public bool Disposed => stop;
 
     public void Dispose()
     {

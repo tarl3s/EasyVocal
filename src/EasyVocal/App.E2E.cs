@@ -90,6 +90,16 @@ public partial class App
                    && main.BannerText.Text == L.T("Virtual microphone not found. You can still try the voices with 🎧 Hear me.")
                    && main.FixButton.Visibility == Visibility.Visible, "the banner says the virtual microphone is missing and offers Fix");
             Expect(d.Latest(TestAudioDevices.CableId) == null, "nothing was opened as the call device");
+            // The banner's Fix: setup lists, watches and opens the same devices as the engine (its level bar listens to the test mic).
+            await Modal(w => w is SetupWindow, () => Click(main.FixButton), async w =>
+            {
+                var setup = (SetupWindow)w;
+                Expect(setup.CableMissingPanel.Visibility == Visibility.Visible, "setup sees that VB-CABLE is missing");
+                Expect(HasDevice(setup.MicBox, TestAudioDevices.MicId), "setup lists the test microphone");
+                await WaitUntil(() => setup.MeterBar.Width > 0.3 * setup.MeterTrack.ActualWidth, 3000, "setup's level bar to move with the voice");
+                Note(Inv($"setup's level bar {setup.MeterBar.Width:0}/{setup.MeterTrack.ActualWidth:0} px on the test microphone"));
+            }, "the setup window");
+            Expect(c.State == EngineState.NoVirtualCable && c.MonitorOnly, "closing setup leaves the session as it was");
             await WaitUntil(() => c.IsSoundLoaded("airhorn"), 8000, "the starter sounds to load");
             ClickSound(main, "airhorn");
             Expect(!c.IsPlaying("airhorn"), "a sound is refused while nothing can reach a call");
@@ -128,6 +138,13 @@ public partial class App
             await WaitUntil(() => main.MeterBar.Width > 0.5 * main.MeterTrack.ActualWidth, 3000, "the level meter to fill");
             await WaitUntil(() => c.InputLevel < 0.01f, 3000, "the input level to fall in the pause");
             Note(Inv($"meter {main.MeterBar.Width:0}/{main.MeterTrack.ActualWidth:0} px while speaking"));
+            await Modal(w => w is SettingsWindow, () => Click(main.SettingsButton), w =>
+            {
+                var settings = (SettingsWindow)w;
+                Expect(HasDevice(settings.MicBox, TestAudioDevices.MicId) && HasDevice(settings.OutputBox, TestAudioDevices.CableId)
+                       && HasDevice(settings.MonitorBox, TestAudioDevices.HeadphonesId), "Settings lists the devices the engine uses");
+                return Task.CompletedTask;
+            }, "the settings window");
         });
 
         await Step("2  voice cards: Chipmunk/Female raise the pitch, Male/Monster lower it, Robot moves energy off the voice", async () =>
@@ -581,6 +598,8 @@ public partial class App
 
     private static bool HasMenu(Button? card, string header) =>
         card?.ContextMenu?.Items.OfType<MenuItem>().Any(m => m.Header as string == header) == true;
+
+    private static bool HasDevice(ComboBox box, string id) => box.Items.OfType<ComboBoxItem>().Any(i => i.Tag is DeviceInfo d && d.Id == id);
 
     /// <summary>Picks an item of a card's menu (right-click or "⋯").</summary>
     private static void ClickMenu(Button? card, string header)
