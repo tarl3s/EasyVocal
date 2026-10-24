@@ -51,7 +51,8 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
 
 ```
 dotnet build
-dotnet test
+dotnet test                                            # inclui o teste de ponta a ponta (~40 s, mostra o app)
+dotnet run --project src/EasyVocal -- --data <pasta de rascunho> --e2e
 dotnet run --project src/EasyVocal
 ```
 

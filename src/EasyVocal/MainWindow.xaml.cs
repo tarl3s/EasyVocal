@@ -66,6 +66,11 @@ public partial class MainWindow : Window
 
     internal int SoundCount => soundCards.Count;
 
+    /// <summary>The card of a voice / sound on screen, or null (for the e2e test, which clicks it like a person).</summary>
+    internal Button? VoiceCard(string id) => voiceCards.TryGetValue(id, out var c) ? c.Button : null;
+
+    internal Button? SoundCard(string id) => soundCards.TryGetValue(id, out var c) ? c.Button : null;
+
     /// <summary>The window was closed and is now only in the tray.</summary>
     public event Action? HiddenToTray;
 
@@ -501,7 +506,8 @@ public partial class MainWindow : Window
 
     private void AddSound_Click(object sender, RoutedEventArgs e) => OpenSoundEditor(null);
 
-    private void OpenSoundEditor(string? path) => new SoundEditorWindow(controller, null, path) { Owner = this }.ShowDialog();
+    /// <summary>The sound editor for a new sound, starting from <paramref name="path"/> when given (the e2e test uses it with a file).</summary>
+    internal void OpenSoundEditor(string? path) => new SoundEditorWindow(controller, null, path) { Owner = this }.ShowDialog();
 
     // ---------- drag and drop: sound files dropped on the window add sounds ----------
 

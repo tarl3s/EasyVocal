@@ -16,7 +16,8 @@ namespace EasyVocal;
 /// Startup: one instance only (a second launch shows the first one's window and exits), settings, language,
 /// the controller, the main window and the tray. Quitting happens only from the tray (closing the window hides it).
 /// <para>Arguments: <c>--data &lt;folder&gt;</c> uses another data folder (development and tests);
-/// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> starts normally, quits by itself after 3 s and logs "Smoke test passed".</para>
+/// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> starts normally, quits by itself after 3 s and logs "Smoke test passed";
+/// <c>--e2e</c> runs the end-to-end test on test audio devices (<c>App.E2E.cs</c>). Both tests need <c>--data</c>.</para>
 /// </summary>
 public partial class App : Application
 {
@@ -39,32 +40,36 @@ public partial class App : Application
         string dataFolder = args.DataFolder ?? SettingsStore.DefaultFolder;
         bool smokeTest = args.SmokeTest, startHidden = args.StartHidden;
 
-        // The smoke test adds and removes items: it must never run on the person's real settings.
+        // The smoke and e2e tests add and remove items: they must never run on the person's real settings.
         if (!args.Allowed)
         {
-            Console.Error.WriteLine("--smoketest needs --data <folder> (a scratch folder): it never runs on the real settings.");
+            Console.Error.WriteLine("--smoketest and --e2e need --data <folder> (a scratch folder): they never run on the real settings.");
             Shutdown(2);
             return;
         }
 
         // Single instance: the first owns the mutex; a later launch wakes it to show its window, then leaves.
-        showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
-        instanceMutex = new Mutex(true, InstanceMutexName, out bool first);
-        if (!first)
+        // A test run neither wakes nor waits for the person's own EasyVocal.
+        if (!args.TestMode)
         {
-            showSignal.Set();
-            showSignal.Dispose();
-            showSignal = null;
-            instanceMutex.Dispose();
-            instanceMutex = null;
-            Shutdown();
-            return;
+            showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
+            instanceMutex = new Mutex(true, InstanceMutexName, out bool first);
+            if (!first)
+            {
+                showSignal.Set();
+                showSignal.Dispose();
+                showSignal = null;
+                instanceMutex.Dispose();
+                instanceMutex = null;
+                Shutdown();
+                return;
+            }
+            showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => Dispatcher.BeginInvoke(() =>
+            {
+                AppLog.Info("Launched again: showing the window");
+                ShowMainWindow();
+            }), null, Timeout.Infinite, executeOnlyOnce: false);
         }
-        showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => Dispatcher.BeginInvoke(() =>
-        {
-            AppLog.Info("Launched again: showing the window");
-            ShowMainWindow();
-        }), null, Timeout.Infinite, executeOnlyOnce: false);
 
         AppLog.Init(dataFolder);
         AppLog.Info("EasyVocal " + Assembly.GetExecutingAssembly().GetName().Version + " starting (data: " + dataFolder + ")");
@@ -76,7 +81,9 @@ public partial class App : Application
             ev.SetObserved();
         };
 
-        controller = new AppController(dataFolder);
+        // The e2e test plays and records known audio through test devices (VB-CABLE missing at first, then "installed").
+        if (args.E2E) e2eDevices = new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
+        controller = new AppController(dataFolder, e2eDevices);
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
         EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
@@ -85,8 +92,8 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.UnloadedEvent, new RoutedEventHandler(OnWindowUnloaded));
         Deactivated += (_, _) => controller?.SetTyping(false);
         controller.TypingProbe = () => Keyboard.FocusedElement is TextBoxBase { IsVisible: true };
-        // The smoke test must never touch the real "Start with Windows" entry.
-        if (smokeTest) controller.Startup = SmokeStartup;
+        // The tests must never touch the real "Start with Windows" entry.
+        if (args.TestMode) controller.Startup = SmokeStartup;
         controller.RefreshStartup();
         var language = L.Resolve(controller.Settings.Language);
         L.Load(language == "en" ? null : ReadLanguage(language), language);
@@ -103,11 +110,12 @@ public partial class App : Application
         {
             if (quitting || window == null) return;
             started.Start(window);
-            // First run: the setup comes first (not in the smoke test, which opens it itself and must never download anything).
-            if (!started.Settings.SetupDone && !smokeTest) SetupWindow.Open(started, window.IsVisible ? window : null);
+            // First run: the setup comes first (not in the tests: the smoke test opens it itself, and they must never download anything).
+            if (!started.Settings.SetupDone && !args.TestMode) SetupWindow.Open(started, window.IsVisible ? window : null);
         });
 
         if (smokeTest) RunSmokeTest(dataFolder);
+        else if (args.E2E) RunE2E(dataFolder, args.E2ERelaunch);
     }
 
     private void OnTextFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>

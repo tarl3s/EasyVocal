@@ -50,7 +50,8 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
 
 ```
 dotnet build
-dotnet test
+dotnet test                                            # includes the end-to-end test (~40 s, shows the app)
+dotnet run --project src/EasyVocal -- --data <scratch folder> --e2e
 dotnet run --project src/EasyVocal
 ```
 
