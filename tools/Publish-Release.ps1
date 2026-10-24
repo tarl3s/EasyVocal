@@ -15,6 +15,15 @@ $maxBytes = 80MB
 $props = [IO.File]::ReadAllText((Join-Path $root 'Directory.Build.props'))
 if ($props -notmatch '<Version>(\d+\.\d+\.\d+)</Version>') { throw 'No <Version> in Directory.Build.props' }
 $version = $Matches[1]
+$tag = "v$version"
+
+if (-not $NoUpload) {
+    # Check everything the upload needs before spending minutes on the build.
+    if (-not $NotesFile) { throw 'Pass -NotesFile <notes.md> to publish (or -NoUpload).' }
+    if (-not (Test-Path -LiteralPath $NotesFile -PathType Leaf)) { throw "Notes file not found: $NotesFile" }
+    git -C $root rev-parse --verify --quiet "refs/tags/$tag" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The tag $tag doesn't exist here: create and push it first (git tag -a $tag -m ...)." }
+}
 
 $out = Join-Path $root 'publish\win-x64'
 $zip = Join-Path $root 'publish\EasyVocal-win-x64.zip'
@@ -33,6 +42,6 @@ if ($size -ge $maxBytes) { throw ("The zip is {0:N1} MB: the limit is 80 MB" -f 
 
 if ($NoUpload) { Write-Host 'Done (-NoUpload: nothing was published).'; return }
 
-if (-not $NotesFile) { throw 'Pass -NotesFile <notes.md> to publish (or -NoUpload).' }
-& $gh release create "v$version" $zip --title "EasyVocal v$version" --notes-file $NotesFile
+# --verify-tag: never let gh create a missing tag on the server from whatever the default branch is.
+& $gh release create $tag $zip --verify-tag --title "EasyVocal $tag" --notes-file $NotesFile
 if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }

@@ -130,7 +130,7 @@ public partial class SettingsWindow : Window
         bool on = StartBox.IsChecked == true;
         if (controller.SetStartWithWindows(on)) return;
         StartBox.IsChecked = !on;
-        AskDialog.Tell(this, L.T("Windows would not let EasyVocal start with it. You can try again in Settings."));
+        AskDialog.Tell(this, L.T("Windows would not let EasyVocal start with it.")); // already in Settings: no "try again in Settings"
     }
 
     private void AskQuitBox_Click(object sender, RoutedEventArgs e)

@@ -185,5 +185,6 @@
   "Choose microphone": "Escolher microfone",
   "Virtual microphone not found. You can still try the voices with 🎧 Hear me.": "Microfone virtual não encontrado. Você ainda pode testar as vozes com 🎧 Me ouvir.",
   "Your microphone isn't connected, so EasyVocal is using {0} for now.": "Seu microfone não está conectado, então o EasyVocal está usando {0} por enquanto.",
-  "Use headphones — speakers can echo back into the mic.": "Use fone de ouvido — o som das caixas pode voltar para o microfone."
+  "Use headphones — speakers can echo back into the mic.": "Use fone de ouvido — o som das caixas pode voltar para o microfone.",
+  "Windows would not let EasyVocal start with it.": "O Windows não deixou o EasyVocal iniciar junto com ele."
 }

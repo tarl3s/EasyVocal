@@ -39,6 +39,8 @@ public sealed class AppController : IDisposable
     private GlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
     private HashSet<string> refusedActions = new();
+    private int captureSuspends;
+    private bool typing;
     private VoiceSliders? previewSliders;
     private bool? previewHearMe;
     private readonly HashSet<string> brokenSounds = new();
@@ -617,6 +619,7 @@ public sealed class AppController : IDisposable
     {
         if (hotkeys == null || disposed) return;
         hotkeys.UnregisterAll();
+        if (captureSuspends > 0 || typing) return; // taken back by ResumeHotkeys / SetTyping(false)
         var problems = new List<string>();
         var refused = new HashSet<string>();
         foreach (var (action, key) in HotkeyMap.All(Settings))
@@ -633,9 +636,33 @@ public sealed class AppController : IDisposable
 
     /// <summary>
     /// Lets go of every hotkey (while a window is capturing a key: our own hotkeys would swallow the press).
-    /// Call <see cref="RebuildHotkeys"/> afterwards to take them back.
+    /// Call <see cref="ResumeHotkeys"/> afterwards to take them back.
     /// </summary>
-    public void SuspendHotkeys() => hotkeys?.UnregisterAll();
+    public void SuspendHotkeys()
+    {
+        captureSuspends++;
+        hotkeys?.UnregisterAll();
+    }
+
+    /// <summary>Ends one <see cref="SuspendHotkeys"/>; the hotkeys come back when nothing else holds them off.</summary>
+    public void ResumeHotkeys()
+    {
+        if (captureSuspends > 0) captureSuspends--;
+        RebuildHotkeys();
+    }
+
+    /// <summary>
+    /// True while one of EasyVocal's own text boxes has the keyboard: the hotkeys are let go meanwhile, so a plain-key
+    /// hotkey ("7", "A") can still be typed into a name. Windows gives them back when the box loses the keyboard
+    /// (also when the person switches to another app).
+    /// </summary>
+    public void SetTyping(bool on)
+    {
+        if (typing == on || disposed) return;
+        typing = on;
+        if (on) hotkeys?.UnregisterAll();
+        else RebuildHotkeys();
+    }
 
     /// <summary>True when Windows would accept this combination now. Only meaningful after <see cref="SuspendHotkeys"/>.</summary>
     public bool IsHotkeyFree(Hotkey key) => hotkeys?.IsFree(key) ?? true;

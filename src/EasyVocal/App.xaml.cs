@@ -4,6 +4,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Threading;
 using EasyVocal.Core.Storage;
 using EasyVocal.Core.Text;
@@ -33,13 +35,16 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        string dataFolder = SettingsStore.DefaultFolder;
-        bool smokeTest = false, startHidden = false;
-        for (int i = 0; i < e.Args.Length; i++)
+        var args = AppArgs.Parse(e.Args);
+        string dataFolder = args.DataFolder ?? SettingsStore.DefaultFolder;
+        bool smokeTest = args.SmokeTest, startHidden = args.StartHidden;
+
+        // The smoke test adds and removes items: it must never run on the person's real settings.
+        if (!args.Allowed)
         {
-            if (e.Args[i] == "--data" && i + 1 < e.Args.Length) dataFolder = Path.GetFullPath(e.Args[++i]);
-            else if (e.Args[i] == "--smoketest") smokeTest = true;
-            else if (e.Args[i] == "--tray") startHidden = true;
+            Console.Error.WriteLine("--smoketest needs --data <folder> (a scratch folder): it never runs on the real settings.");
+            Shutdown(2);
+            return;
         }
 
         // Single instance: the first owns the mutex; a later launch wakes it to show its window, then leaves.
@@ -72,6 +77,9 @@ public partial class App : Application
         };
 
         controller = new AppController(dataFolder);
+        // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
+        EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.GotKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
+        EventManager.RegisterClassHandler(typeof(TextBoxBase), UIElement.LostKeyboardFocusEvent, new KeyboardFocusChangedEventHandler(OnTextFocusChanged));
         // The smoke test must never touch the real "Start with Windows" entry.
         if (smokeTest) controller.Startup = SmokeStartup;
         controller.RefreshStartup();
@@ -96,6 +104,9 @@ public partial class App : Application
 
         if (smokeTest) RunSmokeTest(dataFolder);
     }
+
+    private void OnTextFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>
+        controller?.SetTyping(e.NewFocus is TextBoxBase);
 
     /// <summary>Brings the window back from the tray (also when EasyVocal is launched a second time).</summary>
     private void ShowMainWindow()

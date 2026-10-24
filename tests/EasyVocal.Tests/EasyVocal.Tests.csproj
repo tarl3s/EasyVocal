@@ -23,6 +23,7 @@
     <Compile Include="..\..\src\EasyVocal\StartupRegistration.cs" Link="Linked\StartupRegistration.cs" />
     <Compile Include="..\..\src\EasyVocal\VbCableInstaller.cs" Link="Linked\VbCableInstaller.cs" />
     <Compile Include="..\..\src\EasyVocal\Authenticode.cs" Link="Linked\Authenticode.cs" />
+    <Compile Include="..\..\src\EasyVocal\AppArgs.cs" Link="Linked\AppArgs.cs" />
   </ItemGroup>
 
   <ItemGroup>

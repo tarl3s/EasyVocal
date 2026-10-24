@@ -50,7 +50,7 @@ public partial class HotkeyCaptureDialog : Window
         }
         finally
         {
-            controller.RebuildHotkeys();
+            controller.ResumeHotkeys();
         }
     }
 
