@@ -146,6 +146,8 @@ public partial class App
             double share = E2ESignal.HarmonicShare(robot);
             Note(Inv($"robot: {share:P0} on the voice's harmonics (Normal {normalShare:P0})"));
             Expect(share < 0.5 * normalShare, "Robot moves the energy off the voice's harmonics");
+            Expect(!HasMenu(main.VoiceCard(AppController.NormalVoiceId), L.T("Hide")) && HasMenu(main.VoiceCard("robot"), L.T("Hide")),
+                "Normal's card offers no Hide (other built-in voices do)");
         });
 
         await Step("3  ON/OFF and mute: OFF sends the clean voice, mute silences the voice but not the sounds", async () =>
@@ -566,6 +568,9 @@ public partial class App
         Expect(card is { IsVisible: true }, "the sound card " + id + " is on screen");
         Click(card);
     }
+
+    private static bool HasMenu(Button? card, string header) =>
+        card?.ContextMenu?.Items.OfType<MenuItem>().Any(m => m.Header as string == header) == true;
 
     /// <summary>Picks an item of a card's menu (right-click or "⋯").</summary>
     private static void ClickMenu(Button? card, string header)

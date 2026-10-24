@@ -116,6 +116,21 @@ public class ItemOpsTests : IDisposable
         Assert.Equal("cave", s.ActiveVoiceId);
     }
 
+    [Fact]
+    public void Normal_CanNeverBeHidden()
+    {
+        var s = Fresh();
+        var normal = s.Voices.Single(v => v.Id == BuiltInVoices.NormalId);
+        Assert.False(ItemOps.CanHide(normal));
+        Assert.True(ItemOps.CanHide(s.Voices.Single(v => v.Id == "robot")));
+
+        s.ActiveVoiceId = BuiltInVoices.NormalId;
+        ItemOps.DeleteVoice(s, BuiltInVoices.NormalId);
+        Assert.False(normal.Hidden);
+        Assert.Contains(normal, s.Voices);
+        Assert.Equal(BuiltInVoices.NormalId, s.ActiveVoiceId);
+    }
+
     // ---------- sounds ----------
 
     [Fact]

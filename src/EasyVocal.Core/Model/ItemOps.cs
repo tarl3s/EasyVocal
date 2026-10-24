@@ -64,14 +64,20 @@ public static class ItemOps
         return copy;
     }
 
-    /// <summary>A built-in voice is hidden (it can come back); the person's own is removed. The active voice falls back to Normal.</summary>
+    /// <summary>False only for Normal: the clean voice must always be there to pick (and to fall back to).</summary>
+    public static bool CanHide(VoicePreset v) => v.Id != BuiltInVoices.NormalId;
+
+    /// <summary>
+    /// A built-in voice is hidden (it can come back); the person's own is removed. The active voice falls back to
+    /// Normal. Normal itself is never hidden.
+    /// </summary>
     public static void DeleteVoice(AppSettings s, string id)
     {
         int index = s.Voices.FindIndex(v => v.Id == id);
-        if (index < 0) return;
+        if (index < 0 || !CanHide(s.Voices[index])) return;
         if (s.Voices[index].BuiltIn) s.Voices[index].Hidden = true;
         else s.Voices.RemoveAt(index);
-        if (s.ActiveVoiceId == id && id != "normal") s.ActiveVoiceId = "normal";
+        if (s.ActiveVoiceId == id) s.ActiveVoiceId = BuiltInVoices.NormalId;
     }
 
     // ---------- sounds ----------

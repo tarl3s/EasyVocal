@@ -177,9 +177,9 @@ public static class SettingsStore
     }
 
     // Built-ins: user-owned fields from the file, everything else from code. For voices that is Hidden and Hotkey
-    // (editing a built-in voice saves a copy); a built-in sound's name and emoji are
-    // labels the person may change in the sound editor, so they are theirs too. Missing built-ins are appended in
-    // catalog order, then user items in file order.
+    // (editing a built-in voice saves a copy; Normal is never hidden, even by a hand-edited file); a built-in
+    // sound's name and emoji are labels the person may change in the sound editor, so they are theirs too. Missing
+    // built-ins are appended in catalog order, then user items in file order.
     private static List<VoicePreset> MergeVoices(List<VoicePreset> fromFile)
     {
         var result = new List<VoicePreset>();
@@ -188,7 +188,7 @@ public static class SettingsStore
         {
             catalogIds.Add(b.Id);
             var f = fromFile.FirstOrDefault(v => v != null && v.Id == b.Id);
-            if (f != null) { b.Hidden = f.Hidden; b.Hotkey = f.Hotkey; }
+            if (f != null) { b.Hidden = f.Hidden && ItemOps.CanHide(b); b.Hotkey = f.Hotkey; }
             result.Add(b);
         }
         foreach (var v in fromFile)

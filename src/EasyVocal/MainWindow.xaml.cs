@@ -415,7 +415,7 @@ public partial class MainWindow : Window
         menu.Items.Add(MenuItem(L.T("Duplicate"), () => DuplicateVoice(id)));
         menu.Items.Add(new Separator());
         if (v.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetVoiceHidden(id, false)));
-        else if (v.BuiltIn) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetVoiceHidden(id, true)));
+        else if (v.BuiltIn && ItemOps.CanHide(v)) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetVoiceHidden(id, true)));
         if (!v.BuiltIn) menu.Items.Add(MenuItem(L.T("Delete…"), () => DeleteVoice(id)));
         return menu;
     }

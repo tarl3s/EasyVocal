@@ -71,7 +71,7 @@ public class AppSettings
     public bool MicMuted { get; set; }
     public bool HearMe { get; set; }
     public bool HearSounds { get; set; } = true;
-    public string ActiveVoiceId { get; set; } = "normal";
+    public string ActiveVoiceId { get; set; } = BuiltInVoices.NormalId;
     public bool StartWithWindows { get; set; }
     public bool ConfirmQuit { get; set; } = true;
     public string Language { get; set; } = "auto";

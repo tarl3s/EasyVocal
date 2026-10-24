@@ -24,7 +24,7 @@ namespace EasyVocal;
 /// </summary>
 public sealed class AppController : IDisposable
 {
-    public const string NormalVoiceId = "normal";
+    public const string NormalVoiceId = BuiltInVoices.NormalId;
 
     private static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan RecoverEvery = TimeSpan.FromSeconds(2);
@@ -294,11 +294,11 @@ public sealed class AppController : IDisposable
         RaiseChanged();
     }
 
-    /// <summary>Hides or shows a voice. Hiding the active voice goes back to Normal.</summary>
+    /// <summary>Hides or shows a voice. Hiding the active voice goes back to Normal; Normal itself can't be hidden.</summary>
     public void SetVoiceHidden(string id, bool hidden)
     {
         var v = FindVoice(id);
-        if (v == null || v.Hidden == hidden) return;
+        if (v == null || v.Hidden == hidden || (hidden && !ItemOps.CanHide(v))) return;
         var before = ActiveVoice;
         v.Hidden = hidden;
         EnsureActiveVoice();

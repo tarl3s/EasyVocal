@@ -2,6 +2,9 @@ namespace EasyVocal.Core.Model;
 
 public static class BuiltInVoices
 {
+    /// <summary>The clean voice. It can never be hidden: it is what every missing or hidden active voice falls back to.</summary>
+    public const string NormalId = "normal";
+
     private static VoicePreset V(string id, string name, string emoji, double pitch, double body,
         double robot, double echo, double radio, double dist, double whisper) => new()
     {
@@ -16,7 +19,7 @@ public static class BuiltInVoices
     /// <summary>Fresh copies of the built-in catalog (ids are persisted: never rename).</summary>
     public static IReadOnlyList<VoicePreset> All() => new[]
     {
-        V("normal", "Normal", "🙂", 0, 0, 0, 0, 0, 0, 0),
+        V(NormalId, "Normal", "🙂", 0, 0, 0, 0, 0, 0, 0),
         V("female", "Female", "👩", 0.42, 0.45, 0, 0, 0, 0, 0),
         V("male", "Male", "👨", -0.4, -0.4, 0, 0, 0, 0, 0),
         V("robot", "Robot", "🤖", 0, 0, 0.8, 0.1, 0, 0.1, 0),

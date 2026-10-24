@@ -113,6 +113,15 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Load_NormalHiddenInTheFile_IsVisibleAgain()
+    {
+        WriteFile("{\"Voices\":[{\"Id\":\"normal\",\"Hidden\":true},{\"Id\":\"robot\",\"Hidden\":true}]}");
+        var s = SettingsStore.Load(tmp);
+        Assert.False(s.Voices.Single(v => v.Id == BuiltInVoices.NormalId).Hidden);
+        Assert.True(s.Voices.Single(v => v.Id == "robot").Hidden); // any other built-in may stay hidden
+    }
+
+    [Fact]
     public void SaveThenLoad_BuiltInSoundKeepsTheNameAndEmojiThePersonGaveIt()
     {
         var s = SettingsStore.Load(tmp);
