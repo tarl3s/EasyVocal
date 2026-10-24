@@ -6,6 +6,9 @@
     <UseWPF>true</UseWPF>
     <!-- Only for the tray icon (NotifyIcon). -->
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Assets/EasyVocal.ico</ApplicationIcon>
+    <!-- Release publish: self-contained single file (see tools/Publish-Release.ps1). -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
