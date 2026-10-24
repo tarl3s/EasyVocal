@@ -37,6 +37,10 @@ public sealed class AppController : IDisposable
     private readonly DispatcherTimer saveTimer, recoverTimer, deviceTimer;
     private GlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
+    private HashSet<string> refusedActions = new();
+    private VoiceSliders? previewSliders;
+    private readonly HashSet<string> brokenSounds = new();
+    private SoundPreview? preview;
     private string deviceFingerprint = "";
     private int changePosted;
     private bool started, disposed, savePending;
@@ -78,6 +82,9 @@ public sealed class AppController : IDisposable
     /// <summary>One sentence per hotkey that couldn't be registered (another app owns it), already translated.</summary>
     public IReadOnlyList<string> HotkeyProblems => hotkeyProblems;
 
+    /// <summary>Action ids ("voice:robot", "sound:ding"…) whose hotkey Windows refused in the last <see cref="RebuildHotkeys"/>.</summary>
+    public IReadOnlyCollection<string> RefusedActions => refusedActions;
+
     /// <summary>The voice in use: the active one when it exists and isn't hidden, else Normal.</summary>
     public VoicePreset ActiveVoice =>
         FindVoice(Settings.ActiveVoiceId) is { Hidden: false } v ? v
@@ -97,7 +104,7 @@ public sealed class AppController : IDisposable
         engine.MicMuted = Settings.MicMuted;
         engine.HearMe = Settings.HearMe;
         engine.HearSounds = Settings.HearSounds;
-        chain.Apply(ActiveVoice.Sliders);
+        ApplyChain();
 
         mixer.PlayingChanged += OnPlayingChanged;
         engine.StateChanged += OnEngineStateChanged;
@@ -144,6 +151,7 @@ public sealed class AppController : IDisposable
             engine.StateChanged -= OnEngineStateChanged;
             mixer.PlayingChanged -= OnPlayingChanged;
         }
+        StopPreview();
         engine.Dispose();
         if (savePending) SaveNow();
         saveTimer.Stop();
@@ -232,7 +240,7 @@ public sealed class AppController : IDisposable
         var v = FindVoice(id);
         if (v == null || v.Hidden) return;
         Settings.ActiveVoiceId = v.Id;
-        chain.Apply(v.Sliders);
+        ApplyChain();
         if (!Settings.Enabled)
         {
             Settings.Enabled = true;
@@ -250,7 +258,57 @@ public sealed class AppController : IDisposable
         var before = ActiveVoice;
         v.Hidden = hidden;
         EnsureActiveVoice();
-        if (!ReferenceEquals(before, ActiveVoice)) chain.Apply(ActiveVoice.Sliders);
+        if (!ReferenceEquals(before, ActiveVoice)) ApplyChain();
+        Save();
+        RebuildHotkeys();
+    }
+
+    /// <summary>
+    /// While the filter editor is open, the engine plays these sliders (and the filter counts as ON so they are heard);
+    /// null goes back to the active voice and the person's ON/OFF choice.
+    /// </summary>
+    public void PreviewSliders(VoiceSliders? sliders)
+    {
+        if (disposed) return;
+        previewSliders = sliders;
+        ApplyChain();
+        engine.FilterEnabled = sliders != null || Settings.Enabled;
+    }
+
+    /// <summary>Gives the voice chain what it should play: the preview if one is on, else the active voice.</summary>
+    private void ApplyChain() => chain.Apply(previewSliders ?? ActiveVoice.Sliders);
+
+    /// <summary>A copy of a voice (see <see cref="ItemOps.DuplicateVoice"/>).</summary>
+    public VoicePreset DuplicateVoice(string id)
+    {
+        var copy = ItemOps.DuplicateVoice(Settings, id);
+        Save();
+        RaiseChanged();
+        return copy;
+    }
+
+    /// <summary>Adds a voice the person made.</summary>
+    public void AddVoice(VoicePreset voice)
+    {
+        Settings.Voices.Add(voice);
+        Save();
+        RaiseChanged();
+    }
+
+    /// <summary>The person edited this voice in place (the object was already changed).</summary>
+    public void VoiceEdited(string id)
+    {
+        if (ActiveVoice.Id == id) ApplyChain();
+        Save();
+        RaiseChanged();
+    }
+
+    /// <summary>Hides a built-in voice or removes the person's own; the active voice falls back to Normal.</summary>
+    public void DeleteVoice(string id)
+    {
+        ItemOps.DeleteVoice(Settings, id);
+        EnsureActiveVoice();
+        ApplyChain();
         Save();
         RebuildHotkeys();
     }
@@ -296,9 +354,99 @@ public sealed class AppController : IDisposable
         var s = FindSound(id);
         if (s == null || s.Hidden == hidden) return;
         s.Hidden = hidden;
-        if (hidden && mixer.IsPlaying(id)) mixer.Toggle(id, 0);
+        if (hidden) mixer.Stop(id); // a no-op when it has just ended (Toggle could have started it again)
         Save();
         RebuildHotkeys();
+    }
+
+    /// <summary>The sound's file couldn't be opened (missing, damaged, unsupported): its card says so.</summary>
+    public bool IsSoundBroken(string soundId) => brokenSounds.Contains(soundId);
+
+    /// <summary>A copy of a sound (it plays the same file); its audio is loaded in the background.</summary>
+    public SoundItem DuplicateSound(string id)
+    {
+        var copy = ItemOps.DuplicateSound(Settings, id);
+        LoadSound(copy);
+        Save();
+        RaiseChanged();
+        return copy;
+    }
+
+    /// <summary>Adds a sound the person made; <paramref name="samples"/> is its file already decoded.</summary>
+    public void AddSound(SoundItem sound, float[] samples)
+    {
+        Settings.Sounds.Add(sound);
+        mixer.Set(sound.Id, samples);
+        brokenSounds.Remove(sound.Id);
+        Save();
+        RebuildHotkeys();
+    }
+
+    /// <summary>
+    /// The person edited this sound in place (the object was already changed). <paramref name="newSamples"/> is the
+    /// decoded new file when it was replaced; <paramref name="oldFile"/> that file's name, deleted when nothing uses it.
+    /// </summary>
+    public void SoundEdited(string id, float[]? newSamples, string? oldFile)
+    {
+        if (newSamples != null)
+        {
+            mixer.Stop(id);
+            mixer.Set(id, newSamples);
+            brokenSounds.Remove(id);
+        }
+        if (oldFile != null) ItemOps.DeleteFileIfUnused(Settings, oldFile, SoundsFolder);
+        Save();
+        RebuildHotkeys();
+    }
+
+    /// <summary>Hides a built-in sound or removes the person's own (and its file when nothing else uses it).</summary>
+    public void DeleteSound(string id)
+    {
+        mixer.Stop(id);
+        bool builtIn = FindSound(id)?.BuiltIn == true;
+        ItemOps.DeleteSound(Settings, id, SoundsFolder);
+        if (!builtIn)
+        {
+            mixer.Remove(id);
+            brokenSounds.Remove(id);
+        }
+        Save();
+        RebuildHotkeys();
+    }
+
+    /// <summary>Plays decoded samples on the headphones only. False when there are no headphones to play on.</summary>
+    public bool PreviewSound(float[] samples, double volume)
+    {
+        StopPreview();
+        try
+        {
+            var output = MakeMonitor();
+            if (output == null) return false;
+            SoundPreview? mine = null;
+            mine = new SoundPreview(output, samples, (float)volume, () => ui.BeginInvoke(() =>
+            {
+                if (!ReferenceEquals(preview, mine)) return; // stopped, or replaced by a newer preview
+                preview = null;
+                PreviewEnded?.Invoke();
+            }));
+            preview = mine;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Sound preview failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>The preview ended by itself. UI thread.</summary>
+    public event Action? PreviewEnded;
+
+    public void StopPreview()
+    {
+        var p = preview;
+        preview = null;
+        p?.Dispose();
     }
 
     private SoundItem? FindSound(string? id) => Settings.Sounds.FirstOrDefault(x => x.Id == id);
@@ -338,26 +486,56 @@ public sealed class AppController : IDisposable
                 try { StarterSoundSynth.WriteAll(folder); }
                 catch (Exception ex) { AppLog.Error("Writing the starter sounds failed", ex); }
             }
-            int loaded = 0;
+            var broken = new List<string>();
             foreach (var (id, fileName, path) in items)
             {
-                if (path == null)
-                {
-                    AppLog.Info($"Sound '{id}' skipped: bad file name '{fileName}'");
-                    continue;
-                }
-                try
-                {
-                    mixer.Set(id, SoundLoader.Load(path));
-                    loaded++;
-                }
-                catch (Exception ex)
-                {
-                    AppLog.Info($"Sound '{id}' skipped ({fileName}): {ex.Message}");
-                }
+                if (!TryLoadInto(id, fileName, path)) broken.Add(id);
             }
-            AppLog.Info($"Sounds loaded: {loaded} of {items.Count}");
+            AppLog.Info($"Sounds loaded: {items.Count - broken.Count} of {items.Count}");
+            if (broken.Count == 0) return;
+            ui.BeginInvoke(() =>
+            {
+                if (disposed) return;
+                foreach (var id in broken) brokenSounds.Add(id);
+                RaiseChanged(); // the cards of the files that failed say so
+            });
         });
+    }
+
+    /// <summary>Decodes one sound's file into the mixer in the background; a failure marks its card.</summary>
+    private void LoadSound(SoundItem sound)
+    {
+        var (id, fileName, path) = (sound.Id, sound.FileName, SoundPath(sound.FileName));
+        Task.Run(() =>
+        {
+            bool ok = TryLoadInto(id, fileName, path);
+            ui.BeginInvoke(() =>
+            {
+                if (disposed) return;
+                if (ok) brokenSounds.Remove(id); else brokenSounds.Add(id);
+                RaiseChanged();
+            });
+        });
+    }
+
+    /// <summary>Any thread. False (and a log line) when the file can't be used.</summary>
+    private bool TryLoadInto(string id, string fileName, string? path)
+    {
+        if (path == null)
+        {
+            AppLog.Info($"Sound '{id}' skipped: bad file name '{fileName}'");
+            return false;
+        }
+        try
+        {
+            mixer.Set(id, SoundLoader.Load(path));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"Sound '{id}' skipped ({fileName}): {ex.Message}");
+            return false;
+        }
     }
 
     // ---------- hotkeys ----------
@@ -368,15 +546,27 @@ public sealed class AppController : IDisposable
         if (hotkeys == null || disposed) return;
         hotkeys.UnregisterAll();
         var problems = new List<string>();
+        var refused = new HashSet<string>();
         foreach (var (action, key) in HotkeyMap.All(Settings))
         {
-            if (!hotkeys.Register(action, key))
-                problems.Add(L.F("{0} ({1}) is already used by another app.", ActionName(action), key.ToString()));
+            if (hotkeys.Register(action, key)) continue;
+            refused.Add(action);
+            problems.Add(L.F("{0} ({1}) is already used by another app.", ActionName(action), key.ToString()));
         }
         hotkeyProblems = problems;
+        refusedActions = refused;
         if (problems.Count > 0) AppLog.Info("Hotkeys refused: " + string.Join(" | ", problems));
         RaiseChanged();
     }
+
+    /// <summary>
+    /// Lets go of every hotkey (while a window is capturing a key: our own hotkeys would swallow the press).
+    /// Call <see cref="RebuildHotkeys"/> afterwards to take them back.
+    /// </summary>
+    public void SuspendHotkeys() => hotkeys?.UnregisterAll();
+
+    /// <summary>True when Windows would accept this combination now. Only meaningful after <see cref="SuspendHotkeys"/>.</summary>
+    public bool IsHotkeyFree(Hotkey key) => hotkeys?.IsFree(key) ?? true;
 
     private string ActionName(string action)
     {

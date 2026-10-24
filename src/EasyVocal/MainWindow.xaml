@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="clr-namespace:EasyVocal"
         Title="EasyVocal" Width="560" Height="620" MinWidth="440" MinHeight="400"
-        WindowStartupLocation="CenterScreen" Icon="Assets/EasyVocal.ico"
+        WindowStartupLocation="CenterScreen" Icon="Assets/EasyVocal.ico" AllowDrop="True"
         Background="{StaticResource Bg0}" Foreground="{StaticResource Text}"
         FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True">
     <Grid Margin="16,14,16,12">
@@ -70,7 +70,7 @@
         <TextBlock x:Name="HotkeyNote" Grid.Row="2" Visibility="Collapsed" Margin="0,8,0,0" TextWrapping="Wrap"
                    Foreground="{StaticResource Warn}" />
 
-        <TabControl x:Name="Tabs" Grid.Row="3" Margin="0,14,0,0">
+        <TabControl x:Name="Tabs" Grid.Row="3" Margin="0,14,0,0" AllowDrop="True">
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
@@ -83,8 +83,8 @@
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <WrapPanel x:Name="VoicePanel" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" AllowDrop="True">
+                        <WrapPanel x:Name="VoicePanel" AllowDrop="True" />
                     </ScrollViewer>
                     <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False">
                         <CheckBox x:Name="ShowHiddenVoices" DockPanel.Dock="Right" Content="{loc:T 'Show hidden items'}"
@@ -104,8 +104,8 @@
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <WrapPanel x:Name="SoundPanel" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" AllowDrop="True">
+                        <WrapPanel x:Name="SoundPanel" AllowDrop="True" />
                     </ScrollViewer>
                     <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False">
                         <Button x:Name="StopAllButton" DockPanel.Dock="Left" Click="StopAllButton_Click">

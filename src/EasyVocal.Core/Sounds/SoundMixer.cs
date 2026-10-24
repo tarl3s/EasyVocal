@@ -91,6 +91,16 @@ public sealed class SoundMixer
         return true;
     }
 
+    /// <summary>
+    /// Stops this one sound; does nothing when it is not playing. Unlike <see cref="Toggle"/> it can never start the
+    /// sound, so it is safe to call when the sound may have just ended on the audio thread.
+    /// </summary>
+    public void Stop(string id)
+    {
+        if (_playing.TryRemove(id, out int token))
+            _commands.Enqueue(new Command(CommandKind.Stop, id, null, 0, token));
+    }
+
     public void StopAll()
     {
         _playing.Clear();

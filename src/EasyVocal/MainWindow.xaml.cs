@@ -114,7 +114,8 @@ public partial class MainWindow : Window
             sb.Append(v.Id).Append(',').Append(v.Name).Append(',').Append(v.Emoji).Append(',').Append(v.Hidden).Append(',').Append(v.Hotkey).Append(';');
         sb.Append('#');
         foreach (var s in controller.Settings.Sounds)
-            sb.Append(s.Id).Append(',').Append(s.Name).Append(',').Append(s.Emoji).Append(',').Append(s.Hidden).Append(',').Append(s.Hotkey).Append(';');
+            sb.Append(s.Id).Append(',').Append(s.Name).Append(',').Append(s.Emoji).Append(',').Append(s.Hidden).Append(',').Append(s.Hotkey)
+              .Append(',').Append(controller.IsSoundBroken(s.Id)).Append(';');
         return sb.ToString();
     }
 
@@ -199,10 +200,12 @@ public partial class MainWindow : Window
         {
             if (s.Hidden && !showHidden) continue;
             var id = s.Id;
-            var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden);
+            bool broken = !s.Hidden && controller.IsSoundBroken(id);
+            var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden, broken);
             card.Button.Click += (_, _) =>
             {
                 if (s.Hidden) controller.SetSoundHidden(id, false);
+                else if (controller.IsSoundBroken(id)) AskDialog.Tell(this, L.T("This sound file couldn't be opened"));
                 else controller.ToggleSound(id);
             };
             card.Button.ContextMenu = SoundMenu(s);
@@ -242,12 +245,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private Card MakeCard(string emoji, string name, string? hotkey, bool hidden)
+    private Card MakeCard(string emoji, string name, string? hotkey, bool hidden, bool broken = false)
     {
-        var button = new Button { Style = (Style)FindResource("CardButton"), ToolTip = name };
+        var button = new Button { Style = (Style)FindResource("CardButton"), AllowDrop = true, ToolTip = broken ? L.T("This sound file couldn't be opened") : name };
         var grid = new Grid();
 
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        if (broken) stack.Opacity = 0.55; // dimmed, with a ⚠ below: the file didn't load
         stack.Children.Add(new TextBlock
         {
             Text = emoji,
@@ -269,6 +273,16 @@ public partial class MainWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             Foreground = hidden ? (Brush)FindResource("TextDim") : (Brush)FindResource("Text"),
         });
+        if (broken)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = "⚠",
+                FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = (Brush)FindResource("Warn"),
+            });
+        }
         if (hidden)
         {
             stack.Children.Add(new TextBlock
@@ -354,7 +368,7 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
         });
-        var button = new Button { Style = (Style)FindResource("AddCardButton"), Content = stack, ToolTip = text };
+        var button = new Button { Style = (Style)FindResource("AddCardButton"), Content = stack, ToolTip = text, AllowDrop = true };
         button.Click += click;
         return button;
     }
@@ -414,37 +428,99 @@ public partial class MainWindow : Window
         return item;
     }
 
-    // ---------- item actions (Task 9 wires the editors) ----------
+    // ---------- item actions ----------
 
-    // TODO(Task 9): open the filter editor (a built-in opens as a copy: "Save as new filter").
-    private void EditVoice(string id) { }
+    private VoicePreset? VoiceById(string id) => controller.Settings.Voices.FirstOrDefault(v => v.Id == id);
 
-    // TODO(Task 9): open the sound editor.
-    private void EditSound(string id) { }
+    private SoundItem? SoundById(string id) => controller.Settings.Sounds.FirstOrDefault(s => s.Id == id);
 
-    // TODO(Task 9): HotkeyCaptureDialog, then controller.Save() + controller.RebuildHotkeys().
-    private void SetVoiceHotkey(string id) { }
+    /// <summary>A built-in voice opens as a copy ("Save as new filter").</summary>
+    private void EditVoice(string id)
+    {
+        if (VoiceById(id) is { } v) new FilterEditorWindow(controller, v) { Owner = this }.ShowDialog();
+    }
 
-    // TODO(Task 9): HotkeyCaptureDialog, then controller.Save() + controller.RebuildHotkeys().
-    private void SetSoundHotkey(string id) { }
+    private void EditSound(string id)
+    {
+        if (SoundById(id) is { } s) new SoundEditorWindow(controller, s, null) { Owner = this }.ShowDialog();
+    }
 
-    // TODO(Task 9): ItemOps.DuplicateVoice.
-    private void DuplicateVoice(string id) { }
+    private void SetVoiceHotkey(string id)
+    {
+        if (VoiceById(id) is { } v) AssignHotkey("voice:" + id, AppController.DisplayName(v), v.Hotkey, key => v.Hotkey = key);
+    }
 
-    // TODO(Task 9): ItemOps.DuplicateSound (and load the copy into the mixer).
-    private void DuplicateSound(string id) { }
+    private void SetSoundHotkey(string id)
+    {
+        if (SoundById(id) is { } s) AssignHotkey("sound:" + id, AppController.DisplayName(s), s.Hotkey, key => s.Hotkey = key);
+    }
 
-    // TODO(Task 9): confirm with AskDialog, then ItemOps.DeleteVoice.
-    private void DeleteVoice(string id) { }
+    /// <summary>
+    /// Asks for a key, saves it and registers it. If Windows refuses it (another app owns it) the old hotkey
+    /// comes back and the person is told.
+    /// </summary>
+    private void AssignHotkey(string actionId, string name, string? current, Action<string?> set)
+    {
+        if (!HotkeyCaptureDialog.Pick(this, controller, actionId, name, current, out var chosen)) return;
+        set(chosen);
+        controller.Save();
+        controller.RebuildHotkeys(); // unregisters first; refused keys are listed in HotkeyProblems (shown above the tabs)
+        if (chosen == null || !controller.RefusedActions.Contains(actionId)) return;
+        set(current);
+        controller.Save();
+        controller.RebuildHotkeys();
+        AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", chosen));
+    }
 
-    // TODO(Task 9): confirm with AskDialog, then ItemOps.DeleteSound.
-    private void DeleteSound(string id) { }
+    private void DuplicateVoice(string id) => controller.DuplicateVoice(id);
 
-    // TODO(Task 9): open the filter editor for a new filter.
-    private void NewFilter_Click(object sender, RoutedEventArgs e) { }
+    private void DuplicateSound(string id) => controller.DuplicateSound(id);
 
-    // TODO(Task 9): open the sound editor (choose file / drag-drop).
-    private void AddSound_Click(object sender, RoutedEventArgs e) { }
+    private void DeleteVoice(string id)
+    {
+        if (VoiceById(id) is { } v && ConfirmDelete(AppController.DisplayName(v))) controller.DeleteVoice(id);
+    }
+
+    private void DeleteSound(string id)
+    {
+        if (SoundById(id) is { } s && ConfirmDelete(AppController.DisplayName(s))) controller.DeleteSound(id);
+    }
+
+    private bool ConfirmDelete(string name) =>
+        AskDialog.Ask(this, L.F("Delete “{0}”? This can't be undone.", name), L.T("Delete"), L.T("Cancel"), null, out _);
+
+    private void NewFilter_Click(object sender, RoutedEventArgs e) => new FilterEditorWindow(controller, null) { Owner = this }.ShowDialog();
+
+    private void AddSound_Click(object sender, RoutedEventArgs e) => OpenSoundEditor(null);
+
+    private void OpenSoundEditor(string? path) => new SoundEditorWindow(controller, null, path) { Owner = this }.ShowDialog();
+
+    // ---------- drag and drop: sound files dropped on the window add sounds ----------
+
+    protected override void OnPreviewDragOver(DragEventArgs e)
+    {
+        base.OnPreviewDragOver(e);
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    protected override void OnPreviewDrop(DragEventArgs e)
+    {
+        base.OnPreviewDrop(e);
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } files) return;
+        e.Handled = true;
+        Tabs.SelectedIndex = 1;
+        // One editor per file, one after the other (the Cancel button of one stops the rest).
+        Dispatcher.BeginInvoke(() =>
+        {
+            foreach (var file in files)
+            {
+                var editor = new SoundEditorWindow(controller, null, file) { Owner = this };
+                if (editor.ShowDialog() != true) break;
+            }
+        });
+    }
 
     // ---------- top bar and footers ----------
 

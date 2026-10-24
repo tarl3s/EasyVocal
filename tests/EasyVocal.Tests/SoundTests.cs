@@ -229,6 +229,63 @@ public class SoundTests : IDisposable
     }
 
     [Fact]
+    public void Mixer_Stop_StopsOnlyThatSound()
+    {
+        var m = new SoundMixer();
+        var ended = new System.Collections.Generic.List<string>();
+        m.PlayingChanged += (id, on) => { if (!on) ended.Add(id); };
+        m.Set("a", Constant(0.2f, Sr));
+        m.Set("b", Constant(0.1f, Sr));
+        m.Toggle("a", 1);
+        m.Toggle("b", 1);
+        MixBlock(m);
+        m.Stop("a");
+        Assert.False(m.IsPlaying("a"));
+        Assert.True(m.IsPlaying("b"));
+        Assert.Equal(0.1f, MixBlock(m)[0], 5);
+        Assert.Equal(new[] { "a" }, ended);
+    }
+
+    [Fact]
+    public void Mixer_StopWhenNotPlaying_IsNoOp_NeverStarts()
+    {
+        var m = new SoundMixer();
+        int events = 0;
+        m.PlayingChanged += (_, _) => events++;
+        m.Set("a", Constant(0.2f, Sr));
+        m.Stop("a");       // not playing: nothing to stop, and it must not behave like Toggle
+        m.Stop("ghost");   // unknown id
+        Assert.False(m.IsPlaying("a"));
+        Assert.Equal(0, Signals.Peak(MixBlock(m)));
+        Assert.Equal(0, events);
+        Assert.True(m.Toggle("a", 1)); // still starts normally afterwards
+    }
+
+    [Fact]
+    public void Mixer_StopAfterTheSoundEnded_DoesNotRestartIt()
+    {
+        var m = new SoundMixer();
+        m.Set("a", Constant(0.2f, Block));
+        m.Toggle("a", 1);
+        MixBlock(m);              // starts and ends within this block
+        Assert.False(m.IsPlaying("a"));
+        m.Stop("a");              // the UI saw "playing" a moment ago; the sound has already ended
+        Assert.False(m.IsPlaying("a"));
+        Assert.Equal(0, Signals.Peak(MixBlock(m)));
+    }
+
+    [Fact]
+    public void Mixer_StopThenToggle_PlaysAgain()
+    {
+        var m = new SoundMixer();
+        m.Set("a", Constant(0.2f, Sr));
+        m.Toggle("a", 1);
+        m.Stop("a");
+        Assert.True(m.Toggle("a", 1));
+        Assert.Equal(0.2f, MixBlock(m)[0], 5);
+    }
+
+    [Fact]
     public void Mixer_StopAllThenToggle_PlaysAgain()
     {
         var m = new SoundMixer();

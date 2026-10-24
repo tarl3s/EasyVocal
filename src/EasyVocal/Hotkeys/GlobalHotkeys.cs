@@ -40,6 +40,19 @@ public sealed class GlobalHotkeys : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// True when Windows would accept that combination right now (nobody, including EasyVocal itself, owns it).
+    /// Registers it for an instant and lets it go again.
+    /// </summary>
+    public bool IsFree(Hotkey key)
+    {
+        if (_disposed) return false;
+        const int probeId = 0xBFFF; // the highest id an application may use; the real ones count up from 1
+        if (!RegisterHotKey(_source.Handle, probeId, (uint)key.Mods | MOD_NOREPEAT, (uint)key.VirtualKey)) return false;
+        UnregisterHotKey(_source.Handle, probeId);
+        return true;
+    }
+
     public void UnregisterAll()
     {
         foreach (var id in _actions.Keys) UnregisterHotKey(_source.Handle, id);
