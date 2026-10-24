@@ -1,23 +1,473 @@
+using System.ComponentModel;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
+using EasyVocal.Core.Engine;
+using EasyVocal.Core.Model;
+using EasyVocal.Core.Text;
 
 namespace EasyVocal;
 
 /// <summary>
-/// Interaction logic for MainWindow.xaml
+/// The top bar and the Voices / Sounds tabs. Only shows what <see cref="AppController"/> holds and forwards clicks
+/// to it; no audio logic lives here.
 /// </summary>
 public partial class MainWindow : Window
 {
-    public MainWindow()
+    private readonly AppController controller;
+    private readonly DispatcherTimer meterTimer;
+    private readonly Dictionary<string, Card> voiceCards = new();
+    private readonly Dictionary<string, Card> soundCards = new();
+    private readonly FontFamily emojiFont;
+    private string layoutKey = "";
+    private bool showHidden;
+    private bool allowClose;
+    private double meterShown;
+
+    /// <summary>A grid button and the parts that change while it is shown.</summary>
+    private sealed class Card
     {
+        public Card(Button button, Border outline)
+        {
+            Button = button;
+            Outline = outline;
+        }
+
+        public Button Button { get; }
+        public Border Outline { get; }
+        public bool Pulsing { get; set; }
+    }
+
+    public MainWindow(AppController controller)
+    {
+        this.controller = controller;
         InitializeComponent();
+        DarkTitleBar.Use(this);
+        emojiFont = (FontFamily)FindResource("EmojiFont");
+
+        meterTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(33) };
+        meterTimer.Tick += (_, _) => UpdateMeter();
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible) { meterTimer.Start(); UpdateAll(); }
+            else meterTimer.Stop();
+        };
+
+        controller.Changed += UpdateAll;
+        UpdateAll();
+    }
+
+    /// <summary>Cards on screen (for the smoke test log).</summary>
+    internal int VoiceCount => voiceCards.Count;
+
+    internal int SoundCount => soundCards.Count;
+
+    /// <summary>The window was closed and is now only in the tray.</summary>
+    public event Action? HiddenToTray;
+
+    /// <summary>Lets the next Close really close (quitting); otherwise closing hides to the tray.</summary>
+    public void AllowClose() => allowClose = true;
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (allowClose) return;
+        e.Cancel = true;
+        Hide();
+        HiddenToTray?.Invoke();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        controller.Changed -= UpdateAll;
+        meterTimer.Stop();
+        base.OnClosed(e);
+    }
+
+    // ---------- refresh ----------
+
+    private void UpdateAll()
+    {
+        if (!IsVisible && IsLoaded) return; // refreshed when shown again
+        var key = LayoutKey();
+        if (key != layoutKey)
+        {
+            layoutKey = key;
+            BuildVoices();
+            BuildSounds();
+        }
+        UpdateCards();
+        UpdateTopBar();
+        UpdateBanner();
+    }
+
+    /// <summary>Everything that changes which cards exist or what they say; the grids are rebuilt only when it changes.</summary>
+    private string LayoutKey()
+    {
+        var sb = new StringBuilder();
+        sb.Append(showHidden).Append('|').Append(L.Language).Append('|');
+        foreach (var v in controller.Settings.Voices)
+            sb.Append(v.Id).Append(',').Append(v.Name).Append(',').Append(v.Emoji).Append(',').Append(v.Hidden).Append(',').Append(v.Hotkey).Append(';');
+        sb.Append('#');
+        foreach (var s in controller.Settings.Sounds)
+            sb.Append(s.Id).Append(',').Append(s.Name).Append(',').Append(s.Emoji).Append(',').Append(s.Hidden).Append(',').Append(s.Hotkey).Append(';');
+        return sb.ToString();
+    }
+
+    private void UpdateTopBar()
+    {
+        bool on = controller.FilterEnabled;
+        OnOffButton.IsChecked = on;
+        OnOffButton.Content = on ? "● " + L.T("ON") : "○ " + L.T("OFF");
+        MuteButton.IsChecked = controller.MicMuted;
+        HearMeButton.IsChecked = controller.HearMe;
+        ShowHiddenVoices.IsChecked = showHidden;
+        ShowHiddenSounds.IsChecked = showHidden;
+
+        var problems = controller.HotkeyProblems;
+        HotkeyNote.Visibility = problems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        HotkeyNote.Text = problems.Count > 0 ? "⚠ " + string.Join(" ", problems) : "";
+    }
+
+    private void UpdateBanner()
+    {
+        switch (controller.State)
+        {
+            case EngineState.MicLost:
+                ShowBanner(L.T("Microphone disconnected — reconnecting…"), fix: false);
+                break;
+            case EngineState.OutputLost:
+            case EngineState.NoVirtualCable:
+                ShowBanner(L.T("Virtual microphone not found"), fix: true);
+                break;
+            default:
+                Banner.Visibility = Visibility.Collapsed;
+                break;
+        }
+    }
+
+    private void ShowBanner(string text, bool fix)
+    {
+        BannerText.Text = text;
+        FixButton.Visibility = fix ? Visibility.Visible : Visibility.Collapsed;
+        Banner.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateMeter()
+    {
+        if (WindowState == WindowState.Minimized) return;
+        // Peak in dB over the last 60 dB, falling back slowly so short peaks stay visible.
+        double level = controller.InputLevel;
+        double fraction = level <= 0.001 ? 0 : Math.Clamp((20 * Math.Log10(level) + 60) / 60, 0, 1);
+        meterShown = Math.Max(fraction, meterShown - 0.04);
+        MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
+    }
+
+    // ---------- cards ----------
+
+    private void BuildVoices()
+    {
+        VoicePanel.Children.Clear();
+        voiceCards.Clear();
+        foreach (var v in controller.Settings.Voices)
+        {
+            if (v.Hidden && !showHidden) continue;
+            var id = v.Id;
+            var card = MakeCard(v.Emoji, AppController.DisplayName(v), v.Hotkey, v.Hidden);
+            card.Button.Click += (_, _) =>
+            {
+                if (v.Hidden) controller.SetVoiceHidden(id, false);
+                else controller.SelectVoice(id);
+            };
+            card.Button.ContextMenu = VoiceMenu(v);
+            voiceCards[id] = card;
+            VoicePanel.Children.Add(card.Button);
+        }
+        VoicePanel.Children.Add(MakeAddCard(L.T("New filter"), NewFilter_Click));
+        VoicePanel.Children.Add(MakeComingLaterCard());
+    }
+
+    private void BuildSounds()
+    {
+        SoundPanel.Children.Clear();
+        soundCards.Clear();
+        foreach (var s in controller.Settings.Sounds)
+        {
+            if (s.Hidden && !showHidden) continue;
+            var id = s.Id;
+            var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden);
+            card.Button.Click += (_, _) =>
+            {
+                if (s.Hidden) controller.SetSoundHidden(id, false);
+                else controller.ToggleSound(id);
+            };
+            card.Button.ContextMenu = SoundMenu(s);
+            soundCards[id] = card;
+            SoundPanel.Children.Add(card.Button);
+        }
+        SoundPanel.Children.Add(MakeAddCard(L.T("Add sound"), AddSound_Click));
+    }
+
+    /// <summary>Active voice outlined; playing sounds outlined and pulsing.</summary>
+    private void UpdateCards()
+    {
+        var accent = (Brush)FindResource("Accent");
+        var active = controller.ActiveVoice.Id;
+        foreach (var (id, card) in voiceCards)
+            card.Button.BorderBrush = id == active ? accent : Brushes.Transparent;
+        foreach (var (id, card) in soundCards)
+        {
+            bool playing = controller.IsPlaying(id);
+            card.Button.BorderBrush = playing ? accent : Brushes.Transparent;
+            if (playing == card.Pulsing) continue;
+            card.Pulsing = playing;
+            if (playing)
+            {
+                var pulse = new DoubleAnimation(0.9, 0.15, TimeSpan.FromMilliseconds(550))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = RepeatBehavior.Forever,
+                };
+                card.Outline.BeginAnimation(OpacityProperty, pulse);
+            }
+            else
+            {
+                card.Outline.BeginAnimation(OpacityProperty, null);
+                card.Outline.Opacity = 0;
+            }
+        }
+    }
+
+    private Card MakeCard(string emoji, string name, string? hotkey, bool hidden)
+    {
+        var button = new Button { Style = (Style)FindResource("CardButton"), ToolTip = name };
+        var grid = new Grid();
+
+        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        stack.Children.Add(new TextBlock
+        {
+            Text = emoji,
+            FontFamily = emojiFont,
+            FontSize = 30,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Opacity = hidden ? 0.4 : 1,
+        });
+        stack.Children.Add(new TextBlock
+        {
+            Text = name,
+            FontSize = 12.5,
+            Margin = new Thickness(0, 4, 0, 0),
+            MaxWidth = 98,
+            MaxHeight = 34, // two lines, then "…"
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = hidden ? (Brush)FindResource("TextDim") : (Brush)FindResource("Text"),
+        });
+        if (hidden)
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = L.T("Unhide"),
+                FontSize = 11,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = (Brush)FindResource("Accent"),
+            });
+        }
+        grid.Children.Add(stack);
+
+        if (!string.IsNullOrEmpty(hotkey) && !hidden)
+        {
+            grid.Children.Add(new Border
+            {
+                Background = (Brush)FindResource("Bg0"),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(4, 0, 4, 1),
+                Margin = new Thickness(0, 4, 5, 0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = new TextBlock { Text = hotkey, FontSize = 10, Foreground = (Brush)FindResource("TextDim") },
+            });
+        }
+
+        // "⋯" on hover opens the same menu as a right-click.
+        var more = new Button
+        {
+            Content = "⋯",
+            Style = (Style)FindResource("FlatButton"),
+            Padding = new Thickness(5, 0, 5, 2),
+            FontSize = 14,
+            Margin = new Thickness(2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Visibility = Visibility.Hidden,
+            ToolTip = L.T("More"),
+        };
+        more.Click += (_, e) =>
+        {
+            e.Handled = true; // don't let the click reach the card (it would pick the voice / play the sound)
+            if (button.ContextMenu == null) return;
+            button.ContextMenu.PlacementTarget = more;
+            button.ContextMenu.Placement = PlacementMode.Bottom;
+            button.ContextMenu.IsOpen = true;
+        };
+        grid.Children.Add(more);
+        button.MouseEnter += (_, _) => more.Visibility = Visibility.Visible;
+        button.MouseLeave += (_, _) => more.Visibility = Visibility.Hidden;
+        button.ContextMenuOpening += (_, _) =>
+        {
+            if (button.ContextMenu == null) return;
+            button.ContextMenu.PlacementTarget = button;
+            button.ContextMenu.Placement = PlacementMode.MousePoint;
+        };
+
+        // Pulsing outline for a playing sound (drawn over the card's own border).
+        var outline = new Border
+        {
+            BorderBrush = (Brush)FindResource("Accent"),
+            BorderThickness = new Thickness(2),
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(-2),
+            Opacity = 0,
+            IsHitTestVisible = false,
+        };
+        grid.Children.Add(outline);
+
+        button.Content = grid;
+        return new Card(button, outline);
+    }
+
+    private Button MakeAddCard(string text, RoutedEventHandler click)
+    {
+        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        stack.Children.Add(new TextBlock { Text = "＋", FontSize = 26, HorizontalAlignment = HorizontalAlignment.Center });
+        stack.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 12.5,
+            MaxWidth = 96,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        var button = new Button { Style = (Style)FindResource("AddCardButton"), Content = stack, ToolTip = text };
+        button.Click += click;
+        return button;
+    }
+
+    /// <summary>Keeps the AI pack's place: a disabled card.</summary>
+    private Border MakeComingLaterCard()
+    {
+        var dim = (Brush)FindResource("TextDim");
+        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        stack.Children.Add(new TextBlock { Text = "🧠", FontFamily = emojiFont, FontSize = 26, Opacity = 0.5, HorizontalAlignment = HorizontalAlignment.Center });
+        stack.Children.Add(new TextBlock { Text = L.T("AI voices"), FontSize = 12.5, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
+        stack.Children.Add(new TextBlock { Text = L.T("coming later"), FontSize = 11, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center });
+        return new Border
+        {
+            Width = 110,
+            Height = 96,
+            Margin = new Thickness(0, 0, 8, 8),
+            CornerRadius = new CornerRadius(8),
+            Background = (Brush)FindResource("Bg1"),
+            Child = stack,
+            ToolTip = L.T("Realistic AI voices will be an optional download in a later version."),
+        };
+    }
+
+    private ContextMenu VoiceMenu(VoicePreset v)
+    {
+        var id = v.Id;
+        var menu = new ContextMenu();
+        menu.Items.Add(MenuItem(L.T("Edit…"), () => EditVoice(id)));
+        menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetVoiceHotkey(id)));
+        menu.Items.Add(MenuItem(L.T("Duplicate"), () => DuplicateVoice(id)));
+        menu.Items.Add(new Separator());
+        if (v.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetVoiceHidden(id, false)));
+        else if (v.BuiltIn) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetVoiceHidden(id, true)));
+        if (!v.BuiltIn) menu.Items.Add(MenuItem(L.T("Delete…"), () => DeleteVoice(id)));
+        return menu;
+    }
+
+    private ContextMenu SoundMenu(SoundItem s)
+    {
+        var id = s.Id;
+        var menu = new ContextMenu();
+        menu.Items.Add(MenuItem(L.T("Edit…"), () => EditSound(id)));
+        menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetSoundHotkey(id)));
+        menu.Items.Add(MenuItem(L.T("Duplicate"), () => DuplicateSound(id)));
+        menu.Items.Add(new Separator());
+        if (s.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetSoundHidden(id, false)));
+        else if (s.BuiltIn) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetSoundHidden(id, true)));
+        if (!s.BuiltIn) menu.Items.Add(MenuItem(L.T("Delete…"), () => DeleteSound(id)));
+        return menu;
+    }
+
+    private static MenuItem MenuItem(string header, Action click)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => click();
+        return item;
+    }
+
+    // ---------- item actions (Task 9 wires the editors) ----------
+
+    // TODO(Task 9): open the filter editor (a built-in opens as a copy: "Save as new filter").
+    private void EditVoice(string id) { }
+
+    // TODO(Task 9): open the sound editor.
+    private void EditSound(string id) { }
+
+    // TODO(Task 9): HotkeyCaptureDialog, then controller.Save() + controller.RebuildHotkeys().
+    private void SetVoiceHotkey(string id) { }
+
+    // TODO(Task 9): HotkeyCaptureDialog, then controller.Save() + controller.RebuildHotkeys().
+    private void SetSoundHotkey(string id) { }
+
+    // TODO(Task 9): ItemOps.DuplicateVoice.
+    private void DuplicateVoice(string id) { }
+
+    // TODO(Task 9): ItemOps.DuplicateSound (and load the copy into the mixer).
+    private void DuplicateSound(string id) { }
+
+    // TODO(Task 9): confirm with AskDialog, then ItemOps.DeleteVoice.
+    private void DeleteVoice(string id) { }
+
+    // TODO(Task 9): confirm with AskDialog, then ItemOps.DeleteSound.
+    private void DeleteSound(string id) { }
+
+    // TODO(Task 9): open the filter editor for a new filter.
+    private void NewFilter_Click(object sender, RoutedEventArgs e) { }
+
+    // TODO(Task 9): open the sound editor (choose file / drag-drop).
+    private void AddSound_Click(object sender, RoutedEventArgs e) { }
+
+    // ---------- top bar and footers ----------
+
+    private void OnOffButton_Click(object sender, RoutedEventArgs e) => controller.FilterEnabled = OnOffButton.IsChecked == true;
+
+    private void MuteButton_Click(object sender, RoutedEventArgs e) => controller.MicMuted = MuteButton.IsChecked == true;
+
+    private void HearMeButton_Click(object sender, RoutedEventArgs e) => controller.HearMe = HearMeButton.IsChecked == true;
+
+    // TODO(Task 10): open the Settings window.
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) { }
+
+    // TODO(Task 10): open the Setup window (virtual microphone install / pick).
+    private void FixButton_Click(object sender, RoutedEventArgs e) { }
+
+    private void StopAllButton_Click(object sender, RoutedEventArgs e) => controller.StopAllSounds();
+
+    private void ShowHidden_Click(object sender, RoutedEventArgs e) => SetShowHidden(((CheckBox)sender).IsChecked == true);
+
+    /// <summary>Lists hidden items too (greyed, a click unhides them).</summary>
+    internal void SetShowHidden(bool show)
+    {
+        showHidden = show;
+        UpdateAll();
     }
 }

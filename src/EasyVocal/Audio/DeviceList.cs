@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Threading;
 using EasyVocal.Core.Engine;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
@@ -18,8 +19,10 @@ public static class DeviceList
     private static Notifications? client;
     private static Action? changed;
 
+    /// <summary>Never throws: a device that vanishes while it is being listed is left out.</summary>
     public static IReadOnlyList<DeviceInfo> Inputs() => List(DataFlow.Capture);
 
+    /// <summary>Never throws: a device that vanishes while it is being listed is left out.</summary>
     public static IReadOnlyList<DeviceInfo> Outputs() => List(DataFlow.Render);
 
     /// <summary>
@@ -38,35 +41,57 @@ public static class DeviceList
         }
         remove
         {
+            // Unregistering waits for a notification in progress. Raise never takes Sync (it reads the delegate
+            // lock-free) and the unregister runs after Sync is released, so the two can't wait on each other.
+            MMDeviceEnumerator? oldWatcher = null;
+            Notifications? oldClient = null;
             lock (Sync)
             {
                 changed -= value;
-                if (changed == null && watcher != null) Unwatch();
+                if (changed == null && watcher != null)
+                {
+                    oldWatcher = watcher;
+                    oldClient = client;
+                    watcher = null;
+                    client = null;
+                }
             }
+            if (oldWatcher != null) Unwatch(oldWatcher, oldClient);
         }
     }
 
     private static List<DeviceInfo> List(DataFlow flow)
     {
         var list = new List<DeviceInfo>();
-        using var enumerator = new MMDeviceEnumerator();
-        string? defaultId = null;
         try
         {
-            using var d = enumerator.GetDefaultAudioEndpoint(flow, Role.Console);
-            defaultId = d.ID;
-        }
-        catch (COMException) { /* no default device (none plugged in) */ }
-
-        foreach (var device in enumerator.EnumerateAudioEndPoints(flow, DeviceState.Active))
-        {
-            using (device)
+            using var enumerator = new MMDeviceEnumerator();
+            string? defaultId = null;
+            try
             {
-                string name;
-                try { name = device.FriendlyName; }
-                catch (COMException) { continue; } // removed while we were listing
-                list.Add(new DeviceInfo(device.ID, name, device.ID == defaultId));
+                using var d = enumerator.GetDefaultAudioEndpoint(flow, Role.Console);
+                defaultId = d.ID;
             }
+            catch (COMException) { /* no default device (none plugged in) */ }
+
+            foreach (var device in enumerator.EnumerateAudioEndPoints(flow, DeviceState.Active))
+            {
+                using (device)
+                {
+                    string id, name;
+                    try
+                    {
+                        id = device.ID;
+                        name = device.FriendlyName;
+                    }
+                    catch (COMException) { continue; } // removed while we were listing
+                    list.Add(new DeviceInfo(id, name, id == defaultId));
+                }
+            }
+        }
+        catch (COMException)
+        {
+            // The audio service is restarting or the collection changed under us: what we have is the best answer.
         }
         return list;
     }
@@ -87,19 +112,16 @@ public static class DeviceList
         }
     }
 
-    private static void Unwatch()
+    private static void Unwatch(MMDeviceEnumerator oldWatcher, Notifications? oldClient)
     {
-        try { if (client != null) watcher!.UnregisterEndpointNotificationCallback(client); }
+        try { if (oldClient != null) oldWatcher.UnregisterEndpointNotificationCallback(oldClient); }
         catch (COMException) { /* nothing to undo */ }
-        watcher!.Dispose();
-        watcher = null;
-        client = null;
+        oldWatcher.Dispose();
     }
 
     private static void Raise()
     {
-        Action? handlers;
-        lock (Sync) handlers = changed;
+        var handlers = Volatile.Read(ref changed);
         if (handlers == null) return;
         foreach (Action h in handlers.GetInvocationList())
         {

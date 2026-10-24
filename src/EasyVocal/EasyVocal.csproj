@@ -4,7 +4,20 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- Only for the tray icon (NotifyIcon). -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms is only used by Tray.cs, which names its types in full: keep WPF's Application, Button, ... unambiguous. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Lang\*.json" LogicalName="EasyVocal.Lang.%(Filename)%(Extension)" />
+    <Resource Include="Assets\EasyVocal.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />

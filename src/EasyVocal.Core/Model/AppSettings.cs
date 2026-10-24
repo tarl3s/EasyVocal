@@ -76,6 +76,8 @@ public class AppSettings
     public bool ConfirmQuit { get; set; } = true;
     public string Language { get; set; } = "auto";
     public bool SetupDone { get; set; }
+    /// <summary>The "keeps running in the tray" tip was shown once.</summary>
+    public bool TrayTipShown { get; set; }
     public List<VoicePreset> Voices { get; set; } = new();
     public List<SoundItem> Sounds { get; set; } = new();
     /// <summary>Keys: "toggleFilter", "stopSounds", "muteMic".</summary>
