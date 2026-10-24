@@ -488,8 +488,10 @@ public sealed class AppController : IDisposable
         StopPreview();
         try
         {
-            var output = MakeMonitor();
-            if (output == null) return false;
+            // Its own device, opened without MakeMonitor: a preview must never change what the session notes it uses
+            // (a failed one would otherwise make the next device change restart the audio).
+            if (MonitorId(devices.Outputs()) is not { } id) return false;
+            var output = devices.OpenSpeaker(id);
             SoundPreview? mine = null;
             mine = new SoundPreview(output, samples, (float)volume, () => ui.BeginInvoke(() =>
             {
@@ -792,13 +794,15 @@ public sealed class AppController : IDisposable
     private IAudioOutput? MakeMonitor()
     {
         usedMonitor = null;
-        var outputs = devices.Outputs();
-        var id = DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
-        if (id == null) return null;
+        if (MonitorId(devices.Outputs()) is not { } id) return null;
         var output = devices.OpenSpeaker(id);
         usedMonitor = id;
         return output;
     }
+
+    /// <summary>The headphones to open now (see <see cref="DeviceRules.PickMonitor"/>), or null for none.</summary>
+    private string? MonitorId(IReadOnlyList<DeviceInfo> outputs) =>
+        DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
 
     /// <summary>Every active device and which ones are the defaults: a change means the engine may pick other devices.</summary>
     private string DeviceFingerprint()
