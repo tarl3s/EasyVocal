@@ -84,11 +84,17 @@ public partial class App
         var monster = c.Settings.Voices.First(v => v.Id == "monster");
         Dialog(new FilterEditorWindow(c, monster) { Owner = main }, w =>
         {
-            Check(c.HearMe, "Hear me is on while the filter editor is open");
+            Check(c.HearingMe && w.HearToggle.IsChecked == true, "the filter editor's own Hear me is on and shown");
+            Check(c.HearMe == hearBefore, "the filter editor doesn't change the saved Hear me");
+            w.HearToggle.IsChecked = false;
+            w.HearToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Check(!c.HearingMe, "the filter editor's Hear me can be turned off");
+            w.HearToggle.IsChecked = true;
+            w.HearToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Check(w.SaveButton.Content as string == L.T("Save as new filter"), "a built-in voice offers 'Save as new filter'");
             SnapshotWindow(w, Png("filter_editor"));
         });
-        Check(c.HearMe == hearBefore, "Hear me is put back after the filter editor");
+        Check(c.HearMe == hearBefore && c.HearingMe == hearBefore, "Hear me is put back after the filter editor");
 
         Dialog(new FilterEditorWindow(c, null) { Owner = main }, w =>
         {

@@ -26,7 +26,18 @@
                 <TextBlock Text="{loc:T 'Start from'}" FontWeight="SemiBold" Margin="0,14,0,0" />
                 <ComboBox x:Name="StartBox" Margin="0,6,0,0" SelectionChanged="StartBox_SelectionChanged" />
 
-                <TextBlock Text="{loc:T 'Your voice'}" FontWeight="SemiBold" Margin="0,18,0,0" />
+                <DockPanel Margin="0,18,0,0">
+                    <ToggleButton x:Name="HearToggle" DockPanel.Dock="Right" Padding="12,6" Click="HearToggle_Click"
+                                  ToolTip="{loc:T 'Hear your own voice in your headphones, to try the voices'}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🎧" FontFamily="{StaticResource EmojiFont}" Margin="0,0,6,0" />
+                            <TextBlock Text="{loc:T 'Hear me'}" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <TextBlock Text="{loc:T 'Your voice'}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <TextBlock Text="{loc:T 'Use headphones — speakers can echo back into the mic.'}" Foreground="{StaticResource TextDim}"
+                           FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
                 <StackPanel x:Name="SliderPanel" Margin="0,2,0,0" />
             </StackPanel>
         </ScrollViewer>

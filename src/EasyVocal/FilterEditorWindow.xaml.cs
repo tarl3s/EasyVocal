@@ -8,7 +8,9 @@ namespace EasyVocal;
 
 /// <summary>
 /// Makes or edits a voice filter: a name, an emoji, a starting voice and seven sliders. Every drag is heard live:
-/// the engine plays the sliders (<see cref="AppController.PreviewSliders"/>) with "Hear me" on while this window is open.
+/// the engine plays the sliders (<see cref="AppController.PreviewSliders"/>), in the headphones while the window's own
+/// 🎧 Hear me toggle is on (it starts on; <see cref="AppController.PreviewHearMe"/>). The person's saved Hear me is never
+/// changed, and everything is put back when the window closes.
 /// Editing a built-in voice opens a copy (it can't be changed): the button says "Save as new filter".
 /// </summary>
 public partial class FilterEditorWindow : Window
@@ -17,7 +19,6 @@ public partial class FilterEditorWindow : Window
 
     private readonly AppController controller;
     private readonly VoicePreset? editing;      // the custom voice changed in place; null = a new voice will be added
-    private readonly bool prevHearMe;
     private readonly List<Row> rows = new();
     private readonly EmojiGrid emojiGrid;
     private VoiceSliders current;
@@ -53,9 +54,9 @@ public partial class FilterEditorWindow : Window
         SaveButton.Content = editing is { BuiltIn: true } ? L.T("Save as new filter") : L.T("Save");
         UpdateSave();
 
-        // Hear what the sliders do: "Hear me" is on while this window is open, and put back afterwards.
-        prevHearMe = controller.HearMe;
-        controller.HearMe = true;
+        // Hear what the sliders do: the editor's own Hear me starts on (shown, and it can be turned off).
+        HearToggle.IsChecked = true;
+        controller.PreviewHearMe(true);
         controller.PreviewSliders(current);
 
         loading = false;
@@ -67,9 +68,11 @@ public partial class FilterEditorWindow : Window
         Closed += (_, _) =>
         {
             controller.PreviewSliders(null);
-            controller.HearMe = prevHearMe;
+            controller.PreviewHearMe(null);
         };
     }
+
+    private void HearToggle_Click(object sender, RoutedEventArgs e) => controller.PreviewHearMe(HearToggle.IsChecked == true);
 
     // ---------- start from ----------
 

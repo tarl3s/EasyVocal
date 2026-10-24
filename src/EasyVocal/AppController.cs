@@ -40,6 +40,7 @@ public sealed class AppController : IDisposable
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
     private HashSet<string> refusedActions = new();
     private VoiceSliders? previewSliders;
+    private bool? previewHearMe;
     private readonly HashSet<string> brokenSounds = new();
     private SoundPreview? preview;
     private string deviceFingerprint = "";
@@ -222,7 +223,7 @@ public sealed class AppController : IDisposable
         {
             if (Settings.HearMe == value) return;
             Settings.HearMe = value;
-            engine.HearMe = value;
+            engine.HearMe = previewHearMe ?? value;
             Save();
             RaiseChanged();
         }
@@ -311,6 +312,20 @@ public sealed class AppController : IDisposable
         ApplyChain();
         engine.FilterEnabled = sliders != null || Settings.Enabled;
     }
+
+    /// <summary>
+    /// While the filter editor is open it decides on its own whether the headphones play the voice (its 🎧 toggle);
+    /// the person's saved Hear me is not touched. Null = back to the saved Hear me.
+    /// </summary>
+    public void PreviewHearMe(bool? on)
+    {
+        if (disposed) return;
+        previewHearMe = on;
+        engine.HearMe = on ?? Settings.HearMe;
+    }
+
+    /// <summary>What the headphones do right now: the filter editor's choice while it is open, else Hear me.</summary>
+    public bool HearingMe => previewHearMe ?? Settings.HearMe;
 
     /// <summary>Gives the voice chain what it should play: the preview if one is on, else the active voice.</summary>
     private void ApplyChain() => chain.Apply(previewSliders ?? ActiveVoice.Sliders);
