@@ -40,7 +40,8 @@ public sealed class FakeOutput : IAudioOutput
 
     public bool ThrowOnWrite { get; set; }
     public int BufferedSamples { get; set; }
-    public int DropCount { get; private set; }
+    public int TrimCount { get; private set; }
+    public int LastTrimTo { get; private set; } = -1;
     public int StartCount { get; private set; }
     public int WriteCount { get; private set; }
     public bool Disposed { get; private set; }
@@ -56,7 +57,12 @@ public sealed class FakeOutput : IAudioOutput
         foreach (float v in mono) _written.Add(v);
     }
 
-    public void DropBuffered() => DropCount++;
+    public void TrimTo(int keepSamples)
+    {
+        TrimCount++;
+        LastTrimTo = keepSamples;
+        if (BufferedSamples > keepSamples) BufferedSamples = keepSamples;
+    }
 
     public void Dispose() => Disposed = true;
 }

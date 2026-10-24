@@ -13,7 +13,11 @@ namespace EasyVocal.Core.Engine;
 /// <see cref="FilterEnabled"/> is off, silent when <see cref="MicMuted"/>); <c>sounds</c> = the
 /// <see cref="SoundMixer"/>; the call gets <c>Limiter(voice + sounds)</c>; the monitor gets
 /// <c>Limiter((HearMe ? voice : 0) + (HearSounds ? sounds : 0))</c> and nothing at all when both are off.
-/// When the call output holds more than 60 ms it is emptied, so latency never creeps up.
+/// When an output holds more than 60 ms (the mic's clock runs faster than the device's) its oldest audio is
+/// trimmed back to 20 ms with a short crossfade, so latency never creeps up and nothing is heard skipping.
+/// Without the virtual cable the session still runs with the monitor only (State <see cref="EngineState.NoVirtualCable"/>),
+/// so the voices can be tried with Hear me; the cable is attached as soon as it shows up. Whenever the engine leaves
+/// <see cref="EngineState.Running"/> every sound is stopped (they only advance while the mic delivers audio).
 /// </para>
 /// <para>
 /// Threads: <see cref="Start"/>, <see cref="Stop"/>, <see cref="TryRecover"/> and <see cref="Dispose"/> belong to
@@ -25,8 +29,11 @@ namespace EasyVocal.Core.Engine;
 /// </summary>
 public sealed class AudioEngine : IDisposable
 {
-    /// <summary>Most audio the call output may hold before it is dropped (60 ms).</summary>
+    /// <summary>Most audio an output may hold before its oldest part is trimmed (60 ms).</summary>
     public const int MaxCallBacklog = AudioFormat.SampleRate * 60 / 1000;
+
+    /// <summary>What a trim leaves queued (20 ms): a cushion against the device reading a little early.</summary>
+    public const int TargetBacklog = AudioFormat.SampleRate * 20 / 1000;
 
     private const int Block = AudioFormat.BlockSize;
     /// <summary>Mute / hear-me / hear-sounds switches fade over 5 ms instead of clicking.</summary>
@@ -55,7 +62,7 @@ public sealed class AudioEngine : IDisposable
     private sealed class Session
     {
         public IAudioInput? Input;
-        public IAudioOutput? Call;
+        public volatile IAudioOutput? Call;  // null while the virtual cable is missing (monitor-only session)
         public IAudioOutput? Monitor;
         public Action<float[], int>? OnSamples;
         public Action<Exception?>? OnStopped;
@@ -139,10 +146,86 @@ public sealed class AudioEngine : IDisposable
             var now = State;
             if (now == EngineState.Running) return true;
             if (now == EngineState.Stopped) return false;
+            Session? live;
+            lock (stateLock) live = session;
+            // A monitor-only session keeps its mic running: only the missing cable is looked for again.
+            if (now == EngineState.NoVirtualCable && live is { Failed: false, Call: null }) return AttachCall(live);
             TearDown();
             Build();
             return State == EngineState.Running;
         }
+    }
+
+    /// <summary>True while a session without the virtual cable runs: the mic and the monitor work, nothing reaches a call.</summary>
+    public bool MonitorOnly
+    {
+        get
+        {
+            lock (stateLock) return state == EngineState.NoVirtualCable && session is { Failed: false, Call: null };
+        }
+    }
+
+    /// <summary>True while a session runs whose monitor device stopped working (unplugged headphones).</summary>
+    public bool MonitorLost
+    {
+        get
+        {
+            lock (stateLock) return session is { Failed: false, MonitorFailed: true };
+        }
+    }
+
+    /// <summary>UI thread, under <see cref="gate"/>: the cable may be there now; plug it into the running session.</summary>
+    private bool AttachCall(Session live)
+    {
+        IAudioOutput call;
+        try
+        {
+            call = makeCallOutput();
+        }
+        catch (NoVirtualCableException)
+        {
+            return false; // still not installed: keep the monitor-only session as it is
+        }
+        catch (Exception)
+        {
+            TearDown();
+            SetState(EngineState.OutputLost);
+            return false;
+        }
+        try
+        {
+            call.Start();
+        }
+        catch (Exception)
+        {
+            TryDispose(call);
+            TearDown();
+            SetState(EngineState.OutputLost);
+            return false;
+        }
+
+        Action<EngineState>? raise = null;
+        bool attached = false;
+        lock (stateLock)
+        {
+            if (!live.Failed && ReferenceEquals(session, live))
+            {
+                live.Call = call; // the audio thread writes to it from its next block
+                attached = true;
+                if (state != EngineState.Running)
+                {
+                    state = EngineState.Running;
+                    raise = StateChanged;
+                }
+            }
+        }
+        if (!attached)
+        {
+            TryDispose(call); // the mic failed meanwhile: the next recovery starts afresh
+            return false;
+        }
+        Raise(raise, EngineState.Running);
+        return true;
     }
 
     public void Dispose() => Stop();
@@ -152,14 +235,14 @@ public sealed class AudioEngine : IDisposable
     private void Build()
     {
         var s = new Session();
+        bool noCable = false;
         try
         {
             s.Call = makeCallOutput();
         }
         catch (NoVirtualCableException)
         {
-            SetState(EngineState.NoVirtualCable);
-            return;
+            noCable = true; // run with the monitor only, so the voices can still be tried with Hear me
         }
         catch (Exception)
         {
@@ -177,7 +260,7 @@ public sealed class AudioEngine : IDisposable
         catch (Exception)
         {
             Dispose(s);
-            SetState(EngineState.MicLost);
+            SetState(noCable ? EngineState.NoVirtualCable : EngineState.MicLost); // the missing cable is the bigger problem
             return;
         }
 
@@ -196,7 +279,7 @@ public sealed class AudioEngine : IDisposable
 
         try
         {
-            s.Call.Start();
+            s.Call?.Start();
         }
         catch (Exception)
         {
@@ -211,17 +294,21 @@ public sealed class AudioEngine : IDisposable
         }
         catch (Exception)
         {
-            Lose(s, EngineState.MicLost);
+            Lose(s, noCable ? EngineState.NoVirtualCable : EngineState.MicLost);
             return;
         }
+        var next = noCable ? EngineState.NoVirtualCable : EngineState.Running;
         Action<EngineState>? raise = null;
+        EngineState before;
         lock (stateLock)
         {
-            if (s.Failed || state == EngineState.Running) return; // a device already failed: keep what Lose set
-            state = EngineState.Running;
+            if (s.Failed || state == next) return; // a device already failed: keep what Lose set
+            before = state;
+            state = next;
             raise = StateChanged;
         }
-        Raise(raise, EngineState.Running);
+        AfterChange(before, next);
+        Raise(raise, next);
     }
 
     private void TearDown()
@@ -258,29 +345,44 @@ public sealed class AudioEngine : IDisposable
     private void Lose(Session s, EngineState why)
     {
         Action<EngineState>? raise = null;
+        EngineState before;
         lock (stateLock)
         {
             if (s.Failed || !ReferenceEquals(session, s)) return;
             s.Failed = true;
+            before = state;
             if (state != why)
             {
                 state = why;
                 raise = StateChanged;
             }
         }
+        AfterChange(before, why);
         Raise(raise, why);
     }
 
     private void SetState(EngineState next)
     {
         Action<EngineState>? raise = null;
+        EngineState before;
         lock (stateLock)
         {
             if (state == next) return;
+            before = state;
             state = next;
             raise = StateChanged;
         }
+        AfterChange(before, next);
         Raise(raise, next);
+    }
+
+    /// <summary>
+    /// Leaving Running stops every sound: they only move on while the mic delivers audio, so they would otherwise
+    /// wait and play late when it comes back. (Any thread: the mixer only queues the command.)
+    /// </summary>
+    private void AfterChange(EngineState before, EngineState next)
+    {
+        if (before == EngineState.Running && next != EngineState.Running) mixer.StopAll();
     }
 
     private static void Raise(Action<EngineState>? handlers, EngineState value)
@@ -342,19 +444,21 @@ public sealed class AudioEngine : IDisposable
         sounds.Clear();
         mixer.MixInto(sounds);
 
-        for (int i = 0; i < n; i++) call[i] = voice[i] + sounds[i];
-        s.CallLimiter.Process(call);
-
-        var callOut = s.Call!;
-        try
+        var callOut = s.Call;
+        if (callOut != null)
         {
-            if (callOut.BufferedSamples > MaxCallBacklog) callOut.DropBuffered();
-            callOut.Write(call);
-        }
-        catch (Exception)
-        {
-            Lose(s, EngineState.OutputLost);
-            return;
+            for (int i = 0; i < n; i++) call[i] = voice[i] + sounds[i];
+            s.CallLimiter.Process(call);
+            try
+            {
+                if (callOut.BufferedSamples > MaxCallBacklog) callOut.TrimTo(TargetBacklog);
+                callOut.Write(call);
+            }
+            catch (Exception)
+            {
+                Lose(s, EngineState.OutputLost);
+                return;
+            }
         }
 
         var monitor = s.Monitor;
@@ -379,7 +483,7 @@ public sealed class AudioEngine : IDisposable
         s.MonitorLimiter.Process(mon);
         try
         {
-            if (monitor.BufferedSamples > MaxCallBacklog) monitor.DropBuffered();
+            if (monitor.BufferedSamples > MaxCallBacklog) monitor.TrimTo(TargetBacklog);
             monitor.Write(mon);
         }
         catch (Exception)

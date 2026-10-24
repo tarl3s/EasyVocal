@@ -31,8 +31,11 @@ public interface IAudioOutput : IDisposable
     /// <summary>Samples queued and not yet played.</summary>
     int BufferedSamples { get; }
 
-    /// <summary>Throws away everything queued (keeps the latency from creeping up).</summary>
-    void DropBuffered();
+    /// <summary>
+    /// Throws away the oldest queued samples so only <paramref name="keepSamples"/> remain (keeps the latency from
+    /// creeping up when the mic's clock runs faster than the device's), with a short crossfade at the cut.
+    /// </summary>
+    void TrimTo(int keepSamples);
 }
 
 /// <summary>Thrown by the call-output factory when the virtual cable (VB-CABLE) is not installed.</summary>

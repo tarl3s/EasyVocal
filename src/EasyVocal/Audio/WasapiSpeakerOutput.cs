@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 using NAudio.CoreAudioApi;
@@ -11,18 +10,22 @@ namespace EasyVocal.Audio;
 
 /// <summary>
 /// A playback device through WASAPI (shared mode, event sync, 20 ms latency) fed mono 48 kHz float. The samples
-/// wait in a <see cref="BufferedWaveProvider"/> (silence when it runs dry) and are spread to the device's
+/// wait in a <see cref="SampleQueue"/> (soft fades and silence when it runs dry) and are spread to the device's
 /// channels: both sides on stereo, front left/right on surround. A device that stops by itself (unplugged,
 /// disabled) makes the next <see cref="Write"/> throw, which the engine reports as a lost output.
 /// </summary>
 public sealed class WasapiSpeakerOutput : IAudioOutput
 {
     private const int LatencyMs = 20;
+    private const int CapacityMs = 500;
+    /// <summary>Crossfade at a trim and fades around a dry spell (5 ms).</summary>
+    private const int FadeSamples = AudioFormat.SampleRate * 5 / 1000;
+    /// <summary>After running dry, playback waits for one block (10 ms) so it doesn't stutter.</summary>
+    private const int PrimeSamples = AudioFormat.BlockSize;
 
     private readonly MMDevice device;
     private readonly WasapiOut output;
-    private readonly BufferedWaveProvider buffer;
-    private byte[] bytes = new byte[AudioFormat.BlockSize * sizeof(float) * 4];
+    private readonly SampleQueue queue = new(AudioFormat.SampleRate * CapacityMs / 1000, FadeSamples, PrimeSamples);
     private volatile Exception? failure;
     private volatile bool disposed;
 
@@ -38,13 +41,7 @@ public sealed class WasapiSpeakerOutput : IAudioOutput
         try
         {
             int channels = device.AudioClient.MixFormat.Channels;
-            buffer = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(AudioFormat.SampleRate, 1))
-            {
-                BufferDuration = TimeSpan.FromMilliseconds(500),
-                DiscardOnBufferOverflow = true,
-                ReadFully = true, // silence when the capture is late; WASAPI would stop on a short read
-            };
-            ISampleProvider samples = buffer.ToSampleProvider();
+            ISampleProvider samples = new QueueProvider(queue);
             if (channels == 2) samples = samples.ToStereo();
             else if (channels > 2) samples = new MonoToFrontPair(samples, channels);
 
@@ -61,23 +58,20 @@ public sealed class WasapiSpeakerOutput : IAudioOutput
 
     public string Name => device.FriendlyName;
 
-    public int BufferedSamples => buffer.BufferedBytes / sizeof(float);
+    public int BufferedSamples => queue.Count;
 
     public void Start() => output.Play();
 
-    /// <summary>Capture thread: queues the samples (reuses one byte buffer; grows it only for a bigger block than ever).</summary>
+    /// <summary>Capture thread: queues the samples.</summary>
     public void Write(ReadOnlySpan<float> mono)
     {
         var why = failure;
         if (why != null) throw new IOException("The audio output stopped.", why);
         if (disposed) throw new ObjectDisposedException(nameof(WasapiSpeakerOutput));
-        var src = MemoryMarshal.AsBytes(mono);
-        if (bytes.Length < src.Length) bytes = new byte[src.Length * 2];
-        src.CopyTo(bytes);
-        buffer.AddSamples(bytes, 0, src.Length);
+        queue.Write(mono);
     }
 
-    public void DropBuffered() => buffer.ClearBuffer();
+    public void TrimTo(int keepSamples) => queue.TrimTo(keepSamples);
 
     private void OnStopped(object? sender, StoppedEventArgs e)
     {
@@ -92,6 +86,22 @@ public sealed class WasapiSpeakerOutput : IAudioOutput
         try { output.Stop(); } catch { /* already gone */ }
         output.Dispose();
         device.Dispose();
+    }
+
+    /// <summary>The queue as an NAudio source: always a full read (silence when dry; WASAPI would stop on a short read).</summary>
+    private sealed class QueueProvider : ISampleProvider
+    {
+        private readonly SampleQueue queue;
+
+        public QueueProvider(SampleQueue queue) => this.queue = queue;
+
+        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(AudioFormat.SampleRate, 1);
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            queue.Read(buffer.AsSpan(offset, count));
+            return count;
+        }
     }
 
     /// <summary>Mono to the first two channels of a surround device (the others stay silent).</summary>

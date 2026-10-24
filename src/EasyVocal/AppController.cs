@@ -365,6 +365,12 @@ public sealed class AppController : IDisposable
         var s = FindSound(id);
         if (s == null || s.Hidden) return;
         bool wasPlaying = mixer.IsPlaying(id);
+        if (!wasPlaying && engine.State != EngineState.Running)
+        {
+            // Nothing would play it now (no mic audio, or no call to reach); the banner already says why.
+            AppLog.Info("Sound not started, the audio is " + engine.State + ": " + id);
+            return;
+        }
         if (!mixer.Toggle(id, (float)s.Volume) && !wasPlaying)
         {
             AppLog.Info("Sound not loaded (yet): " + id);

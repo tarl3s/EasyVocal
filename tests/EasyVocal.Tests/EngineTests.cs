@@ -234,12 +234,14 @@ public class EngineTests
     }
 
     [Fact]
-    public void CallOutputBacklog_IsDropped()
+    public void CallOutputBacklog_IsTrimmedToTheTargetFill()
     {
         using var rig = new Rig { CallFactory = () => new FakeOutput { BufferedSamples = 4000 } };
         rig.Engine.Start();
         rig.Mic.Feed(Signals.Silence(0.01));
-        Assert.True(rig.Call.DropCount > 0);
+        Assert.Equal(1, rig.Call.TrimCount);
+        Assert.Equal(AudioEngine.TargetBacklog, rig.Call.LastTrimTo); // not emptied: a cushion stays
+        Assert.Equal(Sr / 50, AudioEngine.TargetBacklog);
         Assert.Equal(EngineState.Running, rig.Engine.State);
     }
 
@@ -249,7 +251,7 @@ public class EngineTests
         using var rig = new Rig { CallFactory = () => new FakeOutput { BufferedSamples = 960 } };
         rig.Engine.Start();
         rig.Mic.Feed(Signals.Silence(0.1));
-        Assert.Equal(0, rig.Call.DropCount);
+        Assert.Equal(0, rig.Call.TrimCount);
     }
 
     [Fact]
@@ -341,13 +343,99 @@ public class EngineTests
         rig.Engine.Start();
         Assert.Equal(EngineState.NoVirtualCable, rig.Engine.State);
         Assert.Equal(EngineState.NoVirtualCable, rig.Changes[^1]);
-        Assert.All(rig.Inputs, i => Assert.Equal(0, i.StartCount));
+        Assert.True(rig.Engine.MonitorOnly);
 
         Assert.False(rig.Engine.TryRecover()); // still not installed
         Assert.Equal(EngineState.NoVirtualCable, rig.Engine.State);
 
         rig.CallFactory = null; // the user installed it
         Assert.True(rig.Engine.TryRecover());
+        Assert.Equal(EngineState.Running, rig.Engine.State);
+        Assert.False(rig.Engine.MonitorOnly);
+    }
+
+    [Fact]
+    public void NoVirtualCable_MonitorOnlySession_HearMeWorks_ThenCableAttachesWithoutRestartingTheMic()
+    {
+        using var rig = new Rig { CallFactory = () => throw new NoVirtualCableException() };
+        rig.Engine.HearMe = true;
+        rig.Engine.FilterEnabled = false;
+        rig.Engine.Start();
+        Assert.Equal(EngineState.NoVirtualCable, rig.Engine.State);
+        Assert.Equal(1, rig.Mic.StartCount);
+
+        var voice = Signals.Sine(200, 0.2, 0.4f);
+        rig.Mic.Feed(voice);
+        AssertDelayedCopy(voice, rig.Monitor.Written); // the voices can be tried before installing
+        Assert.Empty(rig.Calls);
+        Assert.InRange(rig.Engine.InputLevel, 0.35f, 0.41f);
+
+        Assert.False(rig.Engine.TryRecover());
+        Assert.Single(rig.Inputs); // looking for the cable again must not reopen the mic
+
+        rig.CallFactory = null;
+        Assert.True(rig.Engine.TryRecover());
+        Assert.Equal(EngineState.Running, rig.Engine.State);
+        Assert.Equal(EngineState.Running, rig.Changes[^1]);
+        Assert.Single(rig.Inputs);
+        Assert.Equal(1, rig.Call.StartCount);
+        rig.Mic.Feed(Signals.Sine(200, 0.1, 0.4f));
+        Assert.Equal(Sr / 10, rig.Call.Written.Length);
+    }
+
+    [Fact]
+    public void NoVirtualCable_AndNoMic_StaysNoVirtualCable()
+    {
+        using var rig = new Rig();
+        var engine = new AudioEngine(() => throw new IOException("no mic"), () => throw new NoVirtualCableException(),
+            () => null, rig.Chain, rig.Mixer);
+        engine.Start();
+        Assert.Equal(EngineState.NoVirtualCable, engine.State);
+        Assert.False(engine.MonitorOnly);
+        Assert.False(engine.TryRecover());
+        engine.Dispose();
+    }
+
+    [Fact]
+    public void LeavingRunning_StopsEverySound()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("long", Signals.Sine(660, 2, 0.3f));
+        rig.Engine.Start();
+        Assert.True(rig.Mixer.Toggle("long", 1f));
+        rig.Mic.Feed(Signals.Silence(0.05));
+        Assert.True(rig.Mixer.IsPlaying("long"));
+
+        rig.Mic.RaiseStopped(new IOException("unplugged"));
+        Assert.Equal(EngineState.MicLost, rig.Engine.State);
+        Assert.False(rig.Mixer.IsPlaying("long"));
+
+        Assert.True(rig.Engine.TryRecover());
+        rig.Mic.Feed(Signals.Silence(0.1));
+        Assert.All(rig.Call.Written, v => Assert.Equal(0f, v)); // the sound did not come back late
+    }
+
+    [Fact]
+    public void Stop_StopsEverySound()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("long", Signals.Sine(660, 2, 0.3f));
+        rig.Engine.Start();
+        rig.Mixer.Toggle("long", 1f);
+        rig.Engine.Stop();
+        Assert.False(rig.Mixer.IsPlaying("long"));
+    }
+
+    [Fact]
+    public void MonitorFails_MonitorLostIsReported()
+    {
+        using var rig = new Rig();
+        rig.Engine.HearMe = true;
+        rig.Engine.Start();
+        Assert.False(rig.Engine.MonitorLost);
+        rig.Monitor.ThrowOnWrite = true;
+        rig.Mic.Feed(Signals.Sine(200, 0.05, 0.4f));
+        Assert.True(rig.Engine.MonitorLost);
         Assert.Equal(EngineState.Running, rig.Engine.State);
     }
 
