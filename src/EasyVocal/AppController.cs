@@ -45,6 +45,7 @@ public sealed class AppController : IDisposable
     private VoiceSliders? previewSliders;
     private bool? previewHearMe;
     private readonly HashSet<string> brokenSounds = new();
+    private readonly LoadTickets soundLoads = new();
     private SoundPreview? preview;
     private string deviceFingerprint = "";
     private readonly MicPicker micPicker = new();
@@ -432,7 +433,7 @@ public sealed class AppController : IDisposable
     public SoundItem DuplicateSound(string id)
     {
         var copy = ItemOps.DuplicateSound(Settings, id);
-        if (mixer.TryGet(id, out var samples)) mixer.Set(copy.Id, samples);
+        if (mixer.TryGet(id, out var samples)) SetSamples(copy.Id, samples);
         else if (brokenSounds.Contains(id)) brokenSounds.Add(copy.Id); // the same file can't be opened either
         else LoadSound(copy);
         Save();
@@ -444,8 +445,7 @@ public sealed class AppController : IDisposable
     public void AddSound(SoundItem sound, float[] samples)
     {
         Settings.Sounds.Add(sound);
-        mixer.Set(sound.Id, samples);
-        brokenSounds.Remove(sound.Id);
+        SetSamples(sound.Id, samples);
         Save();
         RebuildHotkeys();
     }
@@ -459,8 +459,7 @@ public sealed class AppController : IDisposable
         if (newSamples != null)
         {
             mixer.Stop(id);
-            mixer.Set(id, newSamples);
-            brokenSounds.Remove(id);
+            SetSamples(id, newSamples);
         }
         if (oldFile != null) ItemOps.DeleteFileIfUnused(Settings, oldFile, SoundsFolder);
         Save();
@@ -475,6 +474,7 @@ public sealed class AppController : IDisposable
         ItemOps.DeleteSound(Settings, id, SoundsFolder);
         if (!builtIn)
         {
+            soundLoads.Next(id); // a decode still running for it is dropped
             mixer.Remove(id);
             brokenSounds.Remove(id);
         }
@@ -538,13 +538,21 @@ public sealed class AppController : IDisposable
         }
     }
 
+    /// <summary>Gives the mixer a sound's audio now; a decode of that sound still running is dropped.</summary>
+    private void SetSamples(string id, float[] samples)
+    {
+        soundLoads.Next(id);
+        mixer.Set(id, samples);
+        brokenSounds.Remove(id);
+    }
+
     /// <summary>
     /// Writes the generated starter sounds that are missing (all of them on the first run), then decodes every
-    /// sound into the mixer, off the UI thread. A missing or broken file is logged and skipped.
+    /// sound off the UI thread. A missing or broken file is logged and its card marked.
     /// </summary>
     private void LoadSoundsInBackground()
     {
-        var items = Settings.Sounds.Select(s => (s.Id, s.FileName, Path: SoundPath(s.FileName))).ToList();
+        var items = Settings.Sounds.Select(NewLoad).ToList();
         var folder = SoundsFolder;
         bool writeStarters = FirstRun || StarterSounds.Items().Any(s => SoundPath(s.FileName) is { } p && !File.Exists(p));
         Task.Run(() =>
@@ -554,65 +562,57 @@ public sealed class AppController : IDisposable
                 try { StarterSoundSynth.WriteAll(folder); }
                 catch (Exception ex) { AppLog.Error("Writing the starter sounds failed", ex); }
             }
-            var broken = new List<string>();
-            foreach (var (id, fileName, path) in items)
-            {
-                if (!TryLoadInto(id, fileName, path)) broken.Add(id);
-            }
-            AppLog.Info($"Sounds loaded: {items.Count - broken.Count} of {items.Count}");
-            ui.BeginInvoke(() =>
-            {
-                if (disposed) return;
-                // A sound deleted while the files were decoded: drop what was loaded for it.
-                foreach (var (id, _, _) in items)
-                    if (FindSound(id) == null) mixer.Remove(id);
-                if (broken.Count == 0) return;
-                foreach (var id in broken)
-                    if (FindSound(id) != null) brokenSounds.Add(id);
-                RaiseChanged(); // the cards of the files that failed say so
-            });
+            int loaded = 0;
+            foreach (var load in items)
+                if (Decode(load)) loaded++;
+            AppLog.Info($"Sounds loaded: {loaded} of {items.Count}");
         });
     }
 
-    /// <summary>Decodes one sound's file into the mixer in the background; a failure marks its card.</summary>
+    /// <summary>Decodes one sound's file in the background; a failure marks its card.</summary>
     private void LoadSound(SoundItem sound)
     {
-        var (id, fileName, path) = (sound.Id, sound.FileName, SoundPath(sound.FileName));
-        Task.Run(() =>
-        {
-            bool ok = TryLoadInto(id, fileName, path);
-            ui.BeginInvoke(() =>
-            {
-                if (disposed) return;
-                if (FindSound(id) == null)
-                {
-                    mixer.Remove(id); // deleted while it was being decoded: don't keep its samples
-                    return;
-                }
-                if (ok) brokenSounds.Remove(id); else brokenSounds.Add(id);
-                RaiseChanged();
-            });
-        });
+        var load = NewLoad(sound);
+        Task.Run(() => Decode(load));
     }
 
-    /// <summary>Any thread. False (and a log line) when the file can't be used.</summary>
-    private bool TryLoadInto(string id, string fileName, string? path)
+    /// <summary>One sound's file to decode, with the ticket that says whether the result is still wanted. UI thread.</summary>
+    private readonly record struct SoundLoad(string Id, string FileName, string? Path, int Ticket);
+
+    private SoundLoad NewLoad(SoundItem s) => new(s.Id, s.FileName, SoundPath(s.FileName), soundLoads.Next(s.Id));
+
+    /// <summary>
+    /// Any thread: decodes the file, then hands the result to the UI thread, which keeps it only when the sound
+    /// still exists and wasn't edited, replaced or loaded again meanwhile. False when the file can't be used.
+    /// </summary>
+    private bool Decode(SoundLoad load)
     {
-        if (path == null)
+        float[]? samples = null;
+        if (load.Path == null)
         {
-            AppLog.Info($"Sound '{id}' skipped: bad file name '{fileName}'");
-            return false;
+            AppLog.Info($"Sound '{load.Id}' skipped: bad file name '{load.FileName}'");
         }
-        try
+        else
         {
-            mixer.Set(id, SoundLoader.Load(path));
-            return true;
+            try { samples = SoundLoader.Load(load.Path); }
+            catch (Exception ex) { AppLog.Info($"Sound '{load.Id}' skipped ({load.FileName}): {ex.Message}"); }
         }
-        catch (Exception ex)
+        ui.BeginInvoke(() =>
         {
-            AppLog.Info($"Sound '{id}' skipped ({fileName}): {ex.Message}");
-            return false;
-        }
+            if (disposed || !soundLoads.IsCurrent(load.Id, load.Ticket) || FindSound(load.Id) == null) return;
+            bool cardChanged;
+            if (samples != null)
+            {
+                mixer.Set(load.Id, samples);
+                cardChanged = brokenSounds.Remove(load.Id);
+            }
+            else
+            {
+                cardChanged = brokenSounds.Add(load.Id);
+            }
+            if (cardChanged) RaiseChanged(); // the card says whether its file could be opened
+        });
+        return samples != null;
     }
 
     // ---------- hotkeys ----------
