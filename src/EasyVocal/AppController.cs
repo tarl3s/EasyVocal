@@ -131,7 +131,7 @@ public sealed class AppController : IDisposable
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio started: " + engine.State);
-        UpdateRecoverTimer();
+        recoverTimer.Start(); // every 2 s: brings back whatever stopped working (cheap while everything works)
 
         LoadSoundsInBackground();
     }
@@ -144,7 +144,6 @@ public sealed class AppController : IDisposable
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio restarted: " + engine.State);
-        UpdateRecoverTimer();
         RaiseChanged();
     }
 
@@ -833,7 +832,7 @@ public sealed class AppController : IDisposable
         if (state == EngineState.Running)
         {
             // Only when this session would now open other devices (a mic came back, new default headphones…), or its
-            // headphones stopped working: they never come back by themselves. An unrelated device changes nothing.
+            // headphones stopped working. An unrelated device changes nothing.
             var wanted = PickRoutes(devices.Inputs(), devices.Outputs());
             var inUse = new AudioRoutes(usedMic, usedCall, usedMonitor);
             bool restart = AudioRoutes.NeedsRestart(inUse, wanted, engine.MonitorLost);
@@ -848,20 +847,25 @@ public sealed class AppController : IDisposable
         RaiseChanged();
     }
 
+    /// <summary>
+    /// The 2 s recovery (and a device change while the audio isn't running normally): reopens lost devices, failed
+    /// headphones and the cable once it is installed. A session waiting for the cable switches to another mic when
+    /// one should be used now (the engine keeps its mic running there, so nothing else would).
+    /// </summary>
     private void Recover()
     {
-        if (disposed) return;
-        try { engine.TryRecover(); }
+        if (disposed || !started) return;
+        try
+        {
+            if (engine.MonitorOnly && AudioRoutes.ShouldSwitchMic(usedMic, micPicker.Pick(Settings.MicDeviceId, devices.Inputs(), DateTime.UtcNow)))
+            {
+                AppLog.Info("Waiting for the virtual microphone: another microphone should be used now");
+                RestartAudio();
+                return;
+            }
+            engine.TryRecover();
+        }
         catch (Exception ex) { AppLog.Error("Recovering the audio failed", ex); }
-        UpdateRecoverTimer();
-    }
-
-    private void UpdateRecoverTimer()
-    {
-        var state = engine.State;
-        bool lost = state is EngineState.MicLost or EngineState.OutputLost or EngineState.NoVirtualCable;
-        if (lost && !disposed) { if (!recoverTimer.IsEnabled) recoverTimer.Start(); }
-        else recoverTimer.Stop();
     }
 
     // Any thread.
@@ -869,7 +873,6 @@ public sealed class AppController : IDisposable
     {
         if (disposed) return;
         AppLog.Info("Engine: " + state);
-        UpdateRecoverTimer();
         RaiseChanged();
     });
 

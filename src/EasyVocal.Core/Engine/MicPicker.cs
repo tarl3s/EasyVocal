@@ -57,7 +57,13 @@ public sealed record AudioRoutes(string? Mic, string? Call, string? Monitor)
 {
     /// <summary>
     /// After the device list changed: restart a running session only when it would now pick other devices, or its
-    /// headphones stopped working (they never come back by themselves). Plugging in an unrelated device does nothing.
+    /// headphones stopped working (a new device may be what they should switch to). Plugging in an unrelated device does nothing.
     /// </summary>
     public static bool NeedsRestart(AudioRoutes inUse, AudioRoutes now, bool monitorLost) => monitorLost || inUse != now;
+
+    /// <summary>
+    /// A session waiting for the virtual cable keeps its microphone running (nothing else restarts it); it switches only
+    /// when a different, connected mic should be used now: the chosen one is back, Windows has a new default…
+    /// </summary>
+    public static bool ShouldSwitchMic(string? micInUse, MicPick now) => now.Id != null && now.Name != null && now.Id != micInUse;
 }

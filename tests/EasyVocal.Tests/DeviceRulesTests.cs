@@ -153,4 +153,27 @@ public class DeviceRulesTests
         Assert.True(AudioRoutes.NeedsRestart(inUse, new AudioRoutes("mic", "cable", null), false));
         Assert.True(AudioRoutes.NeedsRestart(inUse, inUse, monitorLost: true));
     }
+
+    [Fact]
+    public void ShouldSwitchMic_OnlyToAnotherConnectedMic()
+    {
+        Assert.False(AudioRoutes.ShouldSwitchMic("laptop mic", new MicPick("laptop mic", true, "Laptop mic")));
+        Assert.True(AudioRoutes.ShouldSwitchMic("laptop mic", new MicPick("usb mic", false, "USB mic"))); // the chosen one is back
+        Assert.False(AudioRoutes.ShouldSwitchMic("laptop mic", new MicPick("usb mic", false, null))); // chosen, still missing
+        Assert.False(AudioRoutes.ShouldSwitchMic("laptop mic", new MicPick(null, false, null)));      // no mic at all
+    }
+
+    [Fact]
+    public void ShouldSwitchMic_StandInSession_SwitchesBackWhenTheChosenMicReturns()
+    {
+        var picker = new MicPicker();
+        var standInOnly = new[] { D("Laptop mic", isDefault: true) };
+        picker.Pick("usb mic", standInOnly, T0);
+        var standIn = picker.Pick("usb mic", standInOnly, T0.AddSeconds(10));
+        Assert.True(standIn.Fallback);
+        Assert.False(AudioRoutes.ShouldSwitchMic(standIn.Id, picker.Pick("usb mic", standInOnly, T0.AddSeconds(30))));
+
+        var back = new[] { D("Laptop mic", isDefault: true), D("USB mic") };
+        Assert.True(AudioRoutes.ShouldSwitchMic(standIn.Id, picker.Pick("usb mic", back, T0.AddSeconds(40))));
+    }
 }

@@ -29,11 +29,18 @@ public class EngineTests
         public readonly AudioEngine Engine;
         public Func<FakeOutput>? CallFactory;
         public bool WithMonitor = true;
+        public bool MicMissing;
 
         public Rig()
         {
             Engine = new AudioEngine(
-                () => { var i = new FakeInput(); Inputs.Add(i); return i; },
+                () =>
+                {
+                    if (MicMissing) throw new IOException("no mic");
+                    var i = new FakeInput();
+                    Inputs.Add(i);
+                    return i;
+                },
                 () => { var o = CallFactory?.Invoke() ?? new FakeOutput(); Calls.Add(o); return o; },
                 () => { if (!WithMonitor) return null; var o = new FakeOutput(); Monitors.Add(o); return o; },
                 Chain, Mixer);
@@ -384,16 +391,80 @@ public class EngineTests
     }
 
     [Fact]
-    public void NoVirtualCable_AndNoMic_StaysNoVirtualCable()
+    public void NoVirtualCable_AndNoMic_ReportsTheMicFirst_ThenMonitorOnly()
+    {
+        using var rig = new Rig { CallFactory = () => throw new NoVirtualCableException(), MicMissing = true };
+        rig.Engine.Start();
+        Assert.Equal(EngineState.MicLost, rig.Engine.State);
+        Assert.False(rig.Engine.MonitorOnly);
+        Assert.False(rig.Engine.TryRecover());
+
+        rig.MicMissing = false; // plugged in: the cable is still missing, the voices can be tried
+        Assert.False(rig.Engine.TryRecover());
+        Assert.Equal(EngineState.NoVirtualCable, rig.Engine.State);
+        Assert.True(rig.Engine.MonitorOnly);
+    }
+
+    [Fact]
+    public void MicMissing_RecoveryOpensNoPlaybackDevice()
+    {
+        using var rig = new Rig { MicMissing = true };
+        rig.Engine.Start();
+        Assert.Equal(EngineState.MicLost, rig.Engine.State);
+        for (int i = 0; i < 3; i++) Assert.False(rig.Engine.TryRecover()); // the 2 s recovery timer
+        Assert.Empty(rig.Calls);
+        Assert.Empty(rig.Monitors);
+
+        rig.MicMissing = false;
+        Assert.True(rig.Engine.TryRecover());
+        Assert.Single(rig.Calls);
+        Assert.Single(rig.Monitors);
+        Assert.Equal(1, rig.Call.StartCount);
+    }
+
+    [Fact]
+    public void CallFactoryFails_AfterTheMicWasMade_TheMicIsClosed()
+    {
+        using var rig = new Rig { CallFactory = () => throw new InvalidOperationException("busy") };
+        rig.Engine.Start();
+        Assert.Equal(EngineState.OutputLost, rig.Engine.State);
+        Assert.True(rig.Mic.Disposed);
+        Assert.Equal(0, rig.Mic.StartCount);
+        Assert.Empty(rig.Monitors);
+    }
+
+    [Fact]
+    public void Running_HeadphonesFail_TryRecoverOpensThemAgainWithoutTouchingTheMicOrTheCall()
     {
         using var rig = new Rig();
-        var engine = new AudioEngine(() => throw new IOException("no mic"), () => throw new NoVirtualCableException(),
-            () => null, rig.Chain, rig.Mixer);
-        engine.Start();
-        Assert.Equal(EngineState.NoVirtualCable, engine.State);
-        Assert.False(engine.MonitorOnly);
-        Assert.False(engine.TryRecover());
-        engine.Dispose();
+        rig.Engine.HearMe = true;
+        rig.Engine.FilterEnabled = false;
+        rig.Engine.Start();
+        Assert.True(rig.Engine.TryRecover()); // nothing to do while everything works
+        Assert.Single(rig.Monitors);
+
+        var first = rig.Monitor;
+        first.ThrowOnWrite = true; // the stream stopped (no device was added or removed)
+        rig.Mic.Feed(Signals.Sine(200, 0.05, 0.4f));
+        Assert.True(rig.Engine.MonitorLost);
+        Assert.Equal(EngineState.Running, rig.Engine.State);
+
+        Assert.True(rig.Engine.TryRecover());
+        Assert.Equal(2, rig.Monitors.Count);
+        Assert.True(first.Disposed);
+        Assert.False(rig.Engine.MonitorLost);
+        Assert.Single(rig.Inputs);
+        Assert.Single(rig.Calls);
+        Assert.Equal(1, rig.Monitor.StartCount);
+
+        var voice = Signals.Sine(200, 0.2, 0.4f);
+        int callBefore = rig.Call.Written.Length;
+        rig.Mic.Feed(voice);
+        AssertDelayedCopy(voice, rig.Monitor.Written);
+        Assert.Equal(callBefore + voice.Length, rig.Call.Written.Length);
+
+        Assert.True(rig.Engine.TryRecover());
+        Assert.Equal(2, rig.Monitors.Count); // working headphones are left alone
     }
 
     [Fact]

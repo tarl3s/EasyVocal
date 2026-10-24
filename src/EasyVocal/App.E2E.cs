@@ -199,12 +199,19 @@ public partial class App
             await ExpectOnlyVoice(Call, "after Stop all only the voice is left");
         });
 
-        await Step("5  Hear me: the headphones get the voice; off, they only get the sounds", async () =>
+        await Step("5  Hear me: the headphones get the voice (and come back when their stream stops); off, they only get the sounds", async () =>
         {
             await Baseline(c, main);
             Expect(c.HearSounds, "Hear sounds is on (the default)");
             Click(main.HearMeButton);
             await ExpectCopy(Phones, "Hear me on: the headphones get the voice");
+            var phones = Phones();
+            var mic = d.Mic;
+            phones.Failing = true; // the stream stops working; no device is added or removed, so only the recovery timer helps
+            await WaitUntil(() => c.MonitorLost, 2000, "the engine to notice the headphones stopped");
+            await WaitUntil(() => !ReferenceEquals(Phones(), phones) && !c.MonitorLost, 5000, "the headphones to be opened again while running");
+            Expect(phones.Disposed && ReferenceEquals(d.Mic, mic) && c.State == EngineState.Running, "the failed headphones were closed; the mic and the call kept running");
+            await ExpectCopy(Phones, "the reopened headphones get the voice");
             Click(main.HearMeButton);
             var (quiet, _) = await Record(Phones);
             Expect(E2ESignal.Rms(quiet) < 1e-4, "Hear me off: no voice on the headphones");

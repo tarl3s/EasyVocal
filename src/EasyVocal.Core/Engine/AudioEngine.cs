@@ -16,8 +16,9 @@ namespace EasyVocal.Core.Engine;
 /// When an output holds more than 60 ms (the mic's clock runs faster than the device's) its oldest audio is
 /// trimmed back to 20 ms with a short crossfade, so latency never creeps up and nothing is heard skipping.
 /// Without the virtual cable the session still runs with the monitor only (State <see cref="EngineState.NoVirtualCable"/>),
-/// so the voices can be tried with Hear me; the cable is attached as soon as it shows up (and headphones that stopped
-/// working meanwhile are opened again by <see cref="TryRecover"/>). Whenever the engine leaves
+/// so the voices can be tried with Hear me; the cable is attached as soon as it shows up. Headphones that stopped
+/// working in a session that keeps running (with or without the cable) are opened again by <see cref="TryRecover"/>,
+/// without touching the mic. Whenever the engine leaves
 /// <see cref="EngineState.Running"/> every sound is stopped (they only advance while the mic delivers audio).
 /// </para>
 /// <para>
@@ -64,7 +65,7 @@ public sealed class AudioEngine : IDisposable
     {
         public IAudioInput? Input;
         public volatile IAudioOutput? Call;  // null while the virtual cable is missing (monitor-only session)
-        public volatile IAudioOutput? Monitor; // replaced by TryRecover in a monitor-only session whose monitor failed
+        public volatile IAudioOutput? Monitor; // replaced by TryRecover when it failed (or, monitor-only, was missing)
         /// <summary>The monitor device that stopped working (the audio thread never writes to it again).</summary>
         public volatile IAudioOutput? FailedMonitor;
         public IAudioOutput? MonitorInUse;   // audio thread: the monitor its limiter last fed
@@ -144,18 +145,24 @@ public sealed class AudioEngine : IDisposable
     /// <summary>
     /// After a device was lost (or the cable was missing), closes what is left and opens everything again.
     /// True when the engine is running afterwards. Never restarts an engine that was stopped on purpose.
+    /// Cheap while everything works, so it may be called on a timer.
     /// </summary>
     public bool TryRecover()
     {
         lock (gate)
         {
             var now = State;
-            if (now == EngineState.Running) return true;
             if (now == EngineState.Stopped) return false;
             Session? live;
             lock (stateLock) live = session;
-            // A monitor-only session keeps its mic running: only the missing cable is looked for again, and the
-            // headphones when they stopped working or weren't there (nothing else would ever bring them back).
+            // A session that still runs keeps its mic: only what is missing is opened again. The headphones when
+            // they stopped working (nothing else would ever bring them back) or, monitor-only, weren't there; and in
+            // a monitor-only session the cable.
+            if (now == EngineState.Running && live is { Failed: false })
+            {
+                if (live.MonitorFailed) ReplaceMonitor(live);
+                return true;
+            }
             if (now == EngineState.NoVirtualCable && live is { Failed: false, Call: null })
             {
                 if (live.Monitor == null || live.MonitorFailed) ReplaceMonitor(live);
@@ -240,8 +247,8 @@ public sealed class AudioEngine : IDisposable
     }
 
     /// <summary>
-    /// UI thread, under <see cref="gate"/>: opens the headphones again for a running monitor-only session whose
-    /// monitor failed or was missing. Still none (or it fails to start): the session goes on as it is.
+    /// UI thread, under <see cref="gate"/>: opens the headphones again for a running session whose monitor failed
+    /// (or, monitor-only, was missing). Still none (or it fails to start): the session goes on as it is.
     /// </summary>
     private void ReplaceMonitor(Session live)
     {
@@ -280,6 +287,18 @@ public sealed class AudioEngine : IDisposable
     private void Build()
     {
         var s = new Session();
+        // The mic first: while it is missing, every recovery would otherwise open and close the playback devices
+        // for nothing. (So a missing mic is what is reported, even when the cable is missing too.)
+        try
+        {
+            s.Input = makeInput();
+        }
+        catch (Exception)
+        {
+            SetState(EngineState.MicLost);
+            return;
+        }
+
         bool noCable = false;
         try
         {
@@ -291,23 +310,13 @@ public sealed class AudioEngine : IDisposable
         }
         catch (Exception)
         {
+            Dispose(s);
             SetState(EngineState.OutputLost);
             return;
         }
 
         try { s.Monitor = makeMonitor(); }
         catch (Exception) { s.Monitor = null; } // no speakers: the call still works
-
-        try
-        {
-            s.Input = makeInput();
-        }
-        catch (Exception)
-        {
-            Dispose(s);
-            SetState(noCable ? EngineState.NoVirtualCable : EngineState.MicLost); // the missing cable is the bigger problem
-            return;
-        }
 
         // Fresh audio-thread state: nothing is running yet (the previous input was disposed, its thread joined).
         voiceGain = micMuted ? 0f : 1f;
@@ -339,7 +348,7 @@ public sealed class AudioEngine : IDisposable
         }
         catch (Exception)
         {
-            Lose(s, noCable ? EngineState.NoVirtualCable : EngineState.MicLost);
+            Lose(s, EngineState.MicLost);
             return;
         }
         var next = noCable ? EngineState.NoVirtualCable : EngineState.Running;
