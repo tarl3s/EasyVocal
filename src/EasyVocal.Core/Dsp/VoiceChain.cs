@@ -12,11 +12,12 @@ namespace EasyVocal.Core.Dsp;
 /// start of its next call. Nothing the UI thread does ever touches an effect.
 /// </para>
 /// <para>
-/// A neutral chain (or <see cref="Bypass"/>) is the clean input, untouched and with no latency; any other chain
-/// carries the shifter's fixed delay, whatever the sliders say. Three things keep every change click-free:
+/// A neutral chain (or <see cref="Bypass"/>) is the clean input, untouched and with no latency. The shifter (and its
+/// fixed delay) is only in the path while Pitch or Voice body is off the middle: Robot, Echo, Radio and the rest
+/// alone add no latency. Three things keep every change click-free:
 /// </para>
 /// <list type="bullet">
-/// <item>Going to or from "clean" and jumping to a very different voice crossfades over 20 ms between the old output
+/// <item>Going to or from "clean", taking the shifter in or out, and jumping to a very different voice crossfades over 20 ms between the old output
 /// and a second, freshly reset copy of the chain. That copy is first fed the last 60 ms of input so it has already
 /// "heard" the voice and its output lines up with the old one (no 25 ms of silence).</item>
 /// <item>Small changes (dragging a slider) move the live parameters towards the target in 1 ms steps, no faster
@@ -41,6 +42,8 @@ public sealed class VoiceChain
     {
         public readonly double Semitones, Formant, Robot, Echo, Radio, Distortion, Whisper;
         public readonly bool Neutral;
+        /// <summary>Pitch or Voice body is used: the shifter (and its delay) must be in the path.</summary>
+        public readonly bool Shifts;
 
         public Target(VoiceSliders sliders)
         {
@@ -53,6 +56,7 @@ public sealed class VoiceChain
             Distortion = s.Distortion;
             Whisper = s.Whisper;
             Neutral = s.IsNeutral;
+            Shifts = s.Pitch != 0 || s.Body != 0;
         }
 
         public bool FarFrom(Target o) =>
@@ -77,6 +81,7 @@ public sealed class VoiceChain
         private readonly double slewFraction;
         private double semitones, formant, robotAmt, echoAmt, radioAmt, distortionAmt, whisperAmt;
         private bool sliding;
+        private bool shifts;
 
         public Path(int sampleRate)
         {
@@ -89,14 +94,19 @@ public sealed class VoiceChain
             slewFraction = SlewChunk / (FadeSeconds * sampleRate);
         }
 
-        public int LatencySamples => shifter.LatencySamples;
+        /// <summary>The shifter's delay; the path only carries it while <see cref="Target.Shifts"/>.</summary>
+        public int ShifterLatency => shifter.LatencySamples;
         public Target? Goal { get; private set; }
+
+        /// <summary>The shifter is part of this path (decided by <see cref="Begin"/>; a slide never changes it).</summary>
+        public bool Shifts => shifts;
 
         /// <summary>Starts from nothing: parameters set at once, every delay line and filter cleared.</summary>
         public void Begin(Target t)
         {
             Goal = t;
             sliding = false;
+            shifts = t.Shifts;
             semitones = t.Semitones; formant = t.Formant; robotAmt = t.Robot; echoAmt = t.Echo;
             radioAmt = t.Radio; distortionAmt = t.Distortion; whisperAmt = t.Whisper;
             Commit();
@@ -125,7 +135,7 @@ public sealed class VoiceChain
 
         private void Run(Span<float> x)
         {
-            shifter.Process(x);
+            if (shifts) shifter.Process(x);
             robot.Process(x);
             distortion.Process(x);
             radio.Process(x);
@@ -209,10 +219,17 @@ public sealed class VoiceChain
     }
 
     /// <summary>
-    /// Delay the chain adds once the latest <see cref="Apply"/>/<see cref="Bypass"/> has taken hold: 0 when the
-    /// input passes clean, otherwise the shifter's fixed delay.
+    /// Delay the chain adds once the latest <see cref="Apply"/>/<see cref="Bypass"/> has taken hold: the shifter's
+    /// fixed delay when Pitch or Voice body is used, otherwise 0 (clean input, or effects without a shift).
     /// </summary>
-    public int LatencySamples => bypass || Volatile.Read(ref pending).Neutral ? 0 : paths[0].LatencySamples;
+    public int LatencySamples
+    {
+        get
+        {
+            var t = Volatile.Read(ref pending);
+            return bypass || t.Neutral || !t.Shifts ? 0 : paths[0].ShifterLatency;
+        }
+    }
 
     /// <summary>Audio thread: processes one block of mono audio in place (any length).</summary>
     public void Process(Span<float> mono)
@@ -235,7 +252,8 @@ public sealed class VoiceChain
         else if (!wanted) StartFade(null);
         else if (!ReferenceEquals(t, active.Goal))
         {
-            if (t.FarFrom(active.Goal!)) StartFade(t);
+            // Taking the shifter in or out changes the delay: that needs a crossfade, a slide would jump.
+            if (t.FarFrom(active.Goal!) || t.Shifts != active.Shifts) StartFade(t);
             else active.SlideTo(t);
         }
     }

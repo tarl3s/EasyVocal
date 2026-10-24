@@ -214,6 +214,73 @@ public class VoiceChainTests
     }
 
     [Fact]
+    public void EffectsWithoutAShift_AddNoLatency()
+    {
+        var shifterDelay = new VoiceShifter(Sr).LatencySamples;
+        Assert.True(shifterDelay > 0);
+        foreach (var id in new[] { "robot", "radio", "cave" })
+        {
+            var chain = new VoiceChain(Sr);
+            chain.Apply(Preset(id));
+            Assert.Equal(0, chain.LatencySamples);
+        }
+        var female = new VoiceChain(Sr);
+        female.Apply(Preset("female"));
+        Assert.Equal(shifterDelay, female.LatencySamples);
+        var pitchOnly = new VoiceChain(Sr);
+        pitchOnly.Apply(new VoiceSliders { Body = 0.2 });
+        Assert.Equal(shifterDelay, pitchOnly.LatencySamples);
+    }
+
+    [Fact]
+    public void RobotOnly_OutputIsNotDelayedByTheShifter()
+    {
+        // An impulse through the robot preset comes out at once (the robot multiplies, the echo only adds later).
+        var chain = new VoiceChain(Sr);
+        chain.Apply(Preset("robot"));
+        Run(chain, Signals.Sine(200, 0.2, 0.3f)); // let the 20 ms fade from clean finish
+        Run(chain, Signals.Silence(0.5));         // and every tail die out
+        var input = new float[Sr / 10];
+        input[100] = 0.8f;
+        var output = Run(chain, input);
+        for (int n = 0; n < 100; n++) Assert.True(Math.Abs(output[n]) < 1e-3, $"sample {n}: {output[n]}");
+        Assert.True(Math.Abs(output[100]) > 0.05, "the click should come out right away: " + output[100]);
+    }
+
+    [Fact]
+    public void SwitchingRobotToFemaleAndBack_NoClicks()
+    {
+        var chain = new VoiceChain(Sr);
+        var input = Signals.Sine(220, 2, 0.5f);
+        var cycle = new[] { "robot", "female", "robot", "cave", "male" };
+        var output = Run(chain, input, b =>
+        {
+            if (b % 40 == 0) chain.Apply(Preset(cycle[Math.Min(b / 40, cycle.Length - 1)]));
+        });
+        Assert.True(Signals.AllFinite(output));
+        Assert.True(MaxStep(output, 480) < 0.3, "max step " + MaxStep(output, 480));
+    }
+
+    [Fact]
+    public void DraggingPitchAwayFromTheMiddle_WithRobotOn_NoClicks()
+    {
+        var chain = new VoiceChain(Sr);
+        var sliders = Preset("robot");
+        chain.Apply(sliders);
+        var input = Signals.Sine(220, 1.5, 0.5f);
+        var output = Run(chain, input, b =>
+        {
+            if (b >= 30 && b < 90)
+            {
+                sliders.Pitch = (b - 30) / 60.0 * 0.5; // the shifter comes in on the first step off 0
+                chain.Apply(sliders.Clone());
+            }
+        });
+        Assert.True(Signals.AllFinite(output));
+        Assert.True(MaxStep(output, 480) < 0.3, "max step " + MaxStep(output, 480));
+    }
+
+    [Fact]
     public void Performance_HeaviestPreset_UnderFivePercentCpu()
     {
 #if DEBUG
