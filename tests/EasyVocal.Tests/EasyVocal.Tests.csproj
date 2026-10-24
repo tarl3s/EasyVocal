@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <!-- Built first, not referenced: E2ETests runs this configuration's EasyVocal.exe, which must never be a stale one. -->
+    <ProjectReference Include="..\..\src\EasyVocal\EasyVocal.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>
