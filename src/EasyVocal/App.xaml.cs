@@ -110,12 +110,39 @@ public partial class App : Application
         {
             if (quitting || window == null) return;
             started.Start(window);
+            // The tests must never touch the real Start menu.
+            if (!args.TestMode) OfferStartMenuShortcut(started, startHidden ? null : window);
             // First run: the setup comes first (not in the tests: the smoke test opens it itself, and they must never download anything).
             if (!started.Settings.SetupDone && !args.TestMode) SetupWindow.Open(started, window.IsVisible ? window : null);
         });
 
         if (smokeTest) RunSmokeTest(dataFolder);
         else if (args.E2E) RunE2E(dataFolder, args.E2ERelaunch);
+    }
+
+    /// <summary>Asks once whether to add EasyVocal to the Start menu (not when started hidden at sign-in, and not when the
+    /// shortcut is already there); after a "yes", keeps the shortcut pointing at this EasyVocal.exe.</summary>
+    private static void OfferStartMenuShortcut(AppController controller, Window? owner)
+    {
+        var settings = controller.Settings;
+        var shortcut = StartMenuShortcut.Default;
+        if (!settings.StartMenuAsked)
+        {
+            if (owner == null) return; // ask when the person opens it, not at sign-in
+            if (shortcut.Exists())
+            {
+                settings.StartMenuAsked = settings.StartMenuShortcut = true;
+                controller.Save();
+                return;
+            }
+            settings.StartMenuShortcut = AskDialog.Ask(owner,
+                L.T("Add EasyVocal to the Start menu, so you can open it from there?"),
+                L.T("Add to Start menu"), L.T("No, thanks"), null, out _);
+            settings.StartMenuAsked = true;
+            controller.Save();
+        }
+        if (settings.StartMenuShortcut && shortcut.Refresh() is { } error)
+            AppLog.Error("Couldn't create the Start menu shortcut", error);
     }
 
     private void OnTextFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>

@@ -35,6 +35,7 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   microfone. Funcionam com o jogo em tela cheia. (Uma tecla sozinha, sem Ctrl ou Alt, deixa de digitar aquele
   caractere nos outros programas enquanto o EasyVocal roda, e o app avisa.)
 - **Ícone na bandeja** com menu rápido de vozes, e **Iniciar com o Windows** (desligado por padrão).
+- **Atalho no Menu Iniciar**: na primeira vez que você abre o EasyVocal, ele pergunta se quer adicionar ao Menu Iniciar.
 - **English e Português (Brasil).**
 - **Leve:** download pequeno, quase nenhum uso de CPU parado, poucos por cento enquanto você fala.
 - **Desligado ou Normal = sua voz limpa.** Seus amigos continuam te ouvindo.

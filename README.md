@@ -34,6 +34,7 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   the mic. They work while a game is fullscreen. (A plain key without Ctrl or Alt stops typing that character
   elsewhere while EasyVocal runs, so the app warns you.)
 - **Tray icon** with a quick voice menu, and **Start with Windows** (off by default).
+- **Start menu shortcut**: the first time you open EasyVocal it asks whether to add it to the Start menu.
 - **English and Português (Brasil).**
 - **Light:** small download, almost no CPU when idle, a few percent while you talk.
 - **OFF or Normal = your clean voice.** Your friends still hear you.

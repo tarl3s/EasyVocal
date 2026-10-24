@@ -78,6 +78,10 @@ public class AppSettings
     public bool SetupDone { get; set; }
     /// <summary>The "keeps running in the tray" tip was shown once.</summary>
     public bool TrayTipShown { get; set; }
+    /// <summary>The "Add EasyVocal to the Start menu?" question was answered (it is asked once).</summary>
+    public bool StartMenuAsked { get; set; }
+    /// <summary>The person wants the Start menu shortcut (it is kept pointing at this EasyVocal.exe).</summary>
+    public bool StartMenuShortcut { get; set; }
     public List<VoicePreset> Voices { get; set; } = new();
     public List<SoundItem> Sounds { get; set; } = new();
     /// <summary>Keys: the ids of <see cref="Hotkeys.HotkeyMap.General"/> ("toggleFilter", "stopSounds", "muteMic").</summary>
