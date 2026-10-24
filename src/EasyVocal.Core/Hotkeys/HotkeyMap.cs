@@ -22,22 +22,29 @@ public static class HotkeyMap
         return list;
     }
 
-    /// <summary>Display name of the other item that already uses the key, or null.</summary>
-    public static string? WhoUses(AppSettings s, Hotkey key, string exceptActionId)
+    /// <summary>The action id ("voice:robot", "general:muteMic"…) of the other item that already uses the key, or null.</summary>
+    public static string? WhoUsesAction(AppSettings s, Hotkey key, string exceptActionId)
     {
         foreach (var (id, k) in All(s))
-        {
-            if (k != key || id == exceptActionId) continue;
-            var colon = id.IndexOf(':');
-            var kind = id[..colon];
-            var rest = id[(colon + 1)..];
-            switch (kind)
-            {
-                case "voice": return s.Voices.First(v => v.Id == rest).Name;
-                case "sound": return s.Sounds.First(x => x.Id == rest).Name;
-                default: return General.First(g => g.Id == rest).Label;
-            }
-        }
+            if (k == key && id != exceptActionId) return id;
         return null;
+    }
+
+    /// <summary>
+    /// The stored (untranslated) name of the other item that already uses the key, or null. To show it, translate
+    /// only built-in names: the person's own names are shown as typed.
+    /// </summary>
+    public static string? WhoUses(AppSettings s, Hotkey key, string exceptActionId)
+    {
+        var id = WhoUsesAction(s, key, exceptActionId);
+        if (id == null) return null;
+        var colon = id.IndexOf(':');
+        var rest = id[(colon + 1)..];
+        return id[..colon] switch
+        {
+            "voice" => s.Voices.First(v => v.Id == rest).Name,
+            "sound" => s.Sounds.First(x => x.Id == rest).Name,
+            _ => General.First(g => g.Id == rest).Label,
+        };
     }
 }

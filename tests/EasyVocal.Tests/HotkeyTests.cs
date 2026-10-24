@@ -76,6 +76,14 @@ public class HotkeyTests
     }
 
     [Fact]
+    public void WhoUsesAction_GivesTheActionId_SoTheUiCanNameItProperly()
+    {
+        Assert.Equal("sound:airhorn", HotkeyMap.WhoUsesAction(Settings(), K("7"), "voice:robot"));
+        Assert.Equal("general:muteMic", HotkeyMap.WhoUsesAction(Settings(), K("F9"), "voice:robot"));
+        Assert.Null(HotkeyMap.WhoUsesAction(Settings(), K("7"), "sound:airhorn"));
+    }
+
+    [Fact]
     public void All_ListsVoicesSoundsAndGeneral()
     {
         var all = HotkeyMap.All(Settings());

@@ -67,6 +67,21 @@ public sealed class SoundMixer
         else _sounds[id] = samples;
     }
 
+    /// <summary>
+    /// The decoded samples held for an id. They are never changed, so another id may play the same array
+    /// (a duplicated sound needs no second decode and no second copy in memory).
+    /// </summary>
+    public bool TryGet(string id, out float[] samples)
+    {
+        if (_sounds.TryGetValue(id, out var found))
+        {
+            samples = found;
+            return true;
+        }
+        samples = Array.Empty<float>();
+        return false;
+    }
+
     /// <summary>Forgets a sound and stops it if it is playing.</summary>
     public void Remove(string id)
     {

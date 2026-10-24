@@ -341,6 +341,29 @@ public class SoundTests : IDisposable
         Assert.False(m.Toggle("a", 1));
     }
 
+    [Fact]
+    public void Mixer_TryGet_SharesTheDecodedSamples()
+    {
+        var m = new SoundMixer();
+        var samples = Constant(0.2f, Sr / 10);
+        Assert.False(m.TryGet("a", out _));
+        m.Set("a", samples);
+        Assert.True(m.TryGet("a", out var got));
+        Assert.Same(samples, got);
+
+        // A duplicate plays the same array (no second decode, no second copy in memory).
+        m.Set("copy", got);
+        Assert.True(m.TryGet("copy", out var copy));
+        Assert.Same(samples, copy);
+        Assert.True(m.Toggle("copy", 1));
+        Assert.Equal(0.2, Signals.Peak(MixBlock(m)), 5);
+
+        // Forgetting the copy leaves the original playable.
+        m.Remove("copy");
+        Assert.False(m.TryGet("copy", out _));
+        Assert.True(m.Toggle("a", 1));
+    }
+
     private static long AllocatedBytes(Func<long> attempt)
     {
         long best = long.MaxValue;

@@ -137,10 +137,10 @@ public partial class HotkeyCaptureDialog : Window
             return;
         }
         KeyText.Text = key.ToString();
-        var other = HotkeyMap.WhoUses(controller.Settings, key, actionId);
+        var other = HotkeyMap.WhoUsesAction(controller.Settings, key, actionId);
         if (other != null)
         {
-            ShowProblem(L.F("Already used by {0}", L.T(other)));
+            ShowProblem(L.F("Already used by {0}", controller.ActionDisplayName(other))); // the person's own names stay as typed
             SaveButton.IsEnabled = false;
             return;
         }

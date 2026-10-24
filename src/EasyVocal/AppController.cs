@@ -420,11 +420,16 @@ public sealed class AppController : IDisposable
     /// <summary>The sound's file couldn't be opened (missing, damaged, unsupported): its card says so.</summary>
     public bool IsSoundBroken(string soundId) => brokenSounds.Contains(soundId);
 
-    /// <summary>A copy of a sound (it plays the same file); its audio is loaded in the background.</summary>
+    /// <summary>
+    /// A copy of a sound (it plays the same file). It shares the original's decoded audio; only when the original
+    /// isn't decoded yet is the file loaded in the background.
+    /// </summary>
     public SoundItem DuplicateSound(string id)
     {
         var copy = ItemOps.DuplicateSound(Settings, id);
-        LoadSound(copy);
+        if (mixer.TryGet(id, out var samples)) mixer.Set(copy.Id, samples);
+        else if (brokenSounds.Contains(id)) brokenSounds.Add(copy.Id); // the same file can't be opened either
+        else LoadSound(copy);
         Save();
         RaiseChanged();
         return copy;
@@ -550,11 +555,15 @@ public sealed class AppController : IDisposable
                 if (!TryLoadInto(id, fileName, path)) broken.Add(id);
             }
             AppLog.Info($"Sounds loaded: {items.Count - broken.Count} of {items.Count}");
-            if (broken.Count == 0) return;
             ui.BeginInvoke(() =>
             {
                 if (disposed) return;
-                foreach (var id in broken) brokenSounds.Add(id);
+                // A sound deleted while the files were decoded: drop what was loaded for it.
+                foreach (var (id, _, _) in items)
+                    if (FindSound(id) == null) mixer.Remove(id);
+                if (broken.Count == 0) return;
+                foreach (var id in broken)
+                    if (FindSound(id) != null) brokenSounds.Add(id);
                 RaiseChanged(); // the cards of the files that failed say so
             });
         });
@@ -570,6 +579,11 @@ public sealed class AppController : IDisposable
             ui.BeginInvoke(() =>
             {
                 if (disposed) return;
+                if (FindSound(id) == null)
+                {
+                    mixer.Remove(id); // deleted while it was being decoded: don't keep its samples
+                    return;
+                }
                 if (ok) brokenSounds.Remove(id); else brokenSounds.Add(id);
                 RaiseChanged();
             });
@@ -609,7 +623,7 @@ public sealed class AppController : IDisposable
         {
             if (hotkeys.Register(action, key)) continue;
             refused.Add(action);
-            problems.Add(L.F("{0} ({1}) is already used by another app.", ActionName(action), key.ToString()));
+            problems.Add(L.F("{0} ({1}) is already used by another app.", ActionDisplayName(action), key.ToString()));
         }
         hotkeyProblems = problems;
         refusedActions = refused;
@@ -626,7 +640,8 @@ public sealed class AppController : IDisposable
     /// <summary>True when Windows would accept this combination now. Only meaningful after <see cref="SuspendHotkeys"/>.</summary>
     public bool IsHotkeyFree(Hotkey key) => hotkeys?.IsFree(key) ?? true;
 
-    private string ActionName(string action)
+    /// <summary>What to call an action ("voice:robot"…) on screen: built-in names translated, the person's own as typed.</summary>
+    public string ActionDisplayName(string action)
     {
         var colon = action.IndexOf(':');
         var kind = colon < 0 ? action : action[..colon];
