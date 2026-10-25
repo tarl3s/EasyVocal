@@ -313,6 +313,6 @@ public sealed record PlatformServices(
     /// <summary>Opens the system's microphone privacy settings (the banner's button when the mic is refused); null = none to open.</summary>
     public Action? OpenMicSettings { get; init; }
 
-    /// <summary>Whether the desktop shows tray icons (asked once at start); null = assume it does. Without one, closing the window minimises it.</summary>
+    /// <summary>Whether the desktop shows tray icons (asked at start, off the UI thread: it may wait on the system); null = assume it does. Without one, closing the window minimises it.</summary>
     public Func<bool>? HasTray { get; init; }
 }

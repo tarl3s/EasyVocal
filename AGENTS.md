@@ -63,7 +63,7 @@ Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (
 - Init properties of `PlatformServices`: `Texts` (`PlatformTexts`, `Core/Platform/PlatformTexts.cs`: every sentence that
   names the OS — "Start with Windows" / "Open at login" / "Start at login", "Windows default" / "System default",
   "Restart your PC…", the mic-refused banner; Windows/MacOS/Linux sets), `OpenMicSettings` (the mic-refused banner's
-  "Open settings"; null = no button) and `HasTray` (null = assume one; Linux asks D-Bus: without one, closing minimises).
+  "Open settings"; null = no button) and `HasTray` (null = assume one; Linux asks D-Bus, off the UI thread, the window shown meanwhile unless `--tray`: without one, closing minimises).
 
 ## Build, run, test
 

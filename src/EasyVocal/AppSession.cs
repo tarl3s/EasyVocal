@@ -93,12 +93,11 @@ internal sealed partial class AppSession
         L.Load(language == "en" ? null : ReadLanguage(language), language);
 
         window = new MainWindow(controller);
-        bool trayLater = false;
+        // Where the platform has to ask the desktop whether it shows tray icons (Linux: D-Bus), that is done off the UI thread.
+        bool askTray = !options.Hosted && platform.HasTray != null;
         if (!options.Hosted)
         {
-            if (TrayAvailable(platform)) MakeTray();
-            else if (args.StartHidden) trayLater = true; // at login the tray's host may not be up yet: asked again below
-            else AppLog.Info("This desktop shows no tray icons: closing the window minimises it");
+            if (!askTray) MakeTray();
             WatchDockReopen();
         }
         controller.QuitRequested += () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting");
@@ -112,9 +111,9 @@ internal sealed partial class AppSession
             ShowMainWindow();
         }));
         SetUpUpdates(args, DataFolder, controller);
-        bool startHidden = args.StartHidden && (tray != null || trayLater); // no tray to come back from: show the window
+        bool startHidden = args.StartHidden && (tray != null || askTray); // no tray to come back from: show the window
         if (!startHidden) window.Show();
-        if (trayLater) WaitForTray(platform);
+        if (askTray) LookForTray(platform, keepAsking: startHidden);
 
         // Opening the devices takes a moment: let the window paint first.
         var started = controller;
@@ -156,16 +155,18 @@ internal sealed partial class AppSession
     private static readonly TimeSpan TrayWait = TimeSpan.FromSeconds(6);
 
     /// <summary>
-    /// A <c>--tray</c> start found no tray yet: asks again (off the UI thread) for a few seconds. When it comes, EasyVocal
-    /// stays hidden in it; when it doesn't, the window is shown (there would be nothing to bring it back from).
+    /// Asks the platform whether the desktop shows tray icons, off the UI thread; a <c>--tray</c> start
+    /// (<paramref name="keepAsking"/>) asks again for a few seconds, since at login the tray may come after EasyVocal. Found:
+    /// the tray icon is made (a <c>--tray</c> start stays hidden in it). Not found: closing the window minimises it, and a
+    /// hidden window is shown (there would be nothing to bring it back from).
     /// </summary>
-    private void WaitForTray(PlatformServices platform)
+    private void LookForTray(PlatformServices platform, bool keepAsking)
     {
         FireAndForget.Watch(Task.Run(async () =>
         {
             var until = DateTime.UtcNow + TrayWait;
-            bool found = false;
-            while (!found && DateTime.UtcNow < until && !quitting)
+            bool found = TrayAvailable(platform);
+            while (!found && keepAsking && DateTime.UtcNow < until && !quitting)
             {
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
                 found = TrayAvailable(platform);
@@ -177,13 +178,16 @@ internal sealed partial class AppSession
                 {
                     MakeTray();
                     window.CanHideToTray = tray != null;
-                    AppLog.Info("The desktop's tray appeared: EasyVocal stays hidden there");
-                    if (tray != null) return;
+                    if (tray != null)
+                    {
+                        AppLog.Info(window.IsVisible ? "The desktop shows tray icons" : "The desktop's tray is there: EasyVocal stays hidden in it");
+                        return;
+                    }
                 }
-                AppLog.Info("This desktop shows no tray icons: showing the window (closing it minimises it)");
-                window.Show();
+                AppLog.Info("This desktop shows no tray icons: closing the window minimises it");
+                if (!window.IsVisible) window.Show();
             });
-        }), "Waiting for the tray");
+        }), "Looking for the tray");
     }
 
     /// <summary>The desktop can show a tray icon (asked of the platform; GNOME without an AppIndicator extension can't).</summary>
