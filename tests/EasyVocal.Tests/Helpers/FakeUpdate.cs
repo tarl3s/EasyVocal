@@ -53,6 +53,9 @@ public sealed class FakeUpdaterPlatform : IUpdaterPlatform
 
     public string InstallRoot(string exePath) => WholeArchive ? Path.GetDirectoryName(exePath)! : exePath;
 
+    /// <summary>Like the real ones: a whole-folder install carries the release's easyvocal-files.txt; a single exe is just the file.</summary>
+    public bool IsInstallRoot(string path) => WholeArchive ? File.Exists(Path.Combine(path, "easyvocal-files.txt")) : File.Exists(path);
+
     public bool CanSelfUpdate(string exePath, Action<string>? log = null)
     {
         if (!Writable) log?.Invoke("not writable (fake)");

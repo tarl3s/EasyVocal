@@ -16,6 +16,8 @@ public class UnixUpdaterTests : IDisposable
     private static readonly byte[] MachO = { 0xCF, 0xFA, 0xED, 0xFE, 7, 0, 0, 1 };
     private static readonly byte[] Universal = { 0xCA, 0xFE, 0xBA, 0xBE, 0, 0, 0, 2 };
     private static readonly byte[] Elf = { 0x7F, (byte)'E', (byte)'L', (byte)'F', 2, 1, 1, 0 };
+    /// <summary>The release's easyvocal-files.txt (what the packager writes into every install root).</summary>
+    private static readonly byte[] Marker = System.Text.Encoding.UTF8.GetBytes("EasyVocal\neasyvocal-files.txt\n");
 
     public UnixUpdaterTests(ITestOutputHelper output) => this.output = output;
 
@@ -53,11 +55,71 @@ public class UnixUpdaterTests : IDisposable
     {
         var folder = Path.Combine(temp, "opt", "EasyVocal");
         Directory.CreateDirectory(folder);
+        File.WriteAllBytes(Path.Combine(folder, "easyvocal-files.txt"), Marker);
         Assert.True(Linux.CanSelfUpdate(Path.Combine(folder, "EasyVocal")));
+        Assert.True(Linux.IsInstallRoot(folder));
         var why = new List<string>();
         Assert.False(Mac.CanSelfUpdate("/private/var/folders/x/AppTranslocation/1234/d/EasyVocal.app/Contents/MacOS/EasyVocal", why.Add));
         Assert.Contains("Translocation", why.Single());
         Assert.False(Linux.CanSelfUpdate(Path.Combine(temp, "missing", "EasyVocal", "EasyVocal")));
+    }
+
+    /// <summary>
+    /// A program run loose (from Downloads, next to the person's files): its folder is not an install, so the updater
+    /// never offers to replace it (the release page opens) and the stale-copy cleanup deletes nothing.
+    /// </summary>
+    [Fact]
+    public void ALooseProgram_IsNeverUpdatedInPlace_AndNothingAroundItIsDeleted()
+    {
+        var downloads = Path.Combine(temp, "home", "Downloads");
+        Directory.CreateDirectory(downloads);
+        var exe = Path.Combine(downloads, "EasyVocal");
+        File.WriteAllBytes(exe, Elf);
+        File.WriteAllText(Path.Combine(downloads, "holiday.jpg"), "the person's own file");
+        Directory.CreateDirectory(downloads + ".old");
+        File.WriteAllText(Path.Combine(downloads + ".old", "keep.txt"), "also theirs");
+        var why = new List<string>();
+        Assert.False(Linux.CanSelfUpdate(exe, why.Add));
+        Assert.Contains("isn't called EasyVocal", why.Single());
+
+        // Even with a marker lying around, a folder not named EasyVocal is refused; and a right name needs the marker.
+        File.WriteAllBytes(Path.Combine(downloads, "easyvocal-files.txt"), Marker);
+        Assert.False(Linux.CanSelfUpdate(exe));
+        var named = Path.Combine(temp, "home", "EasyVocal");
+        Directory.CreateDirectory(named);
+        File.WriteAllBytes(Path.Combine(named, "EasyVocal"), Elf);
+        Assert.False(Linux.CanSelfUpdate(Path.Combine(named, "EasyVocal")));
+        Assert.False(Linux.IsInstallRoot(downloads + ".old")); // what CleanStale would delete: not a copy of EasyVocal
+
+        // The same through the service: no install, and the cleanup leaves the person's folders alone.
+        var service = new UpdateService(Linux, new Tests.Helpers.FakeUpdateSource(), new Tests.Helpers.FakeHelperLauncher(), new AppVersion(1, 0, 0), exe,
+            Path.Combine(temp, "work"));
+        service.CleanStale();
+        Assert.False(service.CanSelfUpdate());
+        Assert.Equal(UpdateProblem.FolderNotWritable, Assert.Throws<UpdateException>(() => service.StartInstall(Path.Combine(temp, "work", "a", "new", "EasyVocal"), 1, Path.Combine(temp, "u.log"), "")).Problem);
+        Assert.True(File.Exists(Path.Combine(downloads, "holiday.jpg")));
+        Assert.True(File.Exists(Path.Combine(downloads + ".old", "keep.txt")));
+    }
+
+    [Fact]
+    public void Mac_OnlyTheAppsOwnProgram_InAMarkedBundle()
+    {
+        var app = Path.Combine(temp, "Applications", "EasyVocal.app");
+        var exe = Path.Combine(app, "Contents", "MacOS", "EasyVocal");
+        Directory.CreateDirectory(Path.GetDirectoryName(exe)!);
+        File.WriteAllBytes(exe, MachO);
+        Assert.Contains("easyvocal-files.txt", Mac.NotAnInstall(exe));
+        Directory.CreateDirectory(Path.Combine(app, "Contents", "Resources"));
+        File.WriteAllBytes(Path.Combine(app, "Contents", "Resources", "easyvocal-files.txt"), Marker);
+        Assert.Null(Mac.NotAnInstall(exe));
+        Assert.True(Mac.CanSelfUpdate(exe));
+        Assert.True(Mac.IsInstallRoot(app));
+        // Another program inside the bundle (a helper tool) is not EasyVocal itself.
+        Assert.NotNull(Mac.NotAnInstall(Path.Combine(app, "Contents", "MacOS", "other")));
+        // Not from an .app at all.
+        Assert.NotNull(Mac.NotAnInstall(Path.Combine(temp, "Downloads", "EasyVocal")));
+        Assert.True(InstallLayout.IsTranslocated("/private/var/folders/x/AppTranslocation/1/d/EasyVocal.app"));
+        Assert.False(InstallLayout.IsTranslocated(app));
     }
 
     private string Zip(string name, params (string Entry, byte[] Data)[] files)
@@ -86,21 +148,27 @@ public class UnixUpdaterTests : IDisposable
     }
 
     [Fact]
-    public void Unpack_GivesTheNewAppOrFolder_AfterCheckingItsProgram()
+    public void Unpack_GivesTheNewAppOrFolder_AfterCheckingItsMarkerAndProgram()
     {
-        var mac = Mac.Unpack(Zip("mac.zip", ("EasyVocal.app/Contents/MacOS/EasyVocal", Universal), ("EasyVocal.app/Contents/Info.plist", new byte[] { 1 })),
-            Path.Combine(temp, "u1"), default);
+        const string AppMarker = "EasyVocal.app/Contents/Resources/easyvocal-files.txt";
+        var mac = Mac.Unpack(Zip("mac.zip", ("EasyVocal.app/Contents/MacOS/EasyVocal", Universal), ("EasyVocal.app/Contents/Info.plist", new byte[] { 1 }),
+            (AppMarker, Marker)), Path.Combine(temp, "u1"), default);
         Assert.Equal(Path.Combine(temp, "u1", "EasyVocal.app"), mac);
-        var nested = Mac.Unpack(Zip("mac2.zip", ("EasyVocal-1.0.0/EasyVocal.app/Contents/MacOS/EasyVocal", MachO)), Path.Combine(temp, "u2"), default);
+        var nested = Mac.Unpack(Zip("mac2.zip", ("EasyVocal-1.0.0/EasyVocal.app/Contents/MacOS/EasyVocal", MachO), ("EasyVocal-1.0.0/" + AppMarker, Marker)),
+            Path.Combine(temp, "u2"), default);
         Assert.EndsWith(Path.Combine("EasyVocal-1.0.0", "EasyVocal.app"), nested);
-        var linux = Linux.Unpack(TarGz("l.tar.gz", ("EasyVocal/EasyVocal", Elf), ("EasyVocal/libportaudio.so", new byte[] { 2 })), Path.Combine(temp, "u3"), default);
+        var linux = Linux.Unpack(TarGz("l.tar.gz", ("EasyVocal/EasyVocal", Elf), ("EasyVocal/libportaudio.so", new byte[] { 2 }), ("EasyVocal/easyvocal-files.txt", Marker)),
+            Path.Combine(temp, "u3"), default);
         Assert.Equal(Path.Combine(temp, "u3", "EasyVocal"), linux);
 
         void Fails(UpdateProblem problem, Func<string> unpack) => Assert.Equal(problem, Assert.Throws<UpdateException>(() => unpack()).Problem);
-        Fails(UpdateProblem.NotAnExe, () => Mac.Unpack(Zip("elf.zip", ("EasyVocal.app/Contents/MacOS/EasyVocal", Elf)), Path.Combine(temp, "u4"), default));
-        Fails(UpdateProblem.NotAnExe, () => Linux.Unpack(TarGz("macho.tar.gz", ("EasyVocal/EasyVocal", MachO)), Path.Combine(temp, "u5"), default));
+        Fails(UpdateProblem.NotAnExe, () => Mac.Unpack(Zip("elf.zip", ("EasyVocal.app/Contents/MacOS/EasyVocal", Elf), (AppMarker, Marker)), Path.Combine(temp, "u4"), default));
+        Fails(UpdateProblem.NotAnExe, () => Linux.Unpack(TarGz("macho.tar.gz", ("EasyVocal/EasyVocal", MachO), ("EasyVocal/easyvocal-files.txt", Marker)), Path.Combine(temp, "u5"), default));
         Fails(UpdateProblem.MissingExe, () => Linux.Unpack(TarGz("other.tar.gz", ("Other/EasyVocal", Elf)), Path.Combine(temp, "u6"), default));
         Fails(UpdateProblem.MissingExe, () => Mac.Unpack(Zip("noexe.zip", ("EasyVocal.app/Contents/Info.plist", new byte[] { 1 })), Path.Combine(temp, "u7"), default));
+        // Without the release's marker it is not a release of ours.
+        Fails(UpdateProblem.MissingExe, () => Linux.Unpack(TarGz("nomarker.tar.gz", ("EasyVocal/EasyVocal", Elf)), Path.Combine(temp, "u8"), default));
+        Fails(UpdateProblem.MissingExe, () => Mac.Unpack(Zip("nomarker.zip", ("EasyVocal.app/Contents/MacOS/EasyVocal", MachO)), Path.Combine(temp, "u9"), default));
     }
 
     [Fact]
@@ -115,7 +183,11 @@ public class UnixUpdaterTests : IDisposable
         Assert.Contains("NEW='/tmp/w/a b/new/EasyVocal.app'\n", mac);
         Assert.Contains("STAGING='/tmp/w/a b'\n", mac);
         Assert.Contains("PROGRAM=\"$TARGET/Contents/MacOS/EasyVocal\"", mac);
+        Assert.Contains("MARKER='Contents/Resources/easyvocal-files.txt'\n", mac);
+        Assert.Contains("[ ! -f \"$TARGET/$MARKER\" ]", mac);
         Assert.Contains("xattr -dr com.apple.quarantine \"$TARGET\"", mac);
+        Assert.Contains("codesign --force --deep --sign - \"$TARGET\"", mac);
+        Assert.True(mac.IndexOf("xattr", StringComparison.Ordinal) < mac.IndexOf("codesign --force", StringComparison.Ordinal));
         Assert.Contains("/usr/bin/open \"$TARGET\" --args --data '/Users/x/my data'", mac);
         Assert.Contains("BACKUP=\"$TARGET.old\"", mac);
         Assert.Contains("chmod +x \"$PROGRAM\"", mac);
@@ -123,11 +195,32 @@ public class UnixUpdaterTests : IDisposable
 
         var linux = ShHelperScript.Build(plan with { Target = "/opt/EasyVocal", NewPayload = "/tmp/w/a b/new/EasyVocal" }, mac: false);
         Assert.DoesNotContain("xattr", linux);
+        Assert.DoesNotContain("codesign", linux);
         Assert.DoesNotContain("/usr/bin/open", linux);
         Assert.Contains("PROGRAM=\"$TARGET/EasyVocal\"", linux);
+        Assert.Contains("MARKER='easyvocal-files.txt'\n", linux);
         Assert.Contains("nohup \"$PROGRAM\" --data '/Users/x/my data' >/dev/null 2>&1 &", linux);
-        Assert.Equal(new[] { "-c", "nohup /bin/sh \"$1\" >/dev/null 2>&1 &", "sh", "/tmp/w/update.sh" }, ShLauncher.Arguments("/tmp/w/update.sh"));
+        var launch = ShLauncher.Arguments("/tmp/w/update.sh");
+        Assert.Equal(new[] { "-c", "sh", "/tmp/w/update.sh" }, new[] { launch[0], launch[2], launch[3] });
+        Assert.Contains("setsid /bin/sh \"$1\"", launch[1]);
+        Assert.Contains("nohup /bin/sh \"$1\"", launch[1]);
         Assert.Equal("", ShHelperScript.RelaunchArguments(null));
+    }
+
+    /// <summary>An installed EasyVocal folder and a downloaded one, both with the release's marker.</summary>
+    private (string Target, string Staging, string Payload) Install(string where)
+    {
+        var target = Path.Combine(temp, where, "EasyVocal");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "EasyVocal"), "old");
+        File.WriteAllBytes(Path.Combine(target, "easyvocal-files.txt"), Marker);
+        File.WriteAllText(Path.Combine(target, "old-only.txt"), "gone after the update");
+        var staging = Path.Combine(temp, "work-" + Guid.NewGuid().ToString("N")[..6]);
+        var payload = Path.Combine(staging, "new", "EasyVocal");
+        Directory.CreateDirectory(payload);
+        File.WriteAllText(Path.Combine(payload, "EasyVocal"), "new");
+        File.WriteAllBytes(Path.Combine(payload, "easyvocal-files.txt"), Marker);
+        return (target, staging, payload);
     }
 
     /// <summary>Runs the helper with /bin/sh (macOS, Linux): swaps the folder, keeps nothing old, puts the old one back on failure.</summary>
@@ -139,15 +232,7 @@ public class UnixUpdaterTests : IDisposable
             output.WriteLine("SKIPPED on Windows: the sh helper runs on macOS and Linux");
             return;
         }
-        // Installed: /…/opt/EasyVocal with the old program; downloaded: /…/work/attempt/new/EasyVocal.
-        var target = Path.Combine(temp, "opt", "Easy Vocal's", "EasyVocal");
-        Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "EasyVocal"), "old");
-        File.WriteAllText(Path.Combine(target, "old-only.txt"), "gone after the update");
-        var staging = Path.Combine(temp, "work", "attempt");
-        var payload = Path.Combine(staging, "new", "EasyVocal");
-        Directory.CreateDirectory(payload);
-        File.WriteAllText(Path.Combine(payload, "EasyVocal"), "new");
+        var (target, staging, payload) = Install(Path.Combine("opt", "Easy Vocal's"));
         var log = Path.Combine(temp, "update.log");
 
         int code = RunHelper(new HelperPlan(0, target, payload, staging, log, Relaunch: false, ""), Path.Combine(temp, "update1.sh"));
@@ -159,12 +244,43 @@ public class UnixUpdaterTests : IDisposable
         Assert.True(File.GetUnixFileMode(Path.Combine(target, "EasyVocal")).HasFlag(UnixFileMode.UserExecute));
         Assert.Contains("updated", File.ReadAllText(log));
 
-        // The new version is missing (the copy failed): the old one is put back, exit 3.
-        int failed = RunHelper(new HelperPlan(0, target, Path.Combine(temp, "nothing-here"), null, log, Relaunch: false, ""), Path.Combine(temp, "update2.sh"));
-        Assert.Equal(3, failed);
+        // The new version can't be moved in (its folder is read-only): the old one is put back, exit 3.
+        var (_, staging2, payload2) = Install("unused");
+        var lockedFolder = Path.GetDirectoryName(payload2)!;
+        File.SetUnixFileMode(lockedFolder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            int failed = RunHelper(new HelperPlan(0, target, payload2, null, log, Relaunch: false, ""), Path.Combine(temp, "update2.sh"));
+            Assert.Equal(3, failed);
+        }
+        finally { File.SetUnixFileMode(lockedFolder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
         Assert.Equal("new", File.ReadAllText(Path.Combine(target, "EasyVocal")));
         Assert.False(Directory.Exists(target + ".old"));
         Assert.Contains("put back", File.ReadAllText(log));
+        TestFolders.Delete(staging2);
+    }
+
+    /// <summary>A target without the release's marker (a loose program's folder: Downloads) is never touched.</summary>
+    [Fact]
+    public void Real_Helper_RefusesAFolderThatIsNotAnInstall()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            output.WriteLine("SKIPPED on Windows: the sh helper runs on macOS and Linux");
+            return;
+        }
+        var downloads = Path.Combine(temp, "Downloads");
+        Directory.CreateDirectory(downloads);
+        File.WriteAllText(Path.Combine(downloads, "EasyVocal"), "loose");
+        File.WriteAllText(Path.Combine(downloads, "holiday.jpg"), "the person's own file");
+        var (_, staging, payload) = Install("unused2");
+        var log = Path.Combine(temp, "update3.log");
+        int code = RunHelper(new HelperPlan(0, downloads, payload, staging, log, Relaunch: false, ""), Path.Combine(temp, "update3.sh"));
+        Assert.Equal(5, code);
+        Assert.True(File.Exists(Path.Combine(downloads, "holiday.jpg")));
+        Assert.Equal("loose", File.ReadAllText(Path.Combine(downloads, "EasyVocal")));
+        Assert.False(Directory.Exists(downloads + ".old"));
+        Assert.Contains("not an EasyVocal install", File.ReadAllText(log));
     }
 
     [Fact]
@@ -175,11 +291,7 @@ public class UnixUpdaterTests : IDisposable
             output.WriteLine("SKIPPED on Windows: the sh helper runs on macOS and Linux");
             return;
         }
-        var target = Path.Combine(temp, "app");
-        Directory.CreateDirectory(target);
-        var payload = Path.Combine(temp, "work", "a", "new");
-        Directory.CreateDirectory(payload);
-        File.WriteAllText(Path.Combine(payload, "EasyVocal"), "new");
+        var (target, _, payload) = Install("app");
         using var running = Process.Start(new ProcessStartInfo("/bin/sleep", "1.5") { UseShellExecute = false })!;
         var watch = Stopwatch.StartNew();
         int code = RunHelper(new HelperPlan(running.Id, target, payload, null, Path.Combine(temp, "u.log"), Relaunch: false, ""), Path.Combine(temp, "u.sh"));

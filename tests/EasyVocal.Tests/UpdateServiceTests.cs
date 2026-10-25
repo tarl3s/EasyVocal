@@ -389,9 +389,22 @@ public class UpdateServiceTests : IDisposable
         var old = Path.GetDirectoryName(exe) + ".old";
         Directory.CreateDirectory(Path.Combine(old, "lib"));
         File.WriteAllText(Path.Combine(old, "lib", "x.dll"), "left by an update");
+        File.WriteAllText(Path.Combine(old, "easyvocal-files.txt"), "lib/x.dll\n"); // the release's marker: a copy of EasyVocal
         service.CleanStale();
         Assert.False(Directory.Exists(old));
         Assert.True(File.Exists(exe));
+    }
+
+    [Fact]
+    public void CleanStale_LeavesAFolderThatIsNotACopyOfEasyVocal()
+    {
+        var (service, _, _, exe) = MakeService(wholeArchive: true);
+        // "<folder>.old" without the release's marker: the person's own folder that happens to have that name.
+        var old = Path.GetDirectoryName(exe) + ".old";
+        Directory.CreateDirectory(old);
+        File.WriteAllText(Path.Combine(old, "my notes.txt"), "mine");
+        service.CleanStale();
+        Assert.True(File.Exists(Path.Combine(old, "my notes.txt")));
     }
 
     [Fact]

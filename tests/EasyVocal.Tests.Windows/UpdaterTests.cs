@@ -275,4 +275,22 @@ public class UpdaterTests : IDisposable
         Assert.Contains("$WaitPid = 4321", text);
         Assert.Equal("MZ old", File.ReadAllText(exe)); // nothing is replaced until the helper runs
     }
+
+    [Fact]
+    public void Unpack_AlsoTakesTheReleasesFileList_AndTheHelperPutsItNextToTheExe()
+    {
+        var zip = MakeZip("with-list.zip", ("EasyVocal.exe", FakeExe), ("easyvocal-files.txt", Encoding.UTF8.GetBytes("EasyVocal.exe\neasyvocal-files.txt\n")));
+        var exe = Win.Unpack(zip, Path.Combine(temp, "listed"), default);
+        Assert.True(File.Exists(Path.Combine(Path.GetDirectoryName(exe)!, "easyvocal-files.txt")));
+        // An older release had no list: still fine.
+        Win.Unpack(MakeZip("no-list.zip", ("EasyVocal.exe", FakeExe)), Path.Combine(temp, "unlisted"), default);
+        Assert.True(Win.IsInstallRoot(exe));
+        Assert.False(Win.IsInstallRoot(Path.GetDirectoryName(exe)!)); // a folder is never what Windows replaces
+
+        var (target, newExe, staging, log) = PretendInstall();
+        Directory.CreateDirectory(Path.GetDirectoryName(log)!);
+        File.WriteAllText(Path.Combine(Path.GetDirectoryName(newExe)!, "easyvocal-files.txt"), "EasyVocal.exe\neasyvocal-files.txt\n");
+        Assert.Equal(0, RunScript(WriteScript(new HelperPlan(-1, target, newExe, staging, log, Relaunch: false, ""))));
+        Assert.Equal("EasyVocal.exe\neasyvocal-files.txt\n", File.ReadAllText(Path.Combine(Path.GetDirectoryName(target)!, "easyvocal-files.txt")));
+    }
 }

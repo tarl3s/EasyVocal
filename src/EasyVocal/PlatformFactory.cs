@@ -119,6 +119,7 @@ internal static class PlatformFactory
         public IReadOnlyList<string> AssetNames(Architecture arch) => Array.Empty<string>();
         public string ExeName => "EasyVocal";
         public string InstallRoot(string exePath) => exePath;
+        public bool IsInstallRoot(string path) => false;
         public bool CanSelfUpdate(string exePath, Action<string>? log = null) => false;
         public string Unpack(string archivePath, string folder, CancellationToken ct) => throw new UpdateException(UpdateProblem.NotAZip, "not on this platform yet");
         public string HelperFileName => "update.sh";

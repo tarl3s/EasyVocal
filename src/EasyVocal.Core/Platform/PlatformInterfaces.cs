@@ -256,6 +256,12 @@ public interface IUpdaterPlatform
     string InstallRoot(string exePath);
 
     /// <summary>
+    /// <paramref name="path"/> (an install root or its .old copy) is something a release of EasyVocal put there (where the
+    /// platform's package has its <c>easyvocal-files.txt</c>; on Windows the single exe file). Only those are ever deleted.
+    /// </summary>
+    bool IsInstallRoot(string path);
+
+    /// <summary>
     /// The running EasyVocal can replace itself (its <see cref="InstallRoot"/> can be written); otherwise the release
     /// page is opened instead. <paramref name="log"/> gets why not.
     /// </summary>

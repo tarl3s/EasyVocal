@@ -727,7 +727,8 @@ public sealed class UpdateService
     public void CleanStale()
     {
         TempFolders.CleanStale(WorkRoot, StaleAfter);
-        UpdatePackage.TryDeletePath(platform.InstallRoot(ExePath) + ".old");
+        var old = platform.InstallRoot(ExePath) + ".old";
+        if (platform.IsInstallRoot(old)) UpdatePackage.TryDeletePath(old); // only a copy of EasyVocal the helper left
     }
 
     private static void TryDeleteFolder(string folder)

@@ -127,6 +127,11 @@ try {
     Remove-Staging
     exit 3
 }
+$NewMarker = Join-Path (Split-Path -Parent $NewExe) 'easyvocal-files.txt'
+if (Test-Path -LiteralPath $NewMarker) {
+    try { Copy-Item -LiteralPath $NewMarker -Destination (Join-Path (Split-Path -Parent $Target) 'easyvocal-files.txt') -Force }
+    catch { Write-Log ('the file list was not copied: ' + $_) }
+}
 try { Remove-Item -LiteralPath $Backup -Force } catch { Write-Log ('the old copy stays for now: ' + $_) }
 Write-Log 'updated'
 Start-EasyVocal
@@ -167,6 +172,12 @@ public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
     /// <summary>On Windows the update replaces the exe itself (a single-file program).</summary>
     public string InstallRoot(string exePath) => exePath;
 
+    /// <summary>The release's marker next to EasyVocal.exe (written by the release zip and by every update).</summary>
+    public const string Marker = "easyvocal-files.txt";
+
+    /// <summary>A single file (the exe, or the .old copy of it the helper left): replacing or deleting it touches nothing else.</summary>
+    public bool IsInstallRoot(string path) => File.Exists(path) && !Directory.Exists(path);
+
     /// <summary>The exe's folder can be written (a probe file is created and removed).</summary>
     public bool CanSelfUpdate(string exePath, Action<string>? log = null)
     {
@@ -189,7 +200,12 @@ public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
     public string Unpack(string archivePath, string folder, CancellationToken ct)
     {
         var exe = UpdatePackage.ExtractFile(archivePath, folder, ExeName, ct);
-        if (LooksLikeProgram(exe)) return exe;
+        if (LooksLikeProgram(exe)) {
+            // The release's marker goes next to the exe too (the helper copies it), so every install carries one.
+            try { UpdatePackage.ExtractFile(archivePath, folder, Marker, ct); }
+            catch (UpdateException ex) when (ex.Problem == UpdateProblem.MissingExe) { /* an older release had none */ }
+            return exe;
+        }
         UpdatePackage.TryDelete(exe);
         throw new UpdateException(UpdateProblem.NotAnExe, "The " + ExeName + " in the download is not a Windows program.");
     }
