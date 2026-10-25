@@ -27,6 +27,12 @@ public sealed class SingleInstance : IDisposable
         /// <summary>This person's EasyVocal.</summary>
         public static Names Default => new("EasyVocal.SingleInstance", "EasyVocal.ShowWindow",
             Path.Combine(SettingsStore.DefaultFolder, "instance.lock"), ShortPipeName(Environment.UserName));
+
+        /// <summary>
+        /// The file a listening pipe shows up as: its Unix socket on macOS and Linux (see <see cref="SocketPath"/>); null
+        /// on Windows, where a pipe has none. The tests name a stand-in to play the socket on any OS.
+        /// </summary>
+        public string? PipeFile { get; init; } = OperatingSystem.IsWindows() ? null : SocketPath(PipeName);
     }
 
     /// <summary>After this many pipe failures in a row the listener gives up (a second launch then just starts).</summary>
@@ -58,14 +64,15 @@ public sealed class SingleInstance : IDisposable
         showWait = ThreadPool.RegisterWaitForSingleObject(showSignal, (_, _) => RaiseShow(), null, Timeout.Infinite, executeOnlyOnce: false);
     }
 
-    private SingleInstance(Names names, FileStream? lockFile)
+    /// <param name="listen">False: a pipe file of someone else is there (it must not be taken over), so no listener.</param>
+    private SingleInstance(Names names, FileStream? lockFile, bool listen = true)
     {
         this.names = names;
         this.lockFile = lockFile;
-        Listening = ListenAsync(stop.Token);
+        if (listen) Listening = ListenAsync(stop.Token);
     }
 
-    /// <summary>The pipe listener (portable path); done when it stopped.</summary>
+    /// <summary>The pipe listener (portable path); done when it stopped; null when this one doesn't listen.</summary>
     internal Task? Listening { get; }
 
     /// <summary>True when this one runs without the lock (it couldn't be taken and nobody answered).</summary>
@@ -125,14 +132,12 @@ public sealed class SingleInstance : IDisposable
         {
             case LockState.Held:
                 // Held by the running EasyVocal, or by something else. Only an answer on the pipe says another one runs
-                // (waiting a little: it may be starting its listener right now).
-                if (Knock(names, show: true, WakeTimeout)) return null;
-                AppLog.Info("The single-instance lock couldn't be taken and no EasyVocal answered: running without it (" + problem + ")");
-                return new SingleInstance(names, null);
+                // (waiting a little, for its pipe to appear too: it may be starting its listener right now).
+                if (Knock(names, show: true, WakeTimeout, waitForPipe: true)) return null;
+                return RunWithoutLock(names, "The single-instance lock couldn't be taken and no EasyVocal answered: running without it (" + problem + ")");
             case LockState.Unusable:
                 if (Knock(names, show: true, ProbeTimeout)) return null;
-                AppLog.Info("The single-instance lock can't be used here and no EasyVocal answered: running without it (" + problem + ")");
-                return new SingleInstance(names, null);
+                return RunWithoutLock(names, "The single-instance lock can't be used here and no EasyVocal answered: running without it (" + problem + ")");
             default:
                 // Locking may do nothing here (NFS, DOTNET_SYSTEM_IO_DISABLEFILELOCKING): an EasyVocal that answers wins.
                 // Usually there is none, so this is only a quick look (no wait at all when nobody ever listened).
@@ -143,6 +148,17 @@ public sealed class SingleInstance : IDisposable
                 }
                 return new SingleInstance(names, file);
         }
+    }
+
+    /// <summary>
+    /// Runs without the lock. A pipe file that is there (a socket that didn't answer in time) is never bound again: on
+    /// macOS/Linux listening would replace it, and the EasyVocal behind it could never be woken; this one then doesn't listen.
+    /// </summary>
+    private static SingleInstance RunWithoutLock(Names names, string why)
+    {
+        bool taken = names.PipeFile is { } file && File.Exists(file);
+        AppLog.Info(why + (taken ? "; a pipe that didn't answer is there (an EasyVocal still starting?), so this one doesn't listen for later launches" : ""));
+        return new SingleInstance(names, null, listen: !taken);
     }
 
     private enum LockState { Taken, Held, Unusable }
@@ -184,21 +200,28 @@ public sealed class SingleInstance : IDisposable
             }
             catch (Exception) { return false; }
         }
-        return Knock(names, show: true, WakeTimeout);
+        return Knock(names, show: true, WakeTimeout, waitForPipe: true);
     }
 
     /// <summary>
     /// Connects to the running EasyVocal's pipe; with <paramref name="show"/> asks it to show its window, else only looks
-    /// (nothing happens there). Where the pipe is a socket file (macOS, Linux) a missing file answers at once, without
-    /// waiting <paramref name="timeout"/>. True when an EasyVocal answered. Never throws.
+    /// (nothing happens there). Where the pipe is a file (<see cref="Names.PipeFile"/>: macOS, Linux) a missing file
+    /// answers at once — or, with <paramref name="waitForPipe"/> (the lock is held: that EasyVocal may still be starting
+    /// its listener), once it appears, within <paramref name="timeout"/> in all. True when an EasyVocal answered. Never throws.
     /// </summary>
-    internal static bool Knock(Names names, bool show, TimeSpan timeout)
+    internal static bool Knock(Names names, bool show, TimeSpan timeout, bool waitForPipe = false)
     {
         try
         {
-            if (!OperatingSystem.IsWindows() && !File.Exists(SocketPath(names.PipeName))) return false;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            if (names.PipeFile is { } file)
+                while (!File.Exists(file))
+                {
+                    if (!waitForPipe || watch.Elapsed >= timeout) return false;
+                    Thread.Sleep(20);
+                }
             using var pipe = new NamedPipeClientStream(".", names.PipeName, PipeDirection.Out);
-            pipe.Connect((int)timeout.TotalMilliseconds);
+            pipe.Connect(Math.Max(1, (int)(timeout - watch.Elapsed).TotalMilliseconds));
             if (show)
             {
                 pipe.WriteByte(ShowByte);
@@ -228,7 +251,8 @@ public sealed class SingleInstance : IDisposable
         }
         var state = TakeLock(names, out var file, out _);
         file?.Dispose();
-        return Knock(names, show: false, state == LockState.Held ? WakeTimeout : ProbeTimeout);
+        bool held = state == LockState.Held;
+        return Knock(names, show: false, held ? WakeTimeout : ProbeTimeout, waitForPipe: held);
     }
 
     /// <summary>

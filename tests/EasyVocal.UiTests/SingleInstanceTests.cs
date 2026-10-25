@@ -82,6 +82,53 @@ public class SingleInstanceTests : IDisposable
         Assert.True(SingleInstance.IsRunning(names));
     }
 
+    /// <summary>The portable names with a stand-in for the pipe's socket file (the test makes it appear), on any OS.</summary>
+    private SingleInstance.Names WithPipeFile(out string pipeFile)
+    {
+        var names = Names(portable: true);
+        pipeFile = Path.Combine(folder, names.PipeName + ".sock");
+        return names with { PipeFile = pipeFile };
+    }
+
+    [Fact]
+    public void Portable_AHeldLock_WaitsForTheRunningEasyVocalsPipeToAppear()
+    {
+        var names = WithPipeFile(out var pipeFile);
+        using var held = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        int got = -1;
+        // The first EasyVocal took the lock a moment ago and is only now starting its listener.
+        var listener = Task.Run(async () =>
+        {
+            await Task.Delay(200);
+            using var server = new System.IO.Pipes.NamedPipeServerStream(names.PipeName, System.IO.Pipes.PipeDirection.In, 1,
+                System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+            File.WriteAllText(pipeFile, "");
+            using var patience = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await server.WaitForConnectionAsync(patience.Token);
+            got = server.ReadByte();
+        });
+        Assert.Null(SingleInstance.TryAcquire(names)); // a quick double launch: the second one leaves
+        listener.Wait(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, got); // and asked the first to show its window
+    }
+
+    [Fact]
+    public void Portable_WithoutTheLock_NeverTakesOverAPipeThatIsThere()
+    {
+        var names = WithPipeFile(out var pipeFile);
+        using var held = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        File.WriteAllText(pipeFile, ""); // a socket there that doesn't answer (its EasyVocal is busy, or it is someone else's)
+        using var mine = SingleInstance.TryAcquire(names);
+        Assert.NotNull(mine);
+        Assert.True(mine!.WithoutLock);
+        Assert.Null(mine.Listening); // listening would replace that socket
+
+        // No pipe file: a lock nobody answers for still gets a listener.
+        File.Delete(pipeFile);
+        using var second = SingleInstance.TryAcquire(names);
+        Assert.NotNull(second!.Listening);
+    }
+
     [Fact]
     public void PipeName_IsShortAndPerUser()
     {
