@@ -462,6 +462,9 @@ public class PactlTests(ITestOutputHelper output)
             double energy = 0;
             int blocks = 0;
             input.Stopped += why => { lock (output) output.WriteLine("the virtual microphone stopped: " + why?.Message); };
+            int monitorBlocks = 0;
+            using var monitor = new PulseMic(null, PactlVirtualMic.SinkName + ".monitor"); // for a failure: does the sink itself give sound?
+            monitor.Samples += (_, _) => Interlocked.Increment(ref monitorBlocks);
             input.Samples += (buffer, count) =>
             {
                 double sum = 0;
@@ -470,6 +473,7 @@ public class PactlTests(ITestOutputHelper output)
             };
             speaker.Start();
             input.Start();
+            monitor.Start();
             var tone = new float[480];
             for (int round = 0; round < 150; round++) // 1.5 s of a 440 Hz tone
             {
@@ -480,7 +484,7 @@ public class PactlTests(ITestOutputHelper output)
             lock (output)
             {
                 output.WriteLine($"{blocks} blocks from the virtual microphone, loudest mean square {energy:0.0000}");
-                if (blocks <= 20) output.WriteLine(PulseState());
+                if (blocks <= 20) output.WriteLine("monitor blocks: " + Volatile.Read(ref monitorBlocks) + "\n" + PulseState());
                 Assert.True(blocks > 20, "the virtual microphone delivered audio");
                 Assert.True(energy > 0.01, "the tone played into EasyVocal-Output came out of EasyVocal-Microphone");
             }
@@ -497,15 +501,15 @@ public class PactlTests(ITestOutputHelper output)
     private static string PulseState()
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var what in new[] { "sinks", "sources", "sink-inputs", "source-outputs", "modules" })
+        foreach (var what in new[] { "list short sinks", "list short sources", "list short sink-inputs", "list source-outputs", "list short modules", "info" })
         {
             try
             {
-                var psi = new System.Diagnostics.ProcessStartInfo("pactl", "list short " + what) { RedirectStandardOutput = true, RedirectStandardError = true };
+                var psi = new System.Diagnostics.ProcessStartInfo("pactl", what) { RedirectStandardOutput = true, RedirectStandardError = true };
                 using var p = System.Diagnostics.Process.Start(psi)!;
                 string text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
                 p.WaitForExit(5000);
-                sb.Append("pactl list short ").Append(what).Append(":\n").Append(text);
+                sb.Append("pactl ").Append(what).Append(":\n").Append(text);
             }
             catch (Exception ex) { sb.Append(what).Append(": ").Append(ex.Message).Append('\n'); }
         }

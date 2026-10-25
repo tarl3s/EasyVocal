@@ -332,11 +332,12 @@ internal sealed partial class AppSession
                 Check(w.LanguageNote.IsVisible, "settings says the language changes on restart");
                 Snapshot(w, Png("settings"));
 
-                // A CABLE device as microphone is refused.
+                // The virtual mic's own device (this platform's: VB-CABLE, BlackHole, EasyVocal-Microphone) as microphone is refused.
+                string cableName = c.Platform.VirtualMic.CallAppDeviceName;
                 var cable = new ComboBoxItem
                 {
-                    Content = "CABLE Output (VB-Audio Virtual Cable)",
-                    Tag = new DeviceInfo("fake-cable", "CABLE Output (VB-Audio Virtual Cable)", false),
+                    Content = cableName,
+                    Tag = new DeviceInfo("fake-cable", cableName, false),
                 };
                 w.MicBox.Items.Add(cable);
                 var before = w.MicBox.SelectedItem;

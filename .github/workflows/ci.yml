@@ -135,25 +135,3 @@ jobs:
       - name: Unpack, sign ad hoc and start the Apple silicon download
         run: sh tools/Test-Package.sh downloads/EasyVocal-macos-arm64.zip "$RUNNER_TEMP/macos-package"
 
-  # TEMPORARY: the published 1.0.0 downloads through the same test, to see what a person got.
-  released-1-0-0:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            asset: EasyVocal-linux-x64.tar.gz
-          - os: macos-latest
-            asset: EasyVocal-macos-arm64.zip
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fontconfig pulseaudio pulseaudio-utils libpulse0 xvfb xauth
-          pulseaudio --start --exit-idle-time=-1
-      - run: curl -fsSL -o "$RUNNER_TEMP/${{ matrix.asset }}" "https://github.com/tarl3s/EasyVocal/releases/download/v1.0.0/${{ matrix.asset }}"
-      - run: sh tools/Test-Package.sh "$RUNNER_TEMP/${{ matrix.asset }}" "$RUNNER_TEMP/released"

@@ -63,6 +63,12 @@ internal sealed partial class AppSession
         Directory.CreateDirectory(folder);
         var exe = Path.Combine(folder, updater.ExeName);
         File.WriteAllText(exe, magic + " pretend old EasyVocal");
+        if (!updater.CanSelfUpdate(exe))
+        {
+            // macOS replaces only a marked EasyVocal.app (its own tests cover that): a plain folder is never an install.
+            AppLog.Info("Smoke test: this platform updates only a real install, not the pretend folder: the updater part is skipped");
+            return;
+        }
         var zip = Path.Combine(folder, "release.zip");
         if (File.Exists(zip)) File.Delete(zip);
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
