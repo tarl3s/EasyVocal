@@ -81,6 +81,9 @@ public sealed class AppController : IDisposable
         deviceTimer = this.ui.CreateTimer(DeviceSettle, DevicesSettled);
     }
 
+    /// <summary>EasyVocal quit (Dispose ran): code that resumes after a dialog must not touch anything any more.</summary>
+    public bool IsDisposed => disposed;
+
     public string DataFolder { get; }
     public string SoundsFolder { get; }
 
@@ -517,6 +520,7 @@ public sealed class AppController : IDisposable
     /// </summary>
     public async Task ApplyEditedAudioAsync(string id, float[] samples)
     {
+        if (disposed) return; // EasyVocal quit while the editor was open
         var item = FindSound(id) ?? throw new ArgumentException("No sound with id '" + id + "'.", nameof(id));
         var folder = SoundsFolder;
         var stem = ItemOps.EditedStem(item);
@@ -544,6 +548,7 @@ public sealed class AppController : IDisposable
     /// </summary>
     public void RestoreOriginalAudio(string id, float[]? originalSamples)
     {
+        if (disposed) return;
         var item = FindSound(id);
         if (item == null || !ItemOps.BackToOriginal(Settings, item, SoundsFolder)) return;
         mixer.Stop(id);
@@ -576,6 +581,13 @@ public sealed class AppController : IDisposable
                 throw;
             }
         });
+        if (disposed)
+        {
+            // EasyVocal quit while the files were written: nothing will use them.
+            foreach (var f in new[] { fileA, fileB })
+                try { File.Delete(Path.Combine(folder, f)); } catch (Exception) { /* only clutter */ }
+            throw new ObjectDisposedException(nameof(AppController), "EasyVocal quit while the sound was being split.");
+        }
         var pair = ItemOps.AddSplitSounds(Settings, afterId, name, emoji, volume, fileA, fileB);
         SetSamples(pair.First.Id, a);
         SetSamples(pair.Second.Id, b);

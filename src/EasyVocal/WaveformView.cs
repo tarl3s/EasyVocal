@@ -37,6 +37,8 @@ public sealed class WaveformView : Control
 
     private float[] colMin = Array.Empty<float>(), colMax = Array.Empty<float>();
     private (float[]? Samples, double Start, double Spp, int Columns) cacheKey;
+    private StreamGeometry? waveGeometry;
+    private ((float[]? Samples, double Start, double Spp, int Columns) Columns, double Mid, double Half) geometryKey;
 
     private int dragAnchor = -1;
     private bool dragging;
@@ -325,6 +327,13 @@ public sealed class WaveformView : Control
     {
         if (samples.Length == 0 || peaks == null) return;
         Compute(peaks, columns);
+        // The geometry is kept until the columns or the height change (the playhead moving only redraws).
+        var key = (cacheKey, mid, half);
+        if (waveGeometry != null && geometryKey.Equals(key))
+        {
+            dc.DrawGeometry(null, wavePen, waveGeometry);
+            return;
+        }
         var geo = new StreamGeometry();
         using (var g = geo.Open())
         {
@@ -340,6 +349,8 @@ public sealed class WaveformView : Control
                 g.EndFigure(false);
             }
         }
+        waveGeometry = geo;
+        geometryKey = key;
         dc.DrawGeometry(null, wavePen, geo);
     }
 

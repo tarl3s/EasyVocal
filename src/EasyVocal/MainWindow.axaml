@@ -16,18 +16,18 @@
                     Margin="12,0" VerticalAlignment="Center" ToolTip.Tip="{loc:T 'Your microphone level'}">
                 <Border x:Name="MeterBar" HorizontalAlignment="Left" Width="0" CornerRadius="4" Background="{StaticResource MeterFill}" />
             </Border>
-            <ToggleButton x:Name="MuteButton" Grid.Column="3" Theme="{StaticResource DangerToggle}" Padding="10,6"
+            <ToggleButton x:Name="MuteButton" AutomationProperties.Name="{loc:T 'Mute your microphone'}" Grid.Column="3" Theme="{StaticResource DangerToggle}" Padding="10,6"
                           Margin="0,0,6,0" Click="MuteButton_Click" ToolTip.Tip="{loc:T 'Mute your microphone'}">
-                <TextBlock Text="🔇" Classes="emoji" />
+                <Border Classes="plate"><TextBlock Text="🔇" Classes="emoji" /></Border>
             </ToggleButton>
             <ToggleButton x:Name="HearMeButton" Grid.Column="4" Padding="12,6" Margin="0,0,6,0" Click="HearMeButton_Click"
                           ToolTip.Tip="{loc:T 'Hear your own voice in your headphones, to try the voices'}">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="🎧" Classes="emoji" Margin="0,0,6,0" />
+                    <Border Classes="plate" Margin="0,0,4,0"><TextBlock Text="🎧" Classes="emoji" /></Border>
                     <TextBlock Text="{loc:T 'Hear me'}" />
                 </StackPanel>
             </ToggleButton>
-            <Button x:Name="SettingsButton" Grid.Column="5" Theme="{StaticResource FlatButton}" FontSize="18" Padding="6,2"
+            <Button x:Name="SettingsButton" AutomationProperties.Name="{loc:T 'Settings'}" Grid.Column="5" Theme="{StaticResource FlatButton}" FontSize="18" Padding="6,2"
                     Click="SettingsButton_Click" ToolTip.Tip="{loc:T 'Settings'}">
                 <TextBlock Text="⚙" Classes="emoji" />
             </Button>
@@ -52,7 +52,7 @@
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="🎭" Classes="emoji" Margin="0,0,6,0" />
+                        <Border Classes="plate" Margin="0,0,4,0"><TextBlock Text="🎭" Classes="emoji" /></Border>
                         <TextBlock Text="{loc:T 'Voices'}" />
                     </StackPanel>
                 </TabItem.Header>
@@ -70,7 +70,7 @@
             <TabItem>
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="🔊" Classes="emoji" Margin="0,0,6,0" />
+                        <Border Classes="plate" Margin="0,0,4,0"><TextBlock Text="🔊" Classes="emoji" /></Border>
                         <TextBlock Text="{loc:T 'Sounds'}" />
                     </StackPanel>
                 </TabItem.Header>
@@ -93,7 +93,7 @@
                             <CheckBox x:Name="SoundsUseVoiceBox" Margin="0,4" VerticalAlignment="Center" Click="SoundsUseVoice_Click"
                                       ToolTip.Tip="{loc:T 'Your sounds go through the voice filter too: switch voices while a sound plays and it changes.'}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="🎭" Classes="emoji" Margin="0,0,6,0" />
+                                    <Border Classes="plate" Margin="0,0,4,0"><TextBlock Text="🎭" Classes="emoji" /></Border>
                                     <TextBlock Text="{loc:T 'Sounds use the voice'}" />
                                 </StackPanel>
                             </CheckBox>

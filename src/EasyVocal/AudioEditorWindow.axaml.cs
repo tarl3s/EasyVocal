@@ -415,6 +415,7 @@ public partial class AudioEditorWindow : AppWindow
             Status(L.F("Made two new sounds: “{0}” and “{1}”.", first.Name, second.Name));
             SplitDone = true;
         }
+        catch (ObjectDisposedException) { return; } // EasyVocal quit meanwhile
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             AppLog.Error("Splitting a sound failed", ex);
@@ -639,7 +640,7 @@ public partial class AudioEditorWindow : AppWindow
         var editor = new AudioEditorWindow(controller, AppController.DisplayName(item), item.Emoji, item.Volume, samples,
             isOriginal: !edited, originalPath: edited ? controller.SoundPath(item.OriginalFileName) : null, soundId: item.Id);
         await editor.ShowAsync(owner);
-        if (!editor.Accepted || editor.Result is not { } result) return;
+        if (!editor.Accepted || editor.Result is not { } result || controller.IsDisposed) return;
         await SaveResultAsync(owner, controller, item.Id, result);
     }
 

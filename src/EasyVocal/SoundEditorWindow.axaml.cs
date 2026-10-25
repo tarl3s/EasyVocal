@@ -65,7 +65,7 @@ public partial class SoundEditorWindow : AppWindow
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
         controller.PreviewEnded += OnPreviewEnded;
-        Closing += (_, e) => e.Cancel |= saving; // the edited copy is being written: Save closes the window when done
+        Closing += (_, e) => e.Cancel |= saving && !Quitting; // the edited copy is being written: Save closes the window when done (not when EasyVocal quits)
         Closed += (_, _) =>
         {
             closing.Cancel();
@@ -271,7 +271,7 @@ public partial class SoundEditorWindow : AppWindow
     private async void HotkeyButton_Click(object? sender, RoutedEventArgs e)
     {
         var pick = await HotkeyCaptureDialog.PickAsync(this, controller, "sound:" + itemId, ShownName, pendingHotkey);
-        if (!pick.Ok) return;
+        if (!pick.Ok || controller.IsDisposed) return;
         pendingHotkey = pick.Hotkey;
         UpdateHotkeyButton();
     }
@@ -306,6 +306,7 @@ public partial class SoundEditorWindow : AppWindow
                 }
             }
 
+            if (controller.IsDisposed) return; // EasyVocal quit while the file was copied
             string? previousHotkey = editing?.Hotkey;
             if (editing == null)
             {
@@ -342,6 +343,7 @@ public partial class SoundEditorWindow : AppWindow
             // The mixer only gets the edited audio once that copy is written: if it fails the person is told and
             // the sound keeps playing its (unedited) file.
             if (audioChange == AudioChange.Edited && samples != null) await SaveEditedAudio(samples);
+            if (controller.IsDisposed) return;
 
             // The system could still refuse the key (an app grabbed it since we checked): don't keep it.
             if (pendingHotkey != null && controller.RefusedActions.Contains("sound:" + itemId))

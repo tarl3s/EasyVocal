@@ -18,6 +18,9 @@
     <SolidColorBrush x:Key="Warn" Color="#FACC15" />
     <SolidColorBrush x:Key="WarnText" Color="#241C02" />
     <SolidColorBrush x:Key="Selection" Color="#4A4ADE80" />
+    <!-- Behind an emoji: dark glyphs (🎵 🎶 🦇) stay visible on the dark cards, grey ones (🎧 🔇) on green or red. -->
+    <SolidColorBrush x:Key="EmojiPlate" Color="#30FFFFFF" />
+    <SolidColorBrush x:Key="EmojiPlateOnColor" Color="#590B1A10" />
     <!-- The OS's colour emoji font where there is one (Windows, macOS, most Linux desktops); otherwise whatever has the glyph. -->
     <!-- The UI font: Segoe UI on Windows; elsewhere the first one installed, else the system default. -->
     <FontFamily x:Key="UiFont">Segoe UI, .AppleSystemUIFont, Helvetica Neue, Ubuntu, Cantarell, Noto Sans, DejaVu Sans</FontFamily>

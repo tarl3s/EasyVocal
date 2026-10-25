@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -27,7 +28,6 @@ public sealed class EmojiGrid : WrapPanel
     {
         selected = string.IsNullOrEmpty(current) ? Choices[0] : current;
         var theme = Res.Theme("CardButton");
-        var font = Res.Emoji;
         var list = new List<string>(Choices);
         if (!list.Contains(selected)) list.Insert(0, selected); // an emoji from an older version is still there to keep
         foreach (var emoji in list)
@@ -39,8 +39,9 @@ public sealed class EmojiGrid : WrapPanel
                 Width = 38,
                 Height = 38,
                 Margin = new Thickness(0, 0, 4, 4),
-                Content = new TextBlock { Text = text, FontFamily = font, FontSize = 20, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+                Content = MainWindow.EmojiPlate(text, 20, 30, 1),
             };
+            AutomationProperties.SetName(cell, text);
             cell.Click += (_, _) => Selected = text;
             cells[text] = cell;
             Children.Add(cell);

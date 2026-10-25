@@ -18,7 +18,6 @@ public static class WindowPlacer
     /// <summary>Call from the window's constructor, after InitializeComponent.</summary>
     public static void Use(Window window, string key, AppController? controller)
     {
-        WindowBox? sizeBack = null;
         if (controller != null && controller.Settings.WindowPlacements.TryGetValue(key, out var saved) &&
             WindowFit.Fits(saved, WorkAreas(window), window.MinWidth, window.MinHeight))
         {
@@ -27,22 +26,15 @@ public static class WindowPlacer
             window.Position = new PixelPoint((int)Math.Round(saved.Left * primary), (int)Math.Round(saved.Top * primary));
             if (saved.HasSize)
             {
-                // The saved size is the whole window (frame included): the client part is set once the frame is known.
+                // The saved size is the client area: set before the window shows, so it never visibly resizes.
                 double own = ScaleAt(window, saved);
                 window.SizeToContent = SizeToContent.Manual;
                 window.Width = saved.Width * primary / own;
                 window.Height = saved.Height * primary / own;
-                sizeBack = saved;
             }
         }
         window.Opened += (_, _) =>
         {
-            if (sizeBack is { } back && window.FrameSize is { } frame)
-            {
-                double toClient = PrimaryScale(window) / OwnScale(window);
-                window.Width = Math.Max(window.MinWidth, back.Width * toClient - Math.Max(0, frame.Width - window.ClientSize.Width));
-                window.Height = Math.Max(window.MinHeight, back.Height * toClient - Math.Max(0, frame.Height - window.ClientSize.Height));
-            }
             // Never taller or wider than the screen it opens on: a SizeToContent window then scrolls inside instead.
             var area = AreaFor(window);
             double toOwn = PrimaryScale(window) / OwnScale(window);
@@ -59,7 +51,10 @@ public static class WindowPlacer
     public static void Remember(Window window, string key, AppController? controller)
     {
         if (controller == null || !window.IsVisible || window.WindowState != WindowState.Normal) return;
-        var now = Box(window);
+        // Where its frame is, and how big its client area is (what Width and Height set when it comes back).
+        var frame = Box(window);
+        double scale = OwnScale(window) / PrimaryScale(window);
+        var now = new WindowBox(frame.Left, frame.Top, window.ClientSize.Width * scale, window.ClientSize.Height * scale);
         if (!now.IsFinite || now.Width <= 0 || now.Height <= 0) return;
         bool sized = window.SizeToContent == SizeToContent.Manual && window.CanResize;
         var box = sized ? now : new WindowBox(now.Left, now.Top, 0, 0);

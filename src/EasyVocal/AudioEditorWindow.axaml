@@ -37,17 +37,17 @@
         <WrapPanel x:Name="TopBar">
             <Button x:Name="PlayButton" Click="PlayButton_Click" ToolTip.Tip="{loc:T 'Hear the whole sound on your headphones only (Space)'}" />
             <Button x:Name="PlayPartButton" Click="PlayPartButton_Click" ToolTip.Tip="{loc:T 'Hear only the part you picked'}" />
-            <Button x:Name="StopButton" Click="StopButton_Click" ToolTip.Tip="{loc:T 'Stop'}">
+            <Button x:Name="StopButton" AutomationProperties.Name="{loc:T 'Stop'}" Click="StopButton_Click" ToolTip.Tip="{loc:T 'Stop'}">
                 <TextBlock Text="■" />
             </Button>
             <Border Width="1" Margin="6,2,10,6" Background="{StaticResource Border}" />
             <Button x:Name="UndoButton" Click="UndoButton_Click" ToolTip.Tip="{loc:T 'Undo (Ctrl+Z)'}" />
             <Button x:Name="RedoButton" Click="RedoButton_Click" ToolTip.Tip="{loc:T 'Redo (Ctrl+Y)'}" />
             <Border Width="1" Margin="6,2,10,6" Background="{StaticResource Border}" />
-            <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click" ToolTip.Tip="{loc:T 'Zoom out (Ctrl + mouse wheel)'}">
+            <Button x:Name="ZoomOutButton" AutomationProperties.Name="{loc:T 'Zoom out (Ctrl + mouse wheel)'}" Click="ZoomOutButton_Click" ToolTip.Tip="{loc:T 'Zoom out (Ctrl + mouse wheel)'}">
                 <TextBlock Text="🔍−" Classes="emoji" />
             </Button>
-            <Button x:Name="ZoomInButton" Click="ZoomInButton_Click" ToolTip.Tip="{loc:T 'Zoom in (Ctrl + mouse wheel)'}">
+            <Button x:Name="ZoomInButton" AutomationProperties.Name="{loc:T 'Zoom in (Ctrl + mouse wheel)'}" Click="ZoomInButton_Click" ToolTip.Tip="{loc:T 'Zoom in (Ctrl + mouse wheel)'}">
                 <TextBlock Text="🔍+" Classes="emoji" />
             </Button>
             <Button x:Name="FitButton" Click="FitButton_Click" Content="{loc:T 'Whole sound'}" ToolTip.Tip="{loc:T 'Show the whole sound'}" />

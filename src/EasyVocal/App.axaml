@@ -47,6 +47,18 @@
             <Setter Property="SelectionForegroundBrush" Value="{StaticResource AccentText}" />
             <Setter Property="CaretBrush" Value="{StaticResource Text}" />
         </Style>
+        <!-- An emoji's backing plate inside a pill: dark on a checked toggle or the selected tab. -->
+        <Style Selector="Border.plate">
+            <Setter Property="CornerRadius" Value="9" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton:checked Border.plate">
+            <Setter Property="Background" Value="{StaticResource EmojiPlateOnColor}" />
+        </Style>
+        <Style Selector="TabItem:selected Border.plate">
+            <Setter Property="Background" Value="{StaticResource EmojiPlateOnColor}" />
+        </Style>
         <Style Selector="ContextMenu">
             <Setter Property="MinWidth" Value="160" />
         </Style>
