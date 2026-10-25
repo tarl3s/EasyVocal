@@ -109,6 +109,7 @@ public partial class SoundEditorWindow : Window
     /// <summary>Decodes the file off the UI thread. Failure leaves the previous choice as it was and says why.</summary>
     private async Task LoadFileAsync(string? path, bool existing = false)
     {
+        if (saving) return; // Save is copying the current file: keep it as it is
         int ticket = ++loadTicket;
         loadingFile = true;
         ShowStatus(L.T("Loading…"), error: false);
@@ -279,7 +280,9 @@ public partial class SoundEditorWindow : Window
             string? fileName = null;
             if (newFilePath != null)
             {
-                try { fileName = ItemOps.ImportSoundFile(newFilePath, controller.SoundsFolder); }
+                // Off the UI thread: a big file takes a while to copy (and a video's sound is written as a WAV instead).
+                var (path, folder, decoded) = (newFilePath, controller.SoundsFolder, fileSamples!);
+                try { fileName = await Task.Run(() => ItemOps.ImportSound(path, folder, decoded)); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     AppLog.Error("Copying a sound file failed", ex);

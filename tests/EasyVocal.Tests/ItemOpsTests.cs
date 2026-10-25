@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using EasyVocal.Core.Model;
+using EasyVocal.Core.Sounds;
 
 namespace EasyVocal.Tests;
 
@@ -273,6 +274,35 @@ public class ItemOpsTests : IDisposable
         var name = ItemOps.ImportSoundFile(Src("weird name.WAV"), sounds);
         Assert.Equal(Path.GetFileName(name), name);
         Assert.True(File.Exists(Path.Combine(sounds, name)));
+    }
+
+    [Theory]
+    [InlineData("clip.mp4")]
+    [InlineData("Clip.MOV")]
+    [InlineData("clip.wmv")]
+    [InlineData("clip.m4v")]
+    public void ImportSound_Video_KeepsOnlyItsSoundAsAWav(string video)
+    {
+        var sounds = Path.Combine(_dir, "Sounds");
+        var decoded = Tone(4800);
+        var name = ItemOps.ImportSound(Src(video, new string('v', 100_000)), sounds, decoded);
+        Assert.Equal(Path.GetFileNameWithoutExtension(video) + ".wav", name);
+        Assert.Equal(new[] { name }, Directory.GetFiles(sounds).Select(Path.GetFileName)); // the video isn't copied
+        var back = SoundLoader.Load(Path.Combine(sounds, name));
+        Assert.Equal(decoded.Length, back.Length);
+        Assert.Equal(decoded[100], back[100], 1e-3f);
+    }
+
+    [Theory]
+    [InlineData("bruh.mp3")]
+    [InlineData("song.m4a")]
+    [InlineData("tune.flac")]
+    public void ImportSound_AudioFile_IsCopiedAsItIs(string file)
+    {
+        var sounds = Path.Combine(_dir, "Sounds");
+        var name = ItemOps.ImportSound(Src(file, "the file"), sounds, Tone(10));
+        Assert.Equal(file, name);
+        Assert.Equal("the file", File.ReadAllText(Path.Combine(sounds, name)));
     }
 
     // ---------- the sound editor ----------

@@ -173,6 +173,17 @@ public static class ItemOps
         }
     }
 
+    /// <summary>
+    /// Brings a picked file into <paramref name="soundsFolder"/> and returns the plain file name to store. A video's
+    /// sound is saved as a WAV of <paramref name="decoded"/> (the video may be huge, and would be decoded again on
+    /// every launch); any other file is copied as it is (<see cref="ImportSoundFile"/>). Slow for a big file: call it
+    /// off the UI thread.
+    /// </summary>
+    public static string ImportSound(string sourcePath, string soundsFolder, float[] decoded) =>
+        SoundLoader.IsVideo(sourcePath)
+            ? WriteSoundFile(soundsFolder, Path.GetFileNameWithoutExtension(sourcePath), decoded)
+            : ImportSoundFile(sourcePath, soundsFolder);
+
     /// <summary>True when a sound uses the file, as its file or as the original of an edited one.</summary>
     public static bool IsFileUsed(AppSettings s, string fileName) =>
         s.Sounds.Exists(x => string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase) ||

@@ -29,6 +29,13 @@ public static class SoundLoader
         ".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".mp4", ".m4v", ".mov", ".wmv",
     };
 
+    /// <summary>Video files: only their sound is used (and kept, as a WAV, when one is added to the soundboard).</summary>
+    public static readonly string[] VideoExtensions = { ".mp4", ".m4v", ".mov", ".wmv" };
+
+    /// <summary>True when the file is a video (by its extension).</summary>
+    public static bool IsVideo(string? path) =>
+        !string.IsNullOrEmpty(path) && Array.IndexOf(VideoExtensions, Path.GetExtension(path).ToLowerInvariant()) >= 0;
+
     /// <summary>The extensions as a file-dialog pattern: "*.wav;*.mp3;…".</summary>
     public static string DialogPattern => "*" + string.Join(";*", Extensions);
 
