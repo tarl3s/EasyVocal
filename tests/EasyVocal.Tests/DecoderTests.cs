@@ -364,9 +364,9 @@ public class DecoderTests : IDisposable
     /// <summary>The stand-in that wrote its process id next to <paramref name="input"/> no longer runs.</summary>
     private static void AssertGone(string input)
     {
-        // Stopped before it even wrote its id (a slow start on a busy computer): nothing of it runs.
-        if (!File.Exists(input + ".pid")) return;
-        int pid = int.Parse(File.ReadAllText(input + ".pid"), System.Globalization.CultureInfo.InvariantCulture);
+        // Stopped before it even wrote its id, or while writing it (a slow start on a busy computer): nothing of it runs.
+        if (!File.Exists(input + ".pid") || !int.TryParse(File.ReadAllText(input + ".pid"), System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int pid)) return;
         try
         {
             using var p = System.Diagnostics.Process.GetProcessById(pid);
