@@ -11,7 +11,9 @@ namespace EasyVocal.Core.Engine;
 /// <para>
 /// Per block of mic audio: <c>voice</c> = the mic through the <see cref="VoiceChain"/> (clean when
 /// <see cref="FilterEnabled"/> is off, silent when <see cref="MicMuted"/>); <c>sounds</c> = the
-/// <see cref="SoundMixer"/>; the call gets <c>Limiter(voice + sounds)</c>; the monitor gets
+/// <see cref="SoundMixer"/>, and with <see cref="SoundsUseVoice"/> that mix through a follower of the voice chain
+/// (the same voice and ON/OFF, its own state: switching voices changes a sound that is playing, and mute, Hear me
+/// and Hear sounds still tell the voice and the sounds apart); the call gets <c>Limiter(voice + sounds)</c>; the monitor gets
 /// <c>Limiter((HearMe ? voice : 0) + (HearSounds ? sounds : 0))</c> and nothing at all when both are off.
 /// When an output holds more than 60 ms (the mic's clock runs faster than the device's) its oldest audio is
 /// trimmed back to 20 ms with a short crossfade, so latency never creeps up and nothing is heard skipping.
@@ -45,19 +47,25 @@ public sealed class AudioEngine : IDisposable
     private readonly Func<IAudioOutput> makeCallOutput;
     private readonly Func<IAudioOutput?> makeMonitor;
     private readonly VoiceChain chain;
+    private readonly VoiceChain soundsChain;     // follows <chain>: the sounds through the same voice
     private readonly SoundMixer mixer;
+
+    /// <summary>After this long without a sound, the sounds' voice chain rests (every tail has died out).</summary>
+    private const int SoundsIdleSamples = AudioFormat.SampleRate * 5;
 
     private readonly object gate = new();        // UI side only: start / stop / recover
     private readonly object stateLock = new();   // tiny: never held while creating or disposing devices
     private Session? session;                    // the devices in use (null when stopped)
     private EngineState state = EngineState.Stopped;
 
-    private volatile bool micMuted, hearMe, hearSounds = true;
+    private volatile bool micMuted, hearMe, hearSounds = true, soundsUseVoice;
     private float inputLevel;
     private int processing;                      // 1 while a block is being processed (audio work never overlaps)
 
     // Audio-thread state (guarded by <processing>).
     private float voiceGain, meGain, soundsGain;
+    private float throughGain;                   // 0 = the sounds as they are, 1 = through the voice (crossfades)
+    private int soundsQuietFor;                  // samples since the mixer last gave anything
     private bool monitorWasSilent = true;
 
     /// <summary>The devices of one start, with the buffers and limiters their audio needs.</summary>
@@ -77,6 +85,7 @@ public sealed class AudioEngine : IDisposable
         public bool MonitorFailed => Monitor is { } m && ReferenceEquals(FailedMonitor, m);
         public readonly float[] VoiceBuf = new float[Block];
         public readonly float[] SoundsBuf = new float[Block];
+        public readonly float[] VoicedSoundsBuf = new float[Block];
         public readonly float[] CallBuf = new float[Block];
         public readonly float[] MonitorBuf = new float[Block];
         public readonly Limiter CallLimiter = new(AudioFormat.SampleRate);
@@ -91,6 +100,7 @@ public sealed class AudioEngine : IDisposable
         this.makeMonitor = makeMonitor ?? throw new ArgumentNullException(nameof(makeMonitor));
         this.chain = chain ?? throw new ArgumentNullException(nameof(chain));
         this.mixer = mixer ?? throw new ArgumentNullException(nameof(mixer));
+        soundsChain = chain.CreateFollower();
     }
 
     /// <summary>Raised when <see cref="State"/> changes, on whichever thread noticed it.</summary>
@@ -116,6 +126,9 @@ public sealed class AudioEngine : IDisposable
 
     /// <summary>The user hears the soundboard on the monitor (on by default).</summary>
     public bool HearSounds { get => hearSounds; set => hearSounds = value; }
+
+    /// <summary>The soundboard goes through the voice too (off by default); turning it on or off crossfades over 5 ms.</summary>
+    public bool SoundsUseVoice { get => soundsUseVoice; set => soundsUseVoice = value; }
 
     /// <summary>Peak of the raw mic in the last block, 0..1 (also while muted).</summary>
     public float InputLevel => Volatile.Read(ref inputLevel);
@@ -322,6 +335,8 @@ public sealed class AudioEngine : IDisposable
         voiceGain = micMuted ? 0f : 1f;
         meGain = hearMe ? 1f : 0f;
         soundsGain = hearSounds ? 1f : 0f;
+        throughGain = soundsUseVoice ? 1f : 0f;
+        soundsQuietFor = 0;
         monitorWasSilent = true;
         Volatile.Write(ref inputLevel, 0f);
 
@@ -497,6 +512,7 @@ public sealed class AudioEngine : IDisposable
 
         sounds.Clear();
         mixer.MixInto(sounds);
+        ThroughTheVoice(s, sounds);
 
         var callOut = s.Call;
         if (callOut != null)
@@ -545,6 +561,39 @@ public sealed class AudioEngine : IDisposable
         {
             s.FailedMonitor = monitor; // the speakers went away: the call carries on, this monitor stays off
         }
+    }
+
+    /// <summary>
+    /// With <see cref="SoundsUseVoice"/>, replaces the sounds by the sounds through the voice (crossfading when the
+    /// switch changes). The sounds' chain rests once nothing has played for a while: its tails are over by then.
+    /// </summary>
+    private void ThroughTheVoice(Session s, Span<float> sounds)
+    {
+        float target = soundsUseVoice ? 1f : 0f;
+        if (target == 0f && throughGain == 0f) return;
+
+        bool quiet = true;
+        for (int i = 0; i < sounds.Length; i++)
+            if (sounds[i] != 0f) { quiet = false; break; }
+        soundsQuietFor = quiet ? Math.Min(soundsQuietFor + sounds.Length, SoundsIdleSamples + 1) : 0;
+        if (soundsQuietFor > SoundsIdleSamples && throughGain == target) return; // silence in, silence out
+
+        var voiced = s.VoicedSoundsBuf.AsSpan(0, sounds.Length);
+        sounds.CopyTo(voiced);
+        soundsChain.Process(voiced);
+        if (throughGain == target)
+        {
+            voiced.CopyTo(sounds);
+            return;
+        }
+        float g = throughGain;
+        for (int i = 0; i < sounds.Length; i++)
+        {
+            if (g < target) { g += RampStep; if (g > target) g = target; }
+            else if (g > target) { g -= RampStep; if (g < target) g = target; }
+            sounds[i] += (voiced[i] - sounds[i]) * g;
+        }
+        throughGain = g;
     }
 
     /// <summary>Multiplies by a gain that moves towards <paramref name="target"/> by <see cref="RampStep"/> per sample.</summary>

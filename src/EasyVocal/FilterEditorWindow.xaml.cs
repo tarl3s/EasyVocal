@@ -7,7 +7,8 @@ using EasyVocal.Core.Text;
 namespace EasyVocal;
 
 /// <summary>
-/// Makes or edits a voice filter: a name, an emoji, a starting voice and seven sliders. Every drag is heard live:
+/// Makes or edits a voice filter: a name, an emoji, a starting voice and nine sliders (a built-in voice's hidden
+/// extras, like Demon's octave layer, come along with it). Every drag is heard live:
 /// the engine plays the sliders (<see cref="AppController.PreviewSliders"/>), in the headphones while the window's own
 /// 🎧 Hear me toggle is on (it starts on; <see cref="AppController.PreviewHearMe"/>). The person's saved Hear me is never
 /// changed, and everything is put back when the window closes.
@@ -110,6 +111,8 @@ public partial class FilterEditorWindow : Window
         AddRow(L.T("Old radio"), L.T("None"), L.T("Lots"), 0, v => v.Radio, (v, x) => v.Radio = x);
         AddRow(L.T("Distortion"), L.T("None"), L.T("Lots"), 0, v => v.Distortion, (v, x) => v.Distortion = x);
         AddRow(L.T("Whisper"), L.T("None"), L.T("Lots"), 0, v => v.Whisper, (v, x) => v.Whisper = x);
+        AddRow(L.T("Growl"), L.T("None"), L.T("Lots"), 0, v => v.Growl, (v, x) => v.Growl = x);
+        AddRow(L.T("Big room"), L.T("None"), L.T("Huge"), 0, v => v.Room, (v, x) => v.Room = x);
     }
 
     private void AddRow(string title, string left, string right, double min, Func<VoiceSliders, double> get, Action<VoiceSliders, double> set, bool snaps = false)

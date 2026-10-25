@@ -30,6 +30,9 @@ public sealed class FakeInput : IAudioInput
         }
     }
 
+    /// <summary>Raises <see cref="Samples"/> once with the caller's buffer (no allocation here).</summary>
+    public void Raise(float[] buffer, int count) => Samples?.Invoke(buffer, count);
+
     public void RaiseStopped(Exception? error) => Stopped?.Invoke(error);
 }
 
@@ -39,6 +42,8 @@ public sealed class FakeOutput : IAudioOutput
     private readonly List<float> _written = new();
 
     public bool ThrowOnWrite { get; set; }
+    /// <summary>False = writes are counted but not kept (for allocation tests).</summary>
+    public bool Record { get; set; } = true;
     public int BufferedSamples { get; set; }
     public int TrimCount { get; private set; }
     public int LastTrimTo { get; private set; } = -1;
@@ -54,6 +59,7 @@ public sealed class FakeOutput : IAudioOutput
     {
         if (ThrowOnWrite) throw new System.IO.IOException("device gone");
         WriteCount++;
+        if (!Record) return;
         foreach (float v in mono) _written.Add(v);
     }
 

@@ -614,4 +614,116 @@ public class EngineTests
         rig.Mic.RaiseStopped(new IOException());
         Assert.Equal(EngineState.MicLost, rig.Engine.State);
     }
+
+    // ---------- sounds through the voice ----------
+
+    [Fact]
+    public void SoundsUseVoiceOff_TheSoundIsUnchanged()
+    {
+        using var rig = new Rig();
+        var sound = Signals.Sine(300, 1, 0.3f);
+        rig.Mixer.Set("beep", sound);
+        rig.Chain.Apply(new VoiceSliders { Pitch = 0.5 });
+        rig.Engine.MicMuted = true;
+        Assert.False(rig.Engine.SoundsUseVoice); // the default
+        rig.Engine.Start();
+        rig.Mixer.Toggle("beep", 1f);
+        rig.Mic.Feed(Signals.Silence(0.5));
+        AssertDelayedCopy(Signals.Slice(sound, 0, 0.5), rig.Call.Written);
+    }
+
+    [Fact]
+    public void SoundsUseVoiceOn_TheSoundTakesTheVoice_AndFollowsAVoiceChange()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("tone", Signals.Sine(300, 3, 0.3f));
+        rig.Chain.Apply(new VoiceSliders { Pitch = 0.5 }); // +6 semitones
+        rig.Engine.SoundsUseVoice = true;
+        rig.Engine.MicMuted = true; // only the sound on the call
+        rig.Engine.HearSounds = true;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("tone", 1f);
+        rig.Mic.Feed(Signals.Silence(1.2));
+        rig.Chain.Apply(new VoiceSliders { Pitch = -0.5 }); // switched while the sound plays
+        rig.Mic.Feed(Signals.Silence(1.2));
+        var call = rig.Call.Written;
+        double up = Signals.EstimatePitch(Signals.Slice(call, 0.4, 1.2)), down = Signals.EstimatePitch(Signals.Slice(call, 1.6, 2.4));
+        Assert.InRange(up, 400, 450);
+        Assert.InRange(down, 200, 225);
+        Assert.InRange(Signals.EstimatePitch(Signals.Slice(rig.Monitor.Written, 0.4, 1.2)), 400, 450); // the headphones hear it too
+    }
+
+    [Fact]
+    public void SoundsUseVoiceOn_FilterOff_TheSoundIsClean_AndTheMicStillGetsTheVoice()
+    {
+        using var rig = new Rig();
+        var sound = Signals.Sine(300, 1, 0.3f);
+        rig.Mixer.Set("beep", sound);
+        rig.Chain.Apply(new VoiceSliders { Pitch = 0.5 });
+        rig.Engine.SoundsUseVoice = true;
+        rig.Engine.FilterEnabled = false;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("beep", 1f);
+        var voice = Signals.Sine(200, 0.5, 0.3f);
+        rig.Mic.Feed(voice);
+        AssertDelayedCopy(Add(voice, Signals.Slice(sound, 0, 0.5)), rig.Call.Written);
+    }
+
+    [Fact]
+    public void SoundsUseVoiceOn_HearMeOff_TheHeadphonesGetOnlyTheVoicedSound()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("tone", Signals.Sine(300, 2, 0.3f));
+        rig.Chain.Apply(new VoiceSliders { Pitch = 0.5 });
+        rig.Engine.SoundsUseVoice = true;
+        rig.Engine.HearMe = false;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("tone", 1f);
+        rig.Mic.Feed(Signals.Sine(150, 1.2, 0.4f)); // the voice is on the call, not in the headphones
+        var phones = Signals.Slice(rig.Monitor.Written, 0.4, 1.2);
+        Assert.InRange(Signals.EstimatePitch(phones), 400, 450);
+        double voiceInPhones = Signals.Magnitude(phones, 150 * Math.Sqrt(2));
+        Assert.True(voiceInPhones < 0.01, "the (shifted) voice leaked into the headphones: " + voiceInPhones);
+    }
+
+    [Fact]
+    public void SoundsUseVoice_SwitchingItWhileASoundPlays_NoClick()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("tone", Signals.Sine(300, 3, 0.3f));
+        rig.Chain.Apply(new VoiceSliders { Robot = 0.6 }); // no delay: the crossfade itself is what is checked
+        rig.Engine.MicMuted = true;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("tone", 1f);
+        rig.Mic.Feed(Signals.Silence(0.5));
+        rig.Engine.SoundsUseVoice = true;
+        rig.Mic.Feed(Signals.Silence(0.5));
+        rig.Engine.SoundsUseVoice = false;
+        rig.Mic.Feed(Signals.Silence(0.5));
+        var call = rig.Call.Written;
+        double step = 0;
+        for (int n = Sr / 10; n < call.Length; n++) step = Math.Max(step, Math.Abs(call[n] - call[n - 1]));
+        Assert.True(step < 0.2, "max step " + step);
+    }
+
+    [Fact]
+    public void SoundsUseVoiceOn_AudioThreadDoesNotAllocate()
+    {
+        using var rig = new Rig { WithMonitor = false, CallFactory = () => new FakeOutput { Record = false } };
+        rig.Mixer.Set("tone", Signals.Sine(300, 30, 0.3f));
+        rig.Chain.Apply(BuiltInVoices.All().First(v => v.Id == "demon").Sliders);
+        rig.Engine.SoundsUseVoice = true;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("tone", 1f);
+        var block = Signals.Sine(150, 0.01, 0.3f);
+        for (int i = 0; i < 200; i++) rig.Mic.Raise(block, block.Length); // warm up
+        long best = long.MaxValue;
+        for (int attempt = 0; attempt < 6 && best != 0; attempt++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 300; i++) rig.Mic.Raise(block, block.Length);
+            best = Math.Min(best, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+        Assert.Equal(0, best);
+    }
 }

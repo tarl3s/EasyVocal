@@ -134,6 +134,7 @@ public partial class MainWindow : Window
         HearMeButton.IsChecked = controller.HearMe;
         ShowHiddenVoices.IsChecked = showHidden;
         ShowHiddenSounds.IsChecked = showHidden;
+        SoundsUseVoiceBox.IsChecked = controller.SoundsUseVoice;
 
         var problems = controller.HotkeyProblems;
         HotkeyNote.Visibility = problems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -571,6 +572,8 @@ public partial class MainWindow : Window
     private void MicButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
 
     private void StopAllButton_Click(object sender, RoutedEventArgs e) => controller.StopAllSounds();
+
+    private void SoundsUseVoice_Click(object sender, RoutedEventArgs e) => controller.SoundsUseVoice = SoundsUseVoiceBox.IsChecked == true;
 
     private void ShowHidden_Click(object sender, RoutedEventArgs e) => SetShowHidden(((CheckBox)sender).IsChecked == true);
 

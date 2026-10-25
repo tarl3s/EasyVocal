@@ -124,6 +124,7 @@ public sealed class AppController : IDisposable
         engine.MicMuted = Settings.MicMuted;
         engine.HearMe = Settings.HearMe;
         engine.HearSounds = Settings.HearSounds;
+        engine.SoundsUseVoice = Settings.SoundsUseVoice;
         ApplyChain();
 
         mixer.PlayingChanged += OnPlayingChanged;
@@ -256,6 +257,20 @@ public sealed class AppController : IDisposable
             if (Settings.HearSounds == value) return;
             Settings.HearSounds = value;
             engine.HearSounds = value;
+            Save();
+            RaiseChanged();
+        }
+    }
+
+    /// <summary>The soundboard goes through the voice filter too: switching voices changes a sound that is playing.</summary>
+    public bool SoundsUseVoice
+    {
+        get => Settings.SoundsUseVoice;
+        set
+        {
+            if (Settings.SoundsUseVoice == value) return;
+            Settings.SoundsUseVoice = value;
+            engine.SoundsUseVoice = value;
             Save();
             RaiseChanged();
         }

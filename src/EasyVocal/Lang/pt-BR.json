@@ -289,5 +289,10 @@
   "Checking…": "Procurando…",
   "Version {0}": "Versão {0}",
   "You have the latest version": "Você tem a versão mais recente",
-  "Couldn't check for updates. Try again later.": "Não foi possível procurar atualizações. Tente de novo mais tarde."
+  "Couldn't check for updates. Try again later.": "Não foi possível procurar atualizações. Tente de novo mais tarde.",
+  "Growl": "Rosnado",
+  "Big room": "Sala grande",
+  "Huge": "Enorme",
+  "Sounds use the voice": "Sons usam a voz",
+  "Your sounds go through the voice filter too: switch voices while a sound plays and it changes.": "Seus sons também passam pelo filtro de voz: troque de voz enquanto um som toca e ele muda junto."
 }

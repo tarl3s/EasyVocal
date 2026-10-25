@@ -263,6 +263,15 @@ public partial class App
         main.UpdateLayout();
         Snapshot(main, Png("small_main"));
         Check(main.Tabs.ActualHeight > 150 && main.SettingsButton.IsVisible && OnScreen(main, main.SettingsButton), "the main window at its smallest keeps the tabs and Settings");
+        int tab = main.Tabs.SelectedIndex;
+        main.Tabs.SelectedIndex = 1;
+        main.UpdateLayout();
+        Snapshot(main, Png("small_main_sounds"));
+        double toggleRight = main.SoundsUseVoiceBox.TranslatePoint(new Point(main.SoundsUseVoiceBox.ActualWidth, 0), main).X;
+        double hiddenLeft = main.ShowHiddenSounds.TranslatePoint(new Point(0, 0), main).X;
+        Check(OnScreen(main, main.StopAllButton) && OnScreen(main, main.ShowHiddenSounds) && toggleRight <= hiddenLeft + 0.5,
+            "the Sounds tab's footer fits at the smallest size (Stop all, Sounds use the voice, Show hidden items side by side)");
+        main.Tabs.SelectedIndex = tab;
         main.Width = width;
         main.Height = height;
 

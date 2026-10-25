@@ -109,15 +109,25 @@
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" AllowDrop="True">
                         <WrapPanel x:Name="SoundPanel" AllowDrop="True" />
                     </ScrollViewer>
-                    <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False">
-                        <Button x:Name="StopAllButton" DockPanel.Dock="Left" Click="StopAllButton_Click">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="■" Margin="0,0,6,0" />
-                                <TextBlock Text="{loc:T 'Stop all sounds'}" />
-                            </StackPanel>
-                        </Button>
-                        <CheckBox x:Name="ShowHiddenSounds" DockPanel.Dock="Right" VerticalAlignment="Center"
+                    <DockPanel Grid.Row="1" Margin="0,8,0,0">
+                        <CheckBox x:Name="ShowHiddenSounds" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
                                   Content="{loc:T 'Show hidden items'}" Click="ShowHidden_Click" />
+                        <!-- On a narrow window the switch goes under Stop all instead of over Show hidden items. -->
+                        <WrapPanel VerticalAlignment="Center">
+                            <Button x:Name="StopAllButton" Margin="0,0,12,0" Click="StopAllButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="■" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:T 'Stop all sounds'}" />
+                                </StackPanel>
+                            </Button>
+                            <CheckBox x:Name="SoundsUseVoiceBox" Margin="0,4" VerticalAlignment="Center" Click="SoundsUseVoice_Click"
+                                      ToolTip="{loc:T 'Your sounds go through the voice filter too: switch voices while a sound plays and it changes.'}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🎭" FontFamily="{StaticResource EmojiFont}" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:T 'Sounds use the voice'}" />
+                                </StackPanel>
+                            </CheckBox>
+                        </WrapPanel>
                     </DockPanel>
                 </Grid>
             </TabItem>
