@@ -48,7 +48,7 @@ public sealed class AskDialog : AppWindow
         }
         root.Children.Add(buttons);
         Content = root;
-        Opened += (_, _) => focus.Focus(NavigationMethod.Tab);
+        Opened += (_, _) => focus.Focus();
     }
 
     /// <summary>The buttons, for the tests.</summary>

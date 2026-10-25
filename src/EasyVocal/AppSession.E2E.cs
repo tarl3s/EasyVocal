@@ -302,6 +302,14 @@ internal sealed partial class AppSession
             for (int i = 0; i < 50; i++) { c.SetTyping(true); c.SetTyping(false); } // a text box gaining and losing the keyboard
             Expect(c.RegisteredHotkeyCount == 1 && c.HighestHotkeyId == 1, $"hotkey ids start over on every rebuild (highest {c.HighestHotkeyId})");
             Expect(c.SimulateHotkeyPress("voice:chipmunk"), "the hotkey still works after the rebuilds");
+            if (OperatingSystem.IsWindows() && !options.Hosted)
+            {
+                // A press the way Windows delivers it: queued for the UI thread, whose (Avalonia) loop dispatches it.
+                ClickVoice(main, AppController.NormalVoiceId);
+                Expect(QueuedHotkeyPress.Post(c.HighestHotkeyId), "a WM_HOTKEY could be queued for the hotkeys' window");
+                await WaitUntil(() => c.ActiveVoice.Id == "chipmunk", 2000, "the queued WM_HOTKEY to switch to Chipmunk");
+                Note("a queued WM_HOTKEY went through Avalonia's message loop");
+            }
         });
 
         await Step("7  filter editor: live preview on the call and the headphones, Cancel puts everything back, hotkeys come back", async () =>
