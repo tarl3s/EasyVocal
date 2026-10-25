@@ -1,5 +1,8 @@
 # Draws src\EasyVocal\Assets\EasyVocal.ico: a green rounded square with a white microphone, at 16-256 px.
 # Run from anywhere:  powershell -ExecutionPolicy Bypass -File tools\Make-Icon.ps1
+# -PngDir <folder>: writes the same drawing as EasyVocal-<size>.png at 16-1024 px there instead (the macOS .icns and the
+# Linux icon of tools\Publish-Release.ps1); the .ico is left alone.
+param([string]$PngDir)
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path -Parent $PSScriptRoot
 $dir = Join-Path $root 'src\EasyVocal\Assets'
@@ -45,6 +48,15 @@ function Draw-Png([int]$s) {
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
     return ,$ms.ToArray()
+}
+
+if ($PngDir) {
+    New-Item -ItemType Directory -Force $PngDir | Out-Null
+    foreach ($s in 16, 32, 64, 128, 256, 512, 1024) {
+        [System.IO.File]::WriteAllBytes((Join-Path $PngDir ("EasyVocal-{0:D4}.png" -f $s)), (Draw-Png $s))
+    }
+    "wrote the PNGs in $PngDir"
+    return
 }
 
 # ICO = header + one directory entry per size + the PNGs

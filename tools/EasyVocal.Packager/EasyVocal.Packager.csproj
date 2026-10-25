@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Turns `dotnet publish` folders into the release downloads (tools/Publish-Release.ps1 runs it): the Windows zip, the
+       macOS .app zips (Info.plist, .icns, Unix permission bits) and the Linux tar.gz (modes, .desktop, install.sh).
+       Plain .NET, so the macOS and Linux archives are made right from Windows; EasyVocal.Tests.Platforms checks them. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>EasyVocal.Packager</RootNamespace>
+  </PropertyGroup>
+
+</Project>

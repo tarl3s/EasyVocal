@@ -16,8 +16,11 @@ Owner speaks Brazilian Portuguese; code, comments, UI source text and commits ar
 and everything Windows-only sits behind its `Core/Platform` interfaces in `EasyVocal.Platform.Windows`. Phase 2 is
 done: the UI is Avalonia 11 (one UI for every OS, WPF and WinForms are gone) and the smoke and e2e tests also run
 headless. Phase 3 is done: `EasyVocal.Platform.MacOS` and `EasyVocal.Platform.Linux` (sharing `EasyVocal.Platform.Unix`),
-wired in `PlatformFactory.cs`, and CI (`.github/workflows/ci.yml`) runs the suites on Windows, macOS and Linux.
-Packaging (.app, tar.gz) and the release job are phase 4.
+wired in `PlatformFactory.cs`. Phase 4 is done: `tools/Publish-Release.ps1` builds all four downloads from Windows
+(`tools/EasyVocal.Packager` makes the .app zips and the tar.gz) and the READMEs have a button per OS.
+**CI is NOT active**: the workflow is parked in `ci/github-actions-ci.yml` (the GitHub token here lacks the `workflow`
+scope; `ci/README.md` says how to enable it). **Nothing has run on a real Mac or Linux desktop yet**: the macOS and Linux
+code is built and unit-tested on Windows only (real-system tests skip there), so the READMEs call those builds "Preview".
 
 ## Project layout
 
@@ -33,7 +36,7 @@ Packaging (.app, tar.gz) and the release job are phase 4.
 | `tests/EasyVocal.FfmpegStandIn` | `net8.0` exe | a tiny program the decoder tests run in place of ffmpeg (what it does is written in the "sound file" it gets) |
 | `tests/EasyVocal.Tests.Windows` | `net8.0-windows` | registry, `.lnk`, VB-CABLE/Authenticode, Media Foundation / ACM, hotkeys, the PowerShell helper, the e2e run; links the portable tests' `Helpers/` |
 | `tests/EasyVocal.UiTests` | `net8.0` (portable) | Avalonia.Headless (drawn with Skia): the app's own smoke and e2e steps in-process on pretend devices/hotkeys/startup/virtual mic (`E2E/TestPlatform.cs`), the e2e relaunch as a second session; `AppController` on a hand-pumped `IUiDispatcher`; `KeyMap`. `EV_UI_SNAPSHOTS=<folder>` keeps the PNGs |
-| `tests/EasyVocal.Tests.Platforms` | `net8.0` (portable, CA1416 off) | the macOS/Linux projects on any OS with a fake `ICommandRunner` (`FakeRunner.cs`): key maps, plist and .desktop files, pactl's arguments and output, BlackHole's install, the sh helper's text, the updater's names and unpacking; PortAudio for real (its win-x64 native is referenced too). Real-system tests check the OS: CoreAudio/Carbon on macOS, Xvfb grabs on Linux, the sh helper run with `/bin/sh`, and the virtual mic carrying a tone through a real PulseAudio server only with `EV_PULSE_TESTS=1` (CI) |
+| `tests/EasyVocal.Tests.Platforms` | `net8.0` (portable, CA1416 off) | the macOS/Linux projects on any OS with a fake `ICommandRunner` (`FakeRunner.cs`): key maps, plist and .desktop files, pactl's arguments and output, BlackHole's install, the sh helper's text, the updater's names and unpacking; PortAudio for real (its win-x64 native is referenced too). Real-system tests check the OS: CoreAudio/Carbon on macOS, Xvfb grabs on Linux, the sh helper run with `/bin/sh`, and the virtual mic carrying a tone through a real PulseAudio server only with `EV_PULSE_TESTS=1` (the parked CI workflow sets it); `ReleasePackagingTests` runs `tools/EasyVocal.Packager` on pretend publish folders (Info.plist, .icns, zip/tar modes, `easyvocal-files.txt`, no links, the updaters unpack them, install.sh run with `/bin/sh` off Windows) |
 
 Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (the tests swap pieces with `with { … }`):
 - `IAudioBackend`: list/open devices, defaults (one default = both roles off Windows), set default where supported,
@@ -65,8 +68,8 @@ Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (
 dotnet build                       # 0 errors, 0 warnings expected
 dotnet test                        # every test project (xUnit), including the E2E tests below (builds the app first)
 dotnet test --filter Category!=E2E # everything but the real-window E2E test
-dotnet test tests/EasyVocal.Tests  # only the portable tests (macOS/Linux CI runs these, tests/EasyVocal.Tests.Platforms and tests/EasyVocal.UiTests)
-EV_PULSE_TESTS=1 xvfb-run -a dotnet test tests/EasyVocal.Tests.Platforms   # Linux: also the real PulseAudio virtual mic and X11 grabs (CI)
+dotnet test tests/EasyVocal.Tests  # only the portable tests (on macOS/Linux run these, tests/EasyVocal.Tests.Platforms and tests/EasyVocal.UiTests)
+EV_PULSE_TESTS=1 xvfb-run -a dotnet test tests/EasyVocal.Tests.Platforms   # Linux: also the real PulseAudio virtual mic and X11 grabs (what the parked CI workflow does)
 EV_UI_SNAPSHOTS=<folder> dotnet test tests/EasyVocal.UiTests   # headless smoke + e2e; keeps the smoke PNGs in <folder>
 dotnet run --project src/EasyVocal
 dotnet run --project src/EasyVocal -- --data <folder> --smoketest   # opens every window, renders PNGs, exits 0
@@ -112,7 +115,7 @@ the relaunch is a second `AppSession` on the same folder).
 | App (Avalonia) | `src/EasyVocal/`: `Program.cs` (entry: the `--data` rule, `--update-now`, `SingleInstance.cs` = named mutex + event on Windows, a lock file + local pipe elsewhere; then Avalonia with an explicit shutdown), `App.axaml(.cs)` (theme; `Fonts()` = Windows' fallbacks: symbols from Segoe UI Symbol, emoji from Segoe UI Emoji), `AppSession.cs` (one run: settings, language, controller, main window, tray, quit; a test host can start a second one), `PlatformFactory.cs` (picks the platform; read-only defaults for the smoke test), `AppController.cs` (wires engine, settings, hotkeys, the virtual mic's lifecycle; only sees the platform interfaces and `IUiDispatcher` = `UiDispatcher.cs`, Avalonia's dispatcher in the app, a hand-pumped one in the tests), `AppWindow.cs` (every window's base: icon, `Place` → `WindowPlacer.cs`, `ShowAsync` = a dialog over its owner or on its own from the tray, `Accepted`, the open-window list the tests use), `MainWindow`, `SettingsWindow`, `SetupWindow` (first run, the virtual mic's install; its texts come from the provider), `FilterEditorWindow`, `SoundEditorWindow`, `AudioEditorWindow` ("✂ Edit audio…": wave, selection, headphone playback with playhead, the `AudioEdit` tools, Save / Back to original / Save a copy as…) + `WaveformView.cs` (the wave control: min/max columns read from `Core/Sounds/WavePeaks.cs`, a min/max pyramid built once per sound, ruler, zoom, drag-select), `WindowPlacer.cs` (never bigger than or off the screen, place remembered in `AppSettings.WindowPlacements` in primary-screen DIPs), `HotkeyCaptureDialog` + `KeyMap.cs` (Avalonia keys → the saved virtual-key codes), `AskDialog.cs`, `Tray.cs` (Avalonia `TrayIcon` + native menu) + `TrayNotice.cs` (the corner notice that replaced tray balloons), `Loc.cs` (`{loc:T '…'}`) + `Lang/pt-BR.json`, `Theme.axaml` (palette + control themes; Fluent underneath for TextBox and menus), `Res.cs`, `AppSession.SmokeTest.cs` + `.Editor.cs` (the audio editor's tools, every window at its smallest size) + `.Update.cs`, `AppSession.E2E.cs` + `E2E/` (test devices, signal and measurements, `TestPlatform.cs` = in-memory hotkeys/startup and a pretend VB-CABLE), `Ui.cs` (the tests' clicks) |
 | Updater | `src/EasyVocal.Core/Update/Updater.cs` (portable: `AppVersion` (tags, semver order), `UpdateRules` (GitHub's release JSON, `PickAsset` from the platform's names, when to offer: newer, not draft/pre-release, not the skipped version unless "Check now"; `IsSourceBuild` = an `EasyVocal.sln` or `src\EasyVocal\EasyVocal.csproj` above the exe), `ReleaseNotes` (Markdown to plain lines), `UpdatePackage` (`ExtractFile` one file from a zip, `ExtractAll` a zip or tar.gz; zip-slip, no links, size limit, Unix permission bits kept), `UpdateService` behind `IUpdaterPlatform` + `IUpdateSource` + `IHelperLauncher`: the payload replaces the platform's `InstallRoot`); Windows' part in `Platform.Windows/Update/WindowsUpdater.cs` (`HelperScript` = the PowerShell swap script: paths as single-quoted literals, UTF-8 with BOM); the app's `UpdateWindow` (the dialog: notes, Update now with progress + Cancel, Later, Skip this version; opens the release page when the platform can't self-update), `UpdateCoordinator.cs` (check on open: dialog or tray notice; Settings' Check now; start the helper, then quit without asking), `AppSession.Update.cs` (wiring through `controller.Platform.Updater`, `--update-now`), `AppSession.SmokeTest.Update.cs` |
 | Tests | `tests/EasyVocal.Tests/` (portable, `net8.0`: + `Helpers/FakeAudio.cs`, `FakeUpdate.cs` (a pretend updater platform, source and launcher), `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder; `Speech.cs` = real speech made once per run with Windows' TTS through PowerShell (David/Zira/Maria when installed, a synthetic vowel otherwise, e.g. on macOS/Linux); `VoiceFeatures.cs` = what a voice sounds like in numbers; `WavFile.cs`); `VoiceCharacterTests.cs` measures every built-in voice on that speech; `DecoderTests.cs` (NLayer, NVorbis, extensible WAV, the loader's "keep looking", ffmpeg through the stand-in: output, non-zero exit, deadline + kill, cancel; a real ffmpeg only when installed, "SKIPPED" otherwise); `UpdateServiceTests.cs`; `MeterPreviewTests.cs` (MicMeter, SoundPreview, PathCompare, data folders); `AppArgs.cs` is linked in via the csproj. `tests/EasyVocal.Tests.Windows/` (`SetupTests` = Run key + VB-CABLE pack, `StartMenuShortcutTests`, `UpdaterTests` = Windows' names and unpack, PowerShell helper run for real; `WindowsSoundTests` = Media Foundation, ACM mu-law / IMA ADPCM, which decoder reads MP3; `WindowsHotkeysTests` = the message-only window; `E2ETests.cs` runs the built app with `--e2e`). `tests/EasyVocal.UiTests/` (`HeadlessAppTests` = the smoke and e2e steps headless, `ControllerTests` = the controller on a hand-pumped dispatcher, `KeyMap`; `TestAppBuilder.cs` = the real App on the headless platform with Skia) |
-| Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`), `tools/Publish-Release.ps1` |
+| Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`; `-PngDir` = the same drawing as 16-1024 px PNGs), `tools/Publish-Release.ps1` (publishes win-x64, osx-arm64, osx-x64, linux-x64 self-contained single file; Windows keeps the natives inside the exe, macOS/Linux next to it), `tools/EasyVocal.Packager` (plain .NET console: `Release.Pack` makes each download: `MacApp` = Info.plist (com.tarl3s.easyvocal, LSMinimumSystemVersion 11.0, NSMicrophoneUsageDescription), PkgInfo, `.icns` built from PNG chunks, the program and dylibs 0755; `LinuxApp` = `EasyVocal/` with easyvocal.png, easyvocal.desktop and install.sh; `Archives` = zips with Unix modes in the external attributes and "made by Unix", ustar tar.gz with modes, never links, no .pdb; `Manifest` = `easyvocal-files.txt` in each install root: next to EasyVocal.exe, in `EasyVocal.app/Contents/Resources/`, in `EasyVocal/`) |
 
 ## Avalonia notes (learned in the port)
 
@@ -142,8 +145,10 @@ the relaunch is a second `AppSession` on the same folder).
 ## Global constraints
 
 - Windows 10/11, macOS (arm64 and x64) and Linux x64 (PipeWire or PulseAudio; hotkeys need X11, none on Wayland).
-  Today's release is the self-contained win-x64 single file, ~38 MB zipped (limit ~80-100 MB; the macOS .app and Linux
-  tar.gz come with phase 4). Latency off Windows: PortAudio / PulseAudio blocks of 10 ms, about 20 ms queued.
+  Downloads (1.0.0): win-x64 zip 38 MB, macOS arm64 / x64 .app zips 38 / 40 MB, Linux tar.gz 36 MB (limit 100 MB).
+  The macOS .app is **unsigned** (no codesign on Windows; the .NET SDK strips the apphost's signature when it bundles it
+  off a Mac), so Apple Silicon needs the README's one-time `codesign --force --deep --sign -`; Intel just needs
+  right-click → Open. Latency off Windows: PortAudio / PulseAudio blocks of 10 ms, about 20 ms queued.
   Core and the app stay portable `net8.0`: nothing
   Windows-only in them unless behind `OperatingSystem.IsWindows()` (CA1416 warns); put platform code in
   `EasyVocal.Platform.Windows` (and the macOS/Linux projects) behind a `Core/Platform` interface. No WPF/WinForms.
@@ -177,7 +182,9 @@ the relaunch is a second `AppSession` on the same folder).
 - **Persisted ids are never renamed** (voice ids like `"movie-robot"`, sound ids, settings keys, general hotkey keys
   `toggleFilter`/`stopSounds`/`muteMic`). Unknown or missing settings keys get defaults.
 - **Versioning X.Y.Z** lives in `Directory.Build.props` (`<Version>`). Every version is a tag `vX.Y.Z` and a GitHub
-  release made by `tools/Publish-Release.ps1`; the asset name `EasyVocal-win-x64.zip` is fixed (README link).
+  release made by `tools/Publish-Release.ps1`; the asset names `EasyVocal-win-x64.zip`, `EasyVocal-macos-arm64.zip`,
+  `EasyVocal-macos-x64.zip`, `EasyVocal-linux-x64.tar.gz` are fixed (README buttons, each platform's `AssetNames`;
+  `ReleasePackagingTests` checks all three agree).
 - **Encoding**: sources are UTF-8 without BOM and contain emoji. Never rewrite files with PowerShell
   `Get-Content | Set-Content` / `-replace` (it double-encodes). Use an edit tool or `sed`. After bulk edits grep for
   mojibake: `â€|Ã©|ðŸ|ï¼`.

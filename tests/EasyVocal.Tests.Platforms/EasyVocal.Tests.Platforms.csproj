@@ -25,6 +25,8 @@
     <ProjectReference Include="..\..\src\EasyVocal.Platform.Unix\EasyVocal.Platform.Unix.csproj" />
     <ProjectReference Include="..\..\src\EasyVocal.Platform.MacOS\EasyVocal.Platform.MacOS.csproj" />
     <ProjectReference Include="..\..\src\EasyVocal.Platform.Linux\EasyVocal.Platform.Linux.csproj" />
+    <!-- The release packager (tools/Publish-Release.ps1): ReleasePackagingTests checks the downloads it makes. -->
+    <ProjectReference Include="..\..\tools\EasyVocal.Packager\EasyVocal.Packager.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,10 +1,15 @@
 # EasyVocal
 
-<!-- Download buttons. macOS and Linux buttons go next to this one when those versions exist. -->
+<!-- Download buttons: each points at the latest release's file of that name (tools/Publish-Release.ps1 makes them). -->
 <p align="center">
   <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-win-x64.zip"><img alt="⬇ Download for Windows" src="https://img.shields.io/badge/%E2%AC%87%20Download-for%20Windows-2ea44f?style=for-the-badge&logo=windows&logoColor=white" height="48"></a>
+  <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-macos-arm64.zip"><img alt="⬇ Download for macOS (Apple Silicon)" src="https://img.shields.io/badge/%E2%AC%87%20Download-macOS%20(Apple%20Silicon)-555555?style=for-the-badge&logo=apple&logoColor=white" height="48"></a>
+  <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-macos-x64.zip"><img alt="⬇ Download for macOS (Intel)" src="https://img.shields.io/badge/%E2%AC%87%20Download-macOS%20(Intel)-555555?style=for-the-badge&logo=apple&logoColor=white" height="48"></a>
+  <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-linux-x64.tar.gz"><img alt="⬇ Download for Linux" src="https://img.shields.io/badge/%E2%AC%87%20Download-for%20Linux-e95420?style=for-the-badge&logo=linux&logoColor=white" height="48"></a>
 </p>
-<p align="center">Unzip it anywhere and double-click <code>EasyVocal.exe</code> (about 58 MB, Windows 10 or 11, nothing else to install).</p>
+<p align="center">About 40 MB each, nothing else to install. Windows 10 or 11 · macOS 11 or newer · Linux x64 with PipeWire or PulseAudio.<br>
+<b>macOS and Linux are a Preview:</b> built and unit-tested, but not yet tried on real Macs or Linux desktops.
+Please <a href="https://github.com/tarl3s/EasyVocal/issues">report problems</a>.</p>
 
 **A free, light voice changer and soundboard for any call.** Talk as a robot, a monster or a chipmunk on Discord,
 WhatsApp Desktop, in games, anywhere that uses a microphone, and play sounds into the call with one key.
@@ -14,6 +19,10 @@ No ads, no paywall, nothing locked.
 
 ## Set it up in 3 steps
 
+EasyVocal sends your changed voice to a **virtual microphone**, and your call app listens to that microphone.
+
+### Windows
+
 1. **Install EasyVocal.** Unzip the download anywhere and open `EasyVocal.exe`.
 2. **Install VB-CABLE from inside the app.** On the first run EasyVocal explains it and has an **Install** button.
    If you hear nothing after installing it (VB-CABLE can make itself the PC's default speaker), EasyVocal puts your
@@ -21,11 +30,37 @@ No ads, no paywall, nothing locked.
 3. **Pick "CABLE Output" as the microphone** in your call app (Discord, WhatsApp Desktop, your game...). EasyVocal
    shows a short guide for each app.
 
+### macOS (Preview)
+
+1. **Install EasyVocal.** Unzip the download (Apple Silicon for M1/M2/M3/M4 Macs, Intel for older ones) and drag
+   `EasyVocal.app` to **Applications**. EasyVocal isn't signed by Apple yet, so the first time **right-click it → Open
+   → Open** (on macOS 15, if there is no Open button: System Settings → Privacy & Security → **Open Anyway**).
+   If macOS says EasyVocal "is damaged" or it closes right away, open **Terminal** once and paste:
+   ```
+   xattr -dr com.apple.quarantine /Applications/EasyVocal.app
+   codesign --force --deep --sign - /Applications/EasyVocal.app
+   ```
+   (the first line tells macOS you trust the download; the second gives it the local signature Apple Silicon needs).
+2. **Allow the microphone** when macOS asks (or later in System Settings → Privacy & Security → Microphone).
+3. **Install BlackHole 2ch** (a free virtual microphone): EasyVocal installs it with Homebrew if you have it, or opens
+   its official page. Then **pick "BlackHole 2ch" as the microphone** in your call app.
+
+### Linux (Preview)
+
+1. **Install EasyVocal.** Extract the download (`tar xzf EasyVocal-linux-x64.tar.gz`) and either run
+   `EasyVocal/install.sh` (copies it to `~/.local/share/EasyVocal` and adds it to your applications menu, no admin
+   rights) or just start `./EasyVocal/EasyVocal`.
+2. **Needs PipeWire or PulseAudio with `pactl`** (most desktops have it; else install `pulseaudio-utils`). Nothing else
+   is installed: while EasyVocal runs it creates its own virtual microphone.
+3. **Pick "EasyVocal-Microphone" as the microphone** in your call app.
+
+Global hotkeys need an X11 (Xorg) session; on Wayland, use the buttons in the window.
+
 That's it: whatever you do in EasyVocal is what the other side of the call hears.
 
-> **The voice only works while EasyVocal is open.** Closing the window sends it to the tray (next to the clock),
-> where it keeps working. If you quit it, your calls hear nothing until you open it again. You can tick **Start
-> with Windows** in the settings so you never forget.
+> **The voice only works while EasyVocal is open.** Closing the window sends it to the tray (next to the clock, or the
+> menu bar on a Mac), where it keeps working. If you quit it, your calls hear nothing until you open it again. You can
+> tick **Start with Windows** (on a Mac or Linux: start at login) in the settings so you never forget.
 
 ## What you get
 
@@ -60,8 +95,10 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
 - **Global hotkeys** for every voice and every sound, plus turning the voice on/off, stopping all sounds and muting
   the mic. They work while a game is fullscreen. (A plain key without Ctrl or Alt stops typing that character
   elsewhere while EasyVocal runs, so the app warns you.)
-- **Tray icon** with a quick voice menu, and **Start with Windows** (off by default).
-- **Start menu shortcut**: the first time you open EasyVocal it asks whether to add it to the Start menu.
+- **Tray icon** (the menu bar on a Mac) with a quick voice menu, and **Start with Windows** / start at login (off by
+  default).
+- **Start menu shortcut**: the first time you open EasyVocal it asks whether to add it to the Start menu (on Linux,
+  the applications menu).
 - **Updates itself:** EasyVocal tells you when there's a new version and updates itself with one click (or skip that
   version; you can turn the check off in the settings).
 - **Fits small screens:** every window can be resized, scrolls instead of cutting things off, opens inside your
@@ -75,7 +112,13 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
 
 - **VB-CABLE** is a separate free product by [VB-Audio](https://vb-audio.com/Cable/) (donationware). EasyVocal does
   not include it: it downloads the official installer from VB-Audio and starts it for you.
-- Audio engine: [NAudio](https://github.com/naudio/NAudio) (MIT) and NAudio.Vorbis.
+- **BlackHole** (macOS virtual microphone) is a separate free product by
+  [Existential Audio](https://existential.audio/blackhole/) (GPL-3.0). EasyVocal does not include it: Homebrew installs
+  it, or you do from its page.
+- Audio: [NAudio](https://github.com/naudio/NAudio) (MIT), [NLayer](https://github.com/naudio/NLayer) (MIT, MP3),
+  [NVorbis](https://github.com/NVorbis/NVorbis) (MIT, OGG) with NAudio.Vorbis, and [PortAudio](https://www.portaudio.com/)
+  (MIT, macOS and Linux) through the [PortAudioSharp2](https://github.com/csukuangfj/PortAudioSharp2) native packages.
+- Interface: [Avalonia](https://avaloniaui.net/) (MIT).
 - EasyVocal is MIT licensed. See [LICENSE](LICENSE).
 
 ## For developers
@@ -87,4 +130,4 @@ dotnet run --project src/EasyVocal -- --data <scratch folder> --e2e
 dotnet run --project src/EasyVocal
 ```
 
-More in [AGENTS.md](AGENTS.md). Release: `tools/Publish-Release.ps1`.
+More in [AGENTS.md](AGENTS.md). Release: `tools/Publish-Release.ps1` builds all four downloads from Windows.
