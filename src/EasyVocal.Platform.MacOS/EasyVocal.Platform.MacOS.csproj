@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything EasyVocal needs from macOS, behind EasyVocal.Core.Platform's interfaces: CoreAudio's device list and
+       PortAudio streams (EasyVocal.Platform.Unix), the microphone permission (AVFoundation), BlackHole as the virtual
+       microphone (installed with Homebrew when it is there), Carbon global hotkeys, a LaunchAgent for "Open at login" and
+       the .app updater. Plain net8.0 marked macOS-only (SupportedOSPlatform below): the app only uses it behind
+       OperatingSystem.IsMacOS(). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <ProjectReference Include="..\EasyVocal.Platform.Unix\EasyVocal.Platform.Unix.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="EasyVocal.Core.Logging" />
+    <InternalsVisibleTo Include="EasyVocal.Tests.Platforms" />
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>macos</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

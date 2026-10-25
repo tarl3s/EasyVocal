@@ -43,6 +43,9 @@
     <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
     <!-- Windows-only code (marked SupportedOSPlatform("windows")): used only behind OperatingSystem.IsWindows(). -->
     <ProjectReference Include="..\EasyVocal.Platform.Windows\EasyVocal.Platform.Windows.csproj" />
+    <!-- macOS and Linux (marked SupportedOSPlatform too): used only behind OperatingSystem.IsMacOS() / IsLinux(). -->
+    <ProjectReference Include="..\EasyVocal.Platform.MacOS\EasyVocal.Platform.MacOS.csproj" />
+    <ProjectReference Include="..\EasyVocal.Platform.Linux\EasyVocal.Platform.Linux.csproj" />
   </ItemGroup>
 
 </Project>

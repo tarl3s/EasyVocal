@@ -3,20 +3,41 @@ using System.Text;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Sounds;
+using EasyVocal.Platform.Linux;
+using EasyVocal.Platform.MacOS;
 using EasyVocal.Platform.Windows;
 
 namespace EasyVocal;
 
 /// <summary>
-/// The one place the app picks the computer's platform. Windows gets <see cref="WindowsPlatform"/>; macOS and Linux get
-/// their platform projects in the next phase (until then <see cref="Unsupported"/>: the window opens with no devices).
+/// The one place the app picks the computer's platform: <see cref="WindowsPlatform"/>, <see cref="MacPlatform"/> or
+/// <see cref="LinuxPlatform"/>; anything else gets <see cref="Unsupported"/> (the window opens with no devices).
 /// </summary>
 internal static class PlatformFactory
 {
     public static PlatformServices ForThisComputer()
     {
         if (OperatingSystem.IsWindows()) return WindowsPlatform.Services;
+        if (OperatingSystem.IsMacOS()) return MacPlatform.Services;
+        if (OperatingSystem.IsLinux()) return LinuxPlatform.Services(AppIconBytes);
         return Unsupported;
+    }
+
+    /// <summary>EasyVocal's .ico (the Linux applications menu entry takes its largest PNG), or null.</summary>
+    private static byte[]? AppIconBytes()
+    {
+        try
+        {
+            using var stream = Avalonia.Platform.AssetLoader.Open(new Uri("avares://EasyVocal/Assets/EasyVocal.ico"));
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            return copy.ToArray();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("The icon for the applications menu could not be read", ex);
+            return null;
+        }
     }
 
     /// <summary>The same devices, but the system's default devices are never changed (the smoke test).</summary>

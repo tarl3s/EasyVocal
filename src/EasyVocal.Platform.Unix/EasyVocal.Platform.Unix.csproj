@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- What macOS and Linux share, behind EasyVocal.Core.Platform's interfaces: audio devices through PortAudio, running
+       the system's command-line tools, opening links, and the updater's sh helper (it replaces a whole .app bundle or
+       app folder). Plain net8.0 marked macOS + Linux (SupportedOSPlatform below): the app only uses it behind
+       OperatingSystem.IsMacOS() / IsLinux(). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- PortAudio's native library (MIT) built for each system, from the PortAudioSharp2 project (Apache-2.0); EasyVocal
+         talks to it with its own small P/Invoke (PortAudio/PortAudioNative.cs). A self-contained publish for one RID
+         keeps only that RID's library. -->
+    <PackageReference Include="org.k2fsa.portaudio.runtime.osx-arm64" Version="1.0.6" />
+    <PackageReference Include="org.k2fsa.portaudio.runtime.osx-x64" Version="1.0.6" />
+    <PackageReference Include="org.k2fsa.portaudio.runtime.linux-x64" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="EasyVocal.Core.Logging" />
+    <InternalsVisibleTo Include="EasyVocal.Tests.Platforms" />
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>macos</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>linux</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

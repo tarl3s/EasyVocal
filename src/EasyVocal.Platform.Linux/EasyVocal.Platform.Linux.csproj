@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything EasyVocal needs from Linux, behind EasyVocal.Core.Platform's interfaces: PipeWire / PulseAudio devices
+       (pactl for the list, libpulse-simple for the streams; PortAudio from EasyVocal.Platform.Unix when there is no sound
+       server), the virtual microphone EasyVocal creates with pactl while it runs, X11 global hotkeys (none on Wayland),
+       ~/.config/autostart and the applications menu entry, and the folder updater. Plain net8.0 marked Linux-only
+       (SupportedOSPlatform below): the app only uses it behind OperatingSystem.IsLinux(). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <ProjectReference Include="..\EasyVocal.Platform.Unix\EasyVocal.Platform.Unix.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="EasyVocal.Core.Logging" />
+    <InternalsVisibleTo Include="EasyVocal.Tests.Platforms" />
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>linux</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>
