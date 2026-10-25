@@ -109,8 +109,8 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 var b = VoiceFeatures.Measure(reference, PadTo(input, reference.Length), latency, ratio);
                 int gaps = Dropouts(padded, reference, input.Length + latency);
                 // What the voice itself does when the blocks fall elsewhere (Monster's rattle has deep dips that move): the same
-                // render started 173 samples later, lined up again.
-                int phase = Dropouts(Shifted(sliders, input, 173, reference.Length), reference, input.Length + latency);
+                // render started a few samples later (the real path's blocks fall anywhere), lined up again: the most of those.
+                int phase = new[] { 61, 173, 240, 397 }.Max(offset => Dropouts(Shifted(sliders, input, offset, reference.Length), reference, input.Length + latency));
                 var differences = Differences(a, b);
                 output.WriteLine(string.Create(CultureInfo.InvariantCulture,
                     $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps} (block phase alone {phase})\n   real    {a}\n   offline {b}"));
