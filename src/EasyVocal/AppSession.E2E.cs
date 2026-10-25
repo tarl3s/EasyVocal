@@ -6,6 +6,7 @@ using Avalonia.VisualTree;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
+using EasyVocal.Core.Storage;
 using EasyVocal.Core.Text;
 using EasyVocal.E2E;
 
@@ -42,8 +43,8 @@ internal sealed partial class AppSession
         e2eData = dataFolder;
         if (!relaunch)
         {
-            TryDeleteFile(E2ETempLog);
-            TryDeleteFile(Path.Combine(dataFolder, "e2e.log"));
+            Cleanup.TryDelete(E2ETempLog);
+            Cleanup.TryDelete(Path.Combine(dataFolder, "e2e.log"));
         }
         // Never hang: a dialog that wouldn't close must not keep the test (and dotnet test) waiting forever. A test
         // host has its own timeout (and exiting would take it down too).
@@ -669,11 +670,6 @@ internal sealed partial class AppSession
             catch (Exception) { /* the other log still has it */ }
         }
         AppLog.Info("E2E " + line);
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try { File.Delete(path); } catch (Exception) { }
     }
 
     private static async Task WaitUntil(Func<bool> done, int timeoutMs, string what)

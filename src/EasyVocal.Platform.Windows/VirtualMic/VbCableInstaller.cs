@@ -41,12 +41,12 @@ public static class VbCableInstaller
         }
         catch (OperationCanceledException)
         {
-            TryDelete(runFolder); // cancelled while downloading: no installer is running
+            Cleanup.TryDelete(runFolder); // cancelled while downloading: no installer is running
             return new InstallResult(InstallStatus.Cancelled);
         }
         catch (Exception ex)
         {
-            TryDelete(runFolder); // nothing was started yet
+            Cleanup.TryDelete(runFolder); // nothing was started yet
             return new InstallResult(InstallStatus.Failed, ex.GetType().Name + ": " + ex.Message);
         }
     }
@@ -88,7 +88,7 @@ public static class VbCableInstaller
         }
         finally
         {
-            if (!keepFolder) TryDelete(runFolder);
+            if (!keepFolder) Cleanup.TryDelete(runFolder);
         }
     }
 
@@ -167,6 +167,4 @@ public static class VbCableInstaller
         }) ?? throw new InvalidOperationException("The installer did not start.");
         await process.WaitForExitAsync(ct).ConfigureAwait(false);
     }
-
-    private static void TryDelete(string folder) => TempFolders.TryDelete(folder);
 }

@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using EasyVocal.Core.Platform;
+using EasyVocal.Core.Storage;
 using EasyVocal.Core.Update;
 
 namespace EasyVocal.Platform.Windows;
@@ -206,7 +207,7 @@ public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
             catch (UpdateException ex) when (ex.Problem == UpdateProblem.MissingExe) { /* an older release had none */ }
             return exe;
         }
-        UpdatePackage.TryDelete(exe);
+        Cleanup.TryDelete(exe);
         throw new UpdateException(UpdateProblem.NotAnExe, "The " + ExeName + " in the download is not a Windows program.");
     }
 

@@ -1,5 +1,6 @@
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Platform;
+using EasyVocal.Core.Storage;
 using EasyVocal.Platform.Unix;
 
 namespace EasyVocal.Platform.MacOS;
@@ -77,7 +78,7 @@ public sealed class BlackHoleProvider(ICommandRunner? runner = null) : IVirtualM
         }
         finally
         {
-            if (askpass != null) TryDelete(Path.GetDirectoryName(askpass)!);
+            if (askpass != null) Cleanup.TryDelete(Path.GetDirectoryName(askpass)!);
         }
     }
 
@@ -117,12 +118,6 @@ public sealed class BlackHoleProvider(ICommandRunner? runner = null) : IVirtualM
         File.WriteAllText(path, AskpassScript);
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         return path;
-    }
-
-    private static void TryDelete(string folder)
-    {
-        try { Directory.Delete(folder, recursive: true); }
-        catch (Exception) { /* a temp file: the system cleans it */ }
     }
 
     public bool CanCreate => false;

@@ -3,6 +3,24 @@ using System.IO;
 
 namespace EasyVocal.Core.Storage;
 
+/// <summary>Deleting what EasyVocal itself left: a file or a whole folder, never an exception.</summary>
+public static class Cleanup
+{
+    /// <summary>
+    /// Deletes a file, or a folder with everything in it (a .app bundle, an attempt folder). Never throws: something
+    /// still in use stays, and the next cleanup gets it.
+    /// </summary>
+    public static void TryDelete(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+            else if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception) { /* in use or gone */ }
+    }
+}
+
 /// <summary>The per-attempt folders under %TEMP% (updates, the virtual-mic installer).</summary>
 public static class TempFolders
 {
@@ -13,15 +31,8 @@ public static class TempFolders
         {
             if (!Directory.Exists(root)) return;
             foreach (var dir in Directory.EnumerateDirectories(root))
-                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > olderThan) TryDelete(dir);
+                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > olderThan) Cleanup.TryDelete(dir);
         }
         catch (Exception) { /* a folder in use: the next run tries again */ }
-    }
-
-    /// <summary>Deletes a folder and everything in it. Never throws.</summary>
-    public static void TryDelete(string folder)
-    {
-        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
-        catch (Exception) { /* a file still in use: the next run cleans it */ }
     }
 }

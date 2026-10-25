@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using EasyVocal.Core.Platform;
+using EasyVocal.Core.Storage;
 using EasyVocal.Core.Update;
 
 namespace EasyVocal.Tests.Helpers;
@@ -76,7 +77,7 @@ public sealed class FakeUpdaterPlatform : IUpdaterPlatform
         var head = new byte[4];
         using (var f = File.OpenRead(exe)) f.ReadExactly(head);
         if (Encoding.ASCII.GetString(head) == "PROG") return exe;
-        UpdatePackage.TryDelete(exe);
+        Cleanup.TryDelete(exe);
         throw new UpdateException(UpdateProblem.NotAnExe, "Not a program.");
     }
 

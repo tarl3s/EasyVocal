@@ -482,29 +482,12 @@ public static class UpdatePackage
         }
         if (tooBig)
         {
-            TryDelete(dest);
+            Cleanup.TryDelete(dest);
             throw TooBig();
         }
         if (!ct.IsCancellationRequested) return;
-        TryDelete(dest);
+        Cleanup.TryDelete(dest);
         ct.ThrowIfCancellationRequested();
-    }
-
-    public static void TryDelete(string file)
-    {
-        try { if (File.Exists(file)) File.Delete(file); }
-        catch (Exception) { /* in use: the stale-folder cleanup gets it later */ }
-    }
-
-    /// <summary>Deletes a file or a whole folder (a .app bundle, an app folder). Never throws.</summary>
-    public static void TryDeletePath(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-            else if (File.Exists(path)) File.Delete(path);
-        }
-        catch (Exception) { /* in use: the next cleanup gets it */ }
     }
 }
 
@@ -658,13 +641,13 @@ public sealed class UpdateService
             }
             ct.ThrowIfCancellationRequested();
             var payload = platform.Unpack(archive, Path.Combine(folder, "new"), ct);
-            UpdatePackage.TryDelete(archive);
+            Cleanup.TryDelete(archive);
             log("Update downloaded and checked: " + payload);
             return payload;
         }
         catch
         {
-            TryDeleteFolder(folder);
+            Cleanup.TryDelete(folder);
             throw;
         }
     }
@@ -698,7 +681,7 @@ public sealed class UpdateService
     /// <summary>A downloaded payload nobody will install (the window closed while it was checked): its folder goes.</summary>
     public void Discard(string newPayload)
     {
-        if (StagingOf(newPayload) is { } staging) TryDeleteFolder(staging);
+        if (StagingOf(newPayload) is { } staging) Cleanup.TryDelete(staging);
         log("Update download discarded: " + newPayload);
     }
 
@@ -728,12 +711,6 @@ public sealed class UpdateService
     {
         TempFolders.CleanStale(WorkRoot, StaleAfter);
         var old = platform.InstallRoot(ExePath) + ".old";
-        if (platform.IsInstallRoot(old)) UpdatePackage.TryDeletePath(old); // only a copy of EasyVocal the helper left
-    }
-
-    private static void TryDeleteFolder(string folder)
-    {
-        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
-        catch (Exception) { /* in use: CleanStale gets it later */ }
+        if (platform.IsInstallRoot(old)) Cleanup.TryDelete(old); // only a copy of EasyVocal the helper left
     }
 }

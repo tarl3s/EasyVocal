@@ -87,7 +87,7 @@ public static class SettingsStore
             s = Parse(text);
             // The damaged file is kept as .bad and moved out of the way: the next Save would otherwise put it in
             // .bak, over the good backup this load is about to use.
-            if (s == null && KeepBadCopy(path)) TryDelete(path);
+            if (s == null && KeepBadCopy(path)) Cleanup.TryDelete(path);
         }
         if (s == null && File.Exists(backup))
         {
@@ -170,12 +170,6 @@ public static class SettingsStore
             return true;
         }
         catch (Exception) { return false; }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try { File.Delete(path); }
-        catch (Exception) { /* left in place: the worst case is the old behaviour */ }
     }
 
     private static AppSettings Normalize(AppSettings s)
