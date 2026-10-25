@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace EasyVocal.Core.Model;
 
 public enum VoiceKind { Classic, Ai }
@@ -13,6 +15,26 @@ public class VoiceSliders
     public double Radio { get; set; }
     public double Distortion { get; set; }
     public double Whisper { get; set; }
+    /// <summary>0..1, the filter editor's "Growl": a rough, rattling throat.</summary>
+    public double Growl { get; set; }
+    /// <summary>0..1, the filter editor's "Big room": a reverb from a small room to a huge hall.</summary>
+    public double Room { get; set; }
+
+    // Not in the filter editor: they give the built-in voices their character (a copy of a built-in keeps them).
+    // Missing in an older settings.json = 0 = not used.
+
+    /// <summary>0..1: a second voice an octave below the shifted one is mixed in (Demon).</summary>
+    public double Octave { get; set; }
+    /// <summary>-1..1: less or more chest (low shelf).</summary>
+    public double Bass { get; set; }
+    /// <summary>-1..1: darker or airier (high shelf).</summary>
+    public double Treble { get; set; }
+    /// <summary>0..1: the pitch sways up and down.</summary>
+    public double Wobble { get; set; }
+    /// <summary>0..1: the melody is flattened towards one note.</summary>
+    public double Monotone { get; set; }
+    /// <summary>0..1: the voice becomes a synthesizer buzz at one pitch that says the words (vocoder).</summary>
+    public double Vocoder { get; set; }
 
     private static double C(double v, double lo, double hi) =>
         double.IsNaN(v) ? 0 : Math.Min(hi, Math.Max(lo, v));
@@ -26,12 +48,26 @@ public class VoiceSliders
         Radio = C(Radio, 0, 1),
         Distortion = C(Distortion, 0, 1),
         Whisper = C(Whisper, 0, 1),
+        Growl = C(Growl, 0, 1),
+        Room = C(Room, 0, 1),
+        Octave = C(Octave, 0, 1),
+        Bass = C(Bass, -1, 1),
+        Treble = C(Treble, -1, 1),
+        Wobble = C(Wobble, 0, 1),
+        Monotone = C(Monotone, 0, 1),
+        Vocoder = C(Vocoder, 0, 1),
     };
 
     public VoiceSliders Clone() => (VoiceSliders)MemberwiseClone();
 
+    [JsonIgnore]
     public bool IsNeutral =>
-        Pitch == 0 && Body == 0 && Robot == 0 && Echo == 0 && Radio == 0 && Distortion == 0 && Whisper == 0;
+        Pitch == 0 && Body == 0 && Robot == 0 && Echo == 0 && Radio == 0 && Distortion == 0 && Whisper == 0 &&
+        Growl == 0 && Room == 0 && Octave == 0 && Bass == 0 && Treble == 0 && Wobble == 0 && Monotone == 0 && Vocoder == 0;
+
+    /// <summary>The pitch shifter (and its fixed delay) is needed: Pitch, Voice body, Octave, Wobble or Monotone is used.</summary>
+    [JsonIgnore]
+    public bool Shifts => Pitch != 0 || Body != 0 || Octave != 0 || Wobble != 0 || Monotone != 0;
 }
 
 public class VoicePreset
@@ -76,6 +112,8 @@ public class AppSettings
     public bool MicMuted { get; set; }
     public bool HearMe { get; set; }
     public bool HearSounds { get; set; } = true;
+    /// <summary>The soundboard goes through the voice filter too (switching voices changes a sound that is playing).</summary>
+    public bool SoundsUseVoice { get; set; }
     public string ActiveVoiceId { get; set; } = BuiltInVoices.NormalId;
     public bool StartWithWindows { get; set; }
     public bool ConfirmQuit { get; set; } = true;

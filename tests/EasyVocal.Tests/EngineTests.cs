@@ -227,7 +227,7 @@ public class EngineTests
         {
             using var rig = new Rig();
             rig.Mixer.Set("beep", Signals.Sine(660, 1, 0.3f));
-            rig.Chain.Apply(Preset("robot"));
+            rig.Chain.Apply(new VoiceSliders { Robot = 0.8, Echo = 0.1 }); // no pitch shift: its grains depend on how the audio is cut
             rig.Engine.Start();
             rig.Mixer.Toggle("beep", 1f);
             rig.Mic.Feed(Signals.PulseVowel(140, new[] { 700.0, 1200.0, 2600.0 }, 0.5), size);

@@ -218,7 +218,7 @@ public class VoiceChainTests
     {
         var shifterDelay = new VoiceShifter(Sr).LatencySamples;
         Assert.True(shifterDelay > 0);
-        foreach (var id in new[] { "robot", "radio", "cave" })
+        foreach (var id in new[] { "radio", "cave", "movie-robot" })
         {
             var chain = new VoiceChain(Sr);
             chain.Apply(Preset(id));
@@ -235,9 +235,9 @@ public class VoiceChainTests
     [Fact]
     public void RobotOnly_OutputIsNotDelayedByTheShifter()
     {
-        // An impulse through the robot preset comes out at once (the robot multiplies, the echo only adds later).
+        // An impulse through the robot effect comes out at once (the robot multiplies, the echo only adds later).
         var chain = new VoiceChain(Sr);
-        chain.Apply(Preset("robot"));
+        chain.Apply(new VoiceSliders { Robot = 0.8, Echo = 0.1 }); // the robot effect alone (the Robot voice also flattens the pitch)
         Run(chain, Signals.Sine(200, 0.2, 0.3f)); // let the 20 ms fade from clean finish
         Run(chain, Signals.Silence(0.5));         // and every tail die out
         var input = new float[Sr / 10];
@@ -265,7 +265,7 @@ public class VoiceChainTests
     public void DraggingPitchAwayFromTheMiddle_WithRobotOn_NoClicks()
     {
         var chain = new VoiceChain(Sr);
-        var sliders = Preset("robot");
+        var sliders = new VoiceSliders { Robot = 0.8, Echo = 0.1 };
         chain.Apply(sliders);
         var input = Signals.Sine(220, 1.5, 0.5f);
         var output = Run(chain, input, b =>
@@ -286,15 +286,23 @@ public class VoiceChainTests
 #if DEBUG
         Console.WriteLine("Performance test skipped: needs a Release build (dotnet test -c Release).");
 #else
-        var chain = new VoiceChain(Sr);
-        chain.Apply(Preset("demon"));
         var input = Signals.PulseVowel(150, Formants, 10);
-        var warm = (float[])input.Clone();
-        for (int i = 0; i + Block <= 24000; i += Block) chain.Process(warm.AsSpan(i, Block));
-        var sw = Stopwatch.StartNew();
-        for (int i = 0; i + Block <= input.Length; i += Block) chain.Process(input.AsSpan(i, Block));
-        sw.Stop();
-        Assert.True(sw.ElapsedMilliseconds < 500, "10 s of audio took " + sw.ElapsedMilliseconds + " ms");
+        long worst = 0;
+        string heaviest = "";
+        foreach (var preset in BuiltInVoices.All())
+        {
+            var chain = new VoiceChain(Sr);
+            chain.Apply(preset.Sliders);
+            var warm = (float[])input.Clone();
+            for (int i = 0; i + Block <= 24000; i += Block) chain.Process(warm.AsSpan(i, Block));
+            var work = (float[])input.Clone();
+            var sw = Stopwatch.StartNew();
+            for (int i = 0; i + Block <= work.Length; i += Block) chain.Process(work.AsSpan(i, Block));
+            sw.Stop();
+            if (sw.ElapsedMilliseconds >= worst) { worst = sw.ElapsedMilliseconds; heaviest = preset.Id; }
+        }
+        Console.WriteLine($"heaviest voice: {heaviest}, 10 s of audio in {worst} ms");
+        Assert.True(worst < 500, $"10 s of audio took {worst} ms with {heaviest}");
 #endif
     }
 
@@ -313,25 +321,28 @@ public class VoiceChainTests
     [Fact]
     public void Process_DoesNotAllocate()
     {
-        var chain = new VoiceChain(Sr);
-        chain.Apply(Preset("demon"));
         var block = Signals.PulseVowel(150, Formants, 0.01).AsSpan(0, Block).ToArray();
         var work = new float[Block];
-        for (int i = 0; i < 100; i++) { block.CopyTo(work, 0); chain.Process(work); } // warm up the JIT
-        long allocated = AllocatedBytes(() =>
+        foreach (var preset in BuiltInVoices.All())
         {
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 1000; i++) { block.CopyTo(work, 0); chain.Process(work); }
-            return GC.GetAllocatedBytesForCurrentThread() - before;
-        });
-        Assert.Equal(0, allocated);
+            var chain = new VoiceChain(Sr);
+            chain.Apply(preset.Sliders);
+            for (int i = 0; i < 100; i++) { block.CopyTo(work, 0); chain.Process(work); } // warm up the JIT
+            long allocated = AllocatedBytes(() =>
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 1000; i++) { block.CopyTo(work, 0); chain.Process(work); }
+                return GC.GetAllocatedBytesForCurrentThread() - before;
+            });
+            Assert.True(allocated == 0, preset.Id + " allocated " + allocated + " bytes");
+        }
     }
 
     [Fact]
     public void Process_DoesNotAllocate_WhenSwitchingVoices()
     {
         var chain = new VoiceChain(Sr);
-        var voices = new[] { Preset("demon"), Preset("chipmunk"), new VoiceSliders(), Preset("cave") };
+        var voices = new[] { Preset("demon"), Preset("chipmunk"), new VoiceSliders(), Preset("cave"), Preset("movie-robot"), Preset("monster"), Preset("ghost") };
         var block = Signals.PulseVowel(150, Formants, 0.01).AsSpan(0, Block).ToArray();
         var work = new float[Block];
         long Attempt()
@@ -389,78 +400,5 @@ public class VoiceChainTests
         public LimiterEffect(Limiter limiter) { this.limiter = limiter; }
         public void Process(Span<float> mono) => limiter.Process(mono);
         public void Reset() { }
-    }
-
-    [Fact(Skip = "Manual: put a recorded voice at %TEMP%\\EV_presets\\input.wav, un-skip locally, and listen to the results.")]
-    public void RenderPresets()
-    {
-        string dir = Path.Combine(Path.GetTempPath(), "EV_presets");
-        var input = WavFile.ReadMono(Path.Combine(dir, "input.wav"));
-        foreach (var preset in BuiltInVoices.All())
-        {
-            var chain = new VoiceChain(Sr);
-            chain.Apply(preset.Sliders);
-            var output = Run(chain, input.Concat(Signals.Silence(2)).ToArray());
-            var limiter = new Limiter(Sr);
-            for (int i = 0; i < output.Length; i += Block)
-                limiter.Process(output.AsSpan(i, Math.Min(Block, output.Length - i)));
-            WavFile.WriteMono(Path.Combine(dir, preset.Id + ".wav"), output);
-        }
-    }
-
-    /// <summary>Just enough WAV for <see cref="RenderPresets"/>: 16-bit PCM or 32-bit float in, 32-bit float out.</summary>
-    private static class WavFile
-    {
-        public static float[] ReadMono(string path)
-        {
-            using var r = new BinaryReader(File.OpenRead(path));
-            r.ReadBytes(12);
-            int channels = 1, rate = Sr, bits = 16, format = 1;
-            while (r.BaseStream.Position + 8 <= r.BaseStream.Length)
-            {
-                string id = new string(r.ReadChars(4));
-                int size = r.ReadInt32();
-                if (id == "fmt ")
-                {
-                    format = r.ReadInt16(); channels = r.ReadInt16(); rate = r.ReadInt32();
-                    r.ReadInt32(); r.ReadInt16(); bits = r.ReadInt16();
-                    r.ReadBytes(size - 16);
-                }
-                else if (id == "data")
-                {
-                    int frames = size / (bits / 8) / channels;
-                    var mono = new float[frames];
-                    for (int n = 0; n < frames; n++)
-                    {
-                        float sum = 0;
-                        for (int c = 0; c < channels; c++)
-                            sum += format == 3 ? r.ReadSingle() : bits == 16 ? r.ReadInt16() / 32768f : throw new NotSupportedException("use a 16-bit or float WAV");
-                        mono[n] = sum / channels;
-                    }
-                    if (rate == Sr) return mono;
-                    var resampled = new float[(int)((long)frames * Sr / rate)];
-                    for (int n = 0; n < resampled.Length; n++)
-                    {
-                        double p = (double)n * rate / Sr;
-                        int i = (int)p;
-                        float f = (float)(p - i);
-                        resampled[n] = mono[i] + (mono[Math.Min(i + 1, frames - 1)] - mono[i]) * f;
-                    }
-                    return resampled;
-                }
-                else r.ReadBytes(size + (size & 1));
-            }
-            throw new InvalidDataException("no data chunk");
-        }
-
-        public static void WriteMono(string path, float[] x)
-        {
-            using var w = new BinaryWriter(File.Create(path));
-            w.Write("RIFF".ToCharArray()); w.Write(36 + x.Length * 4); w.Write("WAVE".ToCharArray());
-            w.Write("fmt ".ToCharArray()); w.Write(16); w.Write((short)3); w.Write((short)1); w.Write(Sr);
-            w.Write(Sr * 4); w.Write((short)4); w.Write((short)32);
-            w.Write("data".ToCharArray()); w.Write(x.Length * 4);
-            foreach (float v in x) w.Write(v);
-        }
     }
 }

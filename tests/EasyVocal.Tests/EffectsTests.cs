@@ -16,20 +16,16 @@ public class EffectsTests
         new object[] { (Func<IAudioEffect>)(() => new DistortionEffect(Sr)) },
         new object[] { (Func<IAudioEffect>)(() => new RobotEffect(Sr)) },
         new object[] { (Func<IAudioEffect>)(() => new WhisperEffect(Sr)) },
+        new object[] { (Func<IAudioEffect>)(() => new GrowlEffect(Sr)) },
+        new object[] { (Func<IAudioEffect>)(() => new ReverbEffect(Sr)) },
+        new object[] { (Func<IAudioEffect>)(() => new VocoderEffect(Sr)) },
     };
 
     private static IAudioEffect Make(Func<IAudioEffect> make, double amount)
     {
         var fx = make();
-        switch (fx)
-        {
-            case EchoEffect e: e.Amount = amount; break;
-            case RadioEffect r: r.Amount = amount; break;
-            case DistortionEffect d: d.Amount = amount; break;
-            case RobotEffect b: b.Amount = amount; break;
-            case WhisperEffect w: w.Amount = amount; break;
-            default: throw new InvalidOperationException("unknown effect " + fx.GetType().Name);
-        }
+        if (fx is not IAmountEffect a) throw new InvalidOperationException("unknown effect " + fx.GetType().Name);
+        a.Amount = amount;
         return fx;
     }
 

@@ -2,7 +2,7 @@ using System;
 
 namespace EasyVocal.Core.Dsp;
 
-// The five "basic" voice effects. Every one follows the same contract:
+// The "basic" voice effects (more in VoiceEffects.cs). Every one follows the same contract:
 //  - Amount is 0..1; Amount 0 returns at once and leaves the buffer bit-exact.
 //  - Every buffer is allocated in the constructor; Process never allocates, locks or uses LINQ.
 //  - Silence in gives silence out (nothing here makes noise on its own).
@@ -76,7 +76,7 @@ internal sealed class AllPassFilter
 }
 
 /// <summary>Feedback delay (~240 ms) plus a short room reverb. Amount raises the wet mix and the feedback (at most 0.6).</summary>
-public sealed class EchoEffect : IAudioEffect
+public sealed class EchoEffect : IAmountEffect
 {
     private const float MaxFeedback = 0.6f;
     private readonly float[] delay;
@@ -144,7 +144,7 @@ public sealed class EchoEffect : IAudioEffect
 }
 
 /// <summary>Old radio: band-pass 300-3400 Hz, mild saturation and faint crackle that only exists while the voice does.</summary>
-public sealed class RadioEffect : IAudioEffect
+public sealed class RadioEffect : IAmountEffect
 {
     private readonly Biquad hp1, hp2, lp1, lp2;
     private readonly float releaseCoef;
@@ -204,7 +204,7 @@ public sealed class RadioEffect : IAudioEffect
 }
 
 /// <summary>Distortion: tanh soft clip, the drive grows with Amount and the output level is kept near the input level.</summary>
-public sealed class DistortionEffect : IAudioEffect
+public sealed class DistortionEffect : IAmountEffect
 {
     private double amount = 0.5;
 
@@ -233,7 +233,7 @@ public sealed class DistortionEffect : IAudioEffect
 }
 
 /// <summary>Robot: ring modulation (carrier 30-80 Hz, higher with Amount) through a short comb for a metallic tone.</summary>
-public sealed class RobotEffect : IAudioEffect
+public sealed class RobotEffect : IAmountEffect
 {
     private readonly int sampleRate;
     private readonly float[] comb;
@@ -285,7 +285,7 @@ public sealed class RobotEffect : IAudioEffect
 /// Whisper: the voice is replaced by noise shaped by the voice's own spectral envelope
 /// (a band-pass filterbank; each band's noise follows that band's energy). Fades out when the voice stops.
 /// </summary>
-public sealed class WhisperEffect : IAudioEffect
+public sealed class WhisperEffect : IAmountEffect
 {
     private const int Bands = 9;
     private readonly Biquad[] analysis = new Biquad[Bands];

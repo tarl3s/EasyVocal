@@ -65,6 +65,24 @@ public sealed class Biquad
         Set(1 + alpha * A, -2 * cosW, 1 - alpha * A, 1 + alpha / A, -2 * cosW, 1 - alpha / A);
     }
 
+    /// <summary>Low shelf (slope 1): everything below about <paramref name="freq"/> raised or lowered by <paramref name="gainDb"/>.</summary>
+    public void SetLowShelf(int sampleRate, double freq, double gainDb)
+    {
+        Prepare(sampleRate, freq, 0.7071, out double cosW, out double alpha);
+        double A = Math.Pow(10, gainDb / 40), s = 2 * Math.Sqrt(A) * alpha;
+        Set(A * ((A + 1) - (A - 1) * cosW + s), 2 * A * ((A - 1) - (A + 1) * cosW), A * ((A + 1) - (A - 1) * cosW - s),
+            (A + 1) + (A - 1) * cosW + s, -2 * ((A - 1) + (A + 1) * cosW), (A + 1) + (A - 1) * cosW - s);
+    }
+
+    /// <summary>High shelf (slope 1): everything above about <paramref name="freq"/> raised or lowered by <paramref name="gainDb"/>.</summary>
+    public void SetHighShelf(int sampleRate, double freq, double gainDb)
+    {
+        Prepare(sampleRate, freq, 0.7071, out double cosW, out double alpha);
+        double A = Math.Pow(10, gainDb / 40), s = 2 * Math.Sqrt(A) * alpha;
+        Set(A * ((A + 1) + (A - 1) * cosW + s), -2 * A * ((A - 1) + (A + 1) * cosW), A * ((A + 1) + (A - 1) * cosW - s),
+            (A + 1) - (A - 1) * cosW + s, 2 * ((A - 1) - (A + 1) * cosW), (A + 1) - (A - 1) * cosW - s);
+    }
+
     public float Process(float x)
     {
         double y = b0 * x + z1;

@@ -5,15 +5,17 @@ using EasyVocal.Core.Model;
 namespace EasyVocal.Core.Dsp;
 
 /// <summary>
-/// The whole voice filter: shifter → robot → distortion → radio → whisper → echo, driven by seven sliders.
+/// The whole voice filter, driven by a <see cref="VoiceSliders"/>: shifter (pitch, body, wobble, monotone, plus an
+/// optional layer an octave below) → growl → vocoder → robot → distortion → radio → whisper → echo → big room → tone.
 /// <para>
 /// Threads: <see cref="Process"/> runs on the audio thread only; <see cref="Apply"/> and <see cref="Bypass"/> are
 /// called from the UI thread and only publish a new immutable target, which <see cref="Process"/> picks up at the
-/// start of its next call. Nothing the UI thread does ever touches an effect.
+/// start of its next call. Nothing the UI thread does ever touches an effect. A <see cref="CreateFollower"/> copy
+/// plays whatever its leader was given (the engine runs the soundboard through one).
 /// </para>
 /// <para>
 /// A neutral chain (or <see cref="Bypass"/>) is the clean input, untouched and with no latency. The shifter (and its
-/// fixed delay) is only in the path while Pitch or Voice body is off the middle: Robot, Echo, Radio and the rest
+/// fixed delay) is only in the path while <see cref="VoiceSliders.Shifts"/>: Robot, Echo, Radio and the rest
 /// alone add no latency. Three things keep every change click-free:
 /// </para>
 /// <list type="bullet">
@@ -31,66 +33,85 @@ public sealed class VoiceChain
     private const double FadeSeconds = 0.020;
     private const double PrerollSeconds = 0.060;
     private const int SlewChunk = 32;
+    private const int ChunkMax = 1024;
     /// <summary>A change above this fraction of a parameter's range is a "jump" and crossfades instead of sliding.</summary>
     private const double JumpFraction = 0.1;
 
-    private static readonly double SemitoneRange = VoiceShifter.MaxSemitones - VoiceShifter.MinSemitones;
-    private static readonly double FormantRange = VoiceShifter.MaxFormant - VoiceShifter.MinFormant;
+    // Every parameter the sliders turn into, by index, with its full range (for slides and "jumps").
+    private const int Semis = 0, Formant = 1, Robot = 2, Echo = 3, Radio = 4, Distortion = 5, Whisper = 6, Growl = 7,
+        Room = 8, Octave = 9, Bass = 10, Treble = 11, Wobble = 12, Monotone = 13, Vocoder = 14, Count = 15;
+    private static readonly double[] Range =
+    {
+        VoiceShifter.MaxSemitones - VoiceShifter.MinSemitones, VoiceShifter.MaxFormant - VoiceShifter.MinFormant,
+        1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1,
+    };
+
+    /// <summary>The 0..1 effects after the shifter, in processing order, and the parameter each one plays.</summary>
+    private static readonly int[] StageParam = { Growl, Vocoder, Robot, Distortion, Radio, Whisper, Echo, Room };
 
     /// <summary>One immutable set of effect parameters (what the sliders mean), published by <see cref="Apply"/>.</summary>
     private sealed class Target
     {
-        public readonly double Semitones, Formant, Robot, Echo, Radio, Distortion, Whisper;
+        public readonly double[] V = new double[Count];
         public readonly bool Neutral;
-        /// <summary>Pitch or Voice body is used: the shifter (and its delay) must be in the path.</summary>
+        /// <summary>The shifter (and its delay) must be in the path.</summary>
         public readonly bool Shifts;
 
         public Target(VoiceSliders sliders)
         {
             var s = sliders.Clamp();
-            Semitones = s.Pitch * 12;
-            Formant = s.Body >= 0 ? 1 + s.Body * 0.33 : 1 + s.Body * 0.25;
-            Robot = s.Robot;
-            Echo = s.Echo;
-            Radio = s.Radio;
-            Distortion = s.Distortion;
-            Whisper = s.Whisper;
+            V[Semis] = s.Pitch * 12;
+            V[Formant] = s.Body >= 0 ? 1 + s.Body * 0.33 : 1 + s.Body * 0.25;
+            V[Robot] = s.Robot;
+            V[Echo] = s.Echo;
+            V[Radio] = s.Radio;
+            V[Distortion] = s.Distortion;
+            V[Whisper] = s.Whisper;
+            V[Growl] = s.Growl;
+            V[Room] = s.Room;
+            V[Octave] = s.Octave;
+            V[Bass] = s.Bass;
+            V[Treble] = s.Treble;
+            V[Wobble] = s.Wobble;
+            V[Monotone] = s.Monotone;
+            V[Vocoder] = s.Vocoder;
             Neutral = s.IsNeutral;
-            Shifts = s.Pitch != 0 || s.Body != 0;
+            Shifts = s.Shifts;
         }
 
-        public bool FarFrom(Target o) =>
-            Math.Abs(Semitones - o.Semitones) > JumpFraction * SemitoneRange ||
-            Math.Abs(Formant - o.Formant) > JumpFraction * FormantRange ||
-            Math.Abs(Robot - o.Robot) > JumpFraction ||
-            Math.Abs(Echo - o.Echo) > JumpFraction ||
-            Math.Abs(Radio - o.Radio) > JumpFraction ||
-            Math.Abs(Distortion - o.Distortion) > JumpFraction ||
-            Math.Abs(Whisper - o.Whisper) > JumpFraction;
+        public bool FarFrom(Target o)
+        {
+            for (int i = 0; i < Count; i++)
+                if (Math.Abs(V[i] - o.V[i]) > JumpFraction * Range[i]) return true;
+            return false;
+        }
     }
 
-    /// <summary>A complete set of the six stages with the live (possibly still sliding) parameters.</summary>
+    /// <summary>A complete set of the stages with the live (possibly still sliding) parameters.</summary>
     private sealed class Path
     {
         private readonly VoiceShifter shifter;
-        private readonly RobotEffect robot;
-        private readonly DistortionEffect distortion;
-        private readonly RadioEffect radio;
-        private readonly WhisperEffect whisper;
-        private readonly EchoEffect echo;
+        private readonly VoiceShifter layer;          // the octave-down voice mixed in by Octave
+        private readonly float[] layerBuf = new float[ChunkMax];
+        private readonly IAmountEffect[] stages;
+        private readonly ToneEffect tone;
         private readonly double slewFraction;
-        private double semitones, formant, robotAmt, echoAmt, radioAmt, distortionAmt, whisperAmt;
+        private readonly double[] live = new double[Count];
         private bool sliding;
         private bool shifts;
+        private bool layerOn;
 
         public Path(int sampleRate)
         {
             shifter = new VoiceShifter(sampleRate);
-            robot = new RobotEffect(sampleRate);
-            distortion = new DistortionEffect(sampleRate);
-            radio = new RadioEffect(sampleRate);
-            whisper = new WhisperEffect(sampleRate);
-            echo = new EchoEffect(sampleRate);
+            layer = new VoiceShifter(sampleRate, VoiceShifter.MinSemitones - 12) { VoicedOnly = true };
+            stages = new IAmountEffect[]
+            {
+                new GrowlEffect(sampleRate), new VocoderEffect(sampleRate), new RobotEffect(sampleRate),
+                new DistortionEffect(sampleRate), new RadioEffect(sampleRate), new WhisperEffect(sampleRate),
+                new EchoEffect(sampleRate), new ReverbEffect(sampleRate),
+            };
+            tone = new ToneEffect(sampleRate);
             slewFraction = SlewChunk / (FadeSeconds * sampleRate);
         }
 
@@ -107,10 +128,12 @@ public sealed class VoiceChain
             Goal = t;
             sliding = false;
             shifts = t.Shifts;
-            semitones = t.Semitones; formant = t.Formant; robotAmt = t.Robot; echoAmt = t.Echo;
-            radioAmt = t.Radio; distortionAmt = t.Distortion; whisperAmt = t.Whisper;
+            Array.Copy(t.V, live, Count);
             Commit();
-            shifter.Reset(); robot.Reset(); distortion.Reset(); radio.Reset(); whisper.Reset(); echo.Reset();
+            shifter.Reset();
+            layer.Reset();
+            for (int s = 0; s < stages.Length; s++) stages[s].Reset();
+            tone.Reset();
         }
 
         public void SlideTo(Target t)
@@ -119,6 +142,7 @@ public sealed class VoiceChain
             sliding = true;
         }
 
+        /// <param name="x">At most <see cref="ChunkMax"/> samples.</param>
         public void Process(Span<float> x)
         {
             if (!sliding)
@@ -135,54 +159,78 @@ public sealed class VoiceChain
 
         private void Run(Span<float> x)
         {
-            if (shifts) shifter.Process(x);
-            robot.Process(x);
-            distortion.Process(x);
-            radio.Process(x);
-            whisper.Process(x);
-            echo.Process(x);
+            if (shifts)
+            {
+                if (layerOn)
+                {
+                    // Both shifters have the same fixed delay, so the layer lines up with the voice.
+                    var low = layerBuf.AsSpan(0, x.Length);
+                    x.CopyTo(low);
+                    layer.Process(low);
+                    shifter.Process(x);
+                    double oct = live[Octave];
+                    float keep = (float)(1 - 0.3 * oct), add = (float)(0.9 * oct);
+                    for (int k = 0; k < x.Length; k++) x[k] = x[k] * keep + low[k] * add;
+                }
+                else shifter.Process(x);
+            }
+            for (int s = 0; s < stages.Length; s++) stages[s].Process(x);
+            tone.Process(x);
         }
 
         private void Step()
         {
-            var g = Goal!;
-            semitones = Toward(semitones, g.Semitones, slewFraction * SemitoneRange);
-            formant = Toward(formant, g.Formant, slewFraction * FormantRange);
-            robotAmt = Toward(robotAmt, g.Robot, slewFraction);
-            echoAmt = Toward(echoAmt, g.Echo, slewFraction);
-            radioAmt = Toward(radioAmt, g.Radio, slewFraction);
-            distortionAmt = Toward(distortionAmt, g.Distortion, slewFraction);
-            whisperAmt = Toward(whisperAmt, g.Whisper, slewFraction);
+            var g = Goal!.V;
+            bool still = false;
+            for (int i = 0; i < Count; i++)
+            {
+                live[i] = Toward(live[i], g[i], slewFraction * Range[i]);
+                if (live[i] != g[i]) still = true;
+            }
             Commit();
-            sliding = semitones != g.Semitones || formant != g.Formant || robotAmt != g.Robot || echoAmt != g.Echo ||
-                      radioAmt != g.Radio || distortionAmt != g.Distortion || whisperAmt != g.Whisper;
+            sliding = still;
         }
 
         private static double Toward(double v, double goal, double maxStep) =>
             Math.Abs(goal - v) <= maxStep ? goal : v + (goal > v ? maxStep : -maxStep);
 
-        /// <summary>Pushes the live parameters into the stages. An effect that was at 0 is cleared first: it froze its state there.</summary>
+        /// <summary>Pushes the live parameters into the stages. A stage that was off is cleared first: it froze its state there.</summary>
         private void Commit()
         {
-            shifter.PitchSemitones = semitones;
-            shifter.FormantFactor = formant;
-            if (robot.Amount <= 0 && robotAmt > 0) robot.Reset();
-            robot.Amount = robotAmt;
-            if (distortion.Amount <= 0 && distortionAmt > 0) distortion.Reset();
-            distortion.Amount = distortionAmt;
-            if (radio.Amount <= 0 && radioAmt > 0) radio.Reset();
-            radio.Amount = radioAmt;
-            if (whisper.Amount <= 0 && whisperAmt > 0) whisper.Reset();
-            whisper.Amount = whisperAmt;
-            if (echo.Amount <= 0 && echoAmt > 0) echo.Reset();
-            echo.Amount = echoAmt;
+            shifter.PitchSemitones = live[Semis];
+            shifter.FormantFactor = live[Formant];
+            shifter.Wobble = live[Wobble];
+            shifter.Monotone = live[Monotone];
+
+            bool layerWanted = live[Octave] > 0;
+            if (layerWanted && !layerOn) layer.Reset();
+            layerOn = layerWanted;
+            layer.PitchSemitones = live[Semis] - 12;
+            layer.FormantFactor = live[Formant];
+            layer.Wobble = live[Wobble];
+            layer.Monotone = live[Monotone];
+
+            for (int s = 0; s < stages.Length; s++)
+            {
+                var fx = stages[s];
+                double v = live[StageParam[s]];
+                if (fx.Amount <= 0 && v > 0) fx.Reset();
+                fx.Amount = v;
+            }
+
+            bool toneWanted = live[Bass] != 0 || live[Treble] != 0;
+            if (toneWanted && !tone.Active) tone.Reset();
+            tone.Bass = live[Bass];
+            tone.Treble = live[Treble];
         }
     }
 
+    private readonly int sampleRate;
+    private readonly VoiceChain? leader;  // a follower plays its leader's target and ON/OFF
     private readonly Path[] paths;
     private readonly int fadeLength;
     private readonly int prerollLength;
-    private readonly float[] scratch = new float[1024];
+    private readonly float[] scratch = new float[ChunkMax];
     private readonly float[] history;     // the last input samples, to warm up a path that is about to take over
     private readonly int historyMask;
     private long historyCount;
@@ -196,9 +244,13 @@ public sealed class VoiceChain
     private bool fading;
     private int fadePos;
 
-    public VoiceChain(int sampleRate)
+    public VoiceChain(int sampleRate) : this(sampleRate, null) { }
+
+    private VoiceChain(int sampleRate, VoiceChain? leader)
     {
         if (sampleRate < 8000) throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        this.sampleRate = sampleRate;
+        this.leader = leader;
         paths = new[] { new Path(sampleRate), new Path(sampleRate) };
         fadeLength = DspUtil.Samples(sampleRate, FadeSeconds);
         prerollLength = DspUtil.Samples(sampleRate, PrerollSeconds);
@@ -208,26 +260,34 @@ public sealed class VoiceChain
         historyMask = size - 1;
     }
 
+    /// <summary>
+    /// A second chain with its own state that always plays this chain's sliders and ON/OFF (its own
+    /// <see cref="Apply"/> and <see cref="Bypass"/> are ignored): another signal through the same voice.
+    /// </summary>
+    public VoiceChain CreateFollower() => new VoiceChain(sampleRate, leader ?? this);
+
+    private VoiceChain Owner => leader ?? this;
+
     /// <summary>UI thread: set the sliders (takes effect on the next audio block).</summary>
     public void Apply(VoiceSliders sliders) => Volatile.Write(ref pending, new Target(sliders));
 
     /// <summary>UI thread: true = filter OFF, the clean input goes through.</summary>
     public bool Bypass
     {
-        get => bypass;
+        get => Owner.bypass;
         set => bypass = value;
     }
 
     /// <summary>
     /// Delay the chain adds once the latest <see cref="Apply"/>/<see cref="Bypass"/> has taken hold: the shifter's
-    /// fixed delay when Pitch or Voice body is used, otherwise 0 (clean input, or effects without a shift).
+    /// fixed delay when it is needed, otherwise 0 (clean input, or effects without a shift).
     /// </summary>
     public int LatencySamples
     {
         get
         {
-            var t = Volatile.Read(ref pending);
-            return bypass || t.Neutral || !t.Shifts ? 0 : paths[0].ShifterLatency;
+            var t = Volatile.Read(ref Owner.pending);
+            return Owner.bypass || t.Neutral || !t.Shifts ? 0 : paths[0].ShifterLatency;
         }
     }
 
@@ -243,8 +303,9 @@ public sealed class VoiceChain
     {
         if (fading) return; // the newest target is looked at once the crossfade is over (20 ms)
 
-        var t = Volatile.Read(ref pending);
-        bool wanted = !bypass && !t.Neutral;
+        var owner = Owner;
+        var t = Volatile.Read(ref owner.pending);
+        bool wanted = !owner.bypass && !t.Neutral;
         if (active == null)
         {
             if (wanted) StartFade(t);

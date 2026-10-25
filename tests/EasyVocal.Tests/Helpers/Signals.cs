@@ -31,14 +31,17 @@ public static class Signals
     }
 
     /// <summary>Impulse train at f0 through one 2-pole resonator per formant (cascade), peak-normalised to 0.5.</summary>
-    public static float[] PulseVowel(double f0, double[] formants, double seconds)
+    public static float[] PulseVowel(double f0, double[] formants, double seconds) => PulseVowel(_ => f0, formants, seconds);
+
+    /// <summary>Like <see cref="PulseVowel(double, double[], double)"/>, with the pitch (Hz) a function of the time (s).</summary>
+    public static float[] PulseVowel(Func<double, double> f0At, double[] formants, double seconds)
     {
         int len = Count(seconds);
         var x = new double[len];
-        double period = Sr / f0, next = 0;
+        double next = 0;
         for (int n = 0; n < len; n++)
         {
-            if (n >= next) { x[n] = 1; next += period; }
+            if (n >= next) { x[n] = 1; next += Sr / f0At((double)n / Sr); }
         }
         foreach (double f in formants)
         {
@@ -176,7 +179,8 @@ public static class Signals
         return o;
     }
 
-    private static void Fft(double[] re, double[] im)
+    /// <summary>In-place radix-2 FFT (the length must be a power of two).</summary>
+    public static void Fft(double[] re, double[] im)
     {
         int n = re.Length;
         for (int i = 1, j = 0; i < n; i++)

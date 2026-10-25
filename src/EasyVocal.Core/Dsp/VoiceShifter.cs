@@ -13,12 +13,14 @@ namespace EasyVocal.Core.Dsp;
 /// <para>
 /// Synthesis: two-period Hann grains are cut around the mark nearest each synthesis point, resampled by
 /// <see cref="FormantFactor"/> (the formants move, the spacing — the pitch — does not) and overlap-added
-/// <c>period / pitchRatio</c> apart. Unvoiced sound ("s", "f") uses 10 ms grains at a fixed 10 ms spacing that
-/// play the input on at the formant speed and splice back now and then (WSOLA-style), so noise never picks up a tone.
+/// <c>period / pitchRatio</c> apart; <see cref="Monotone"/> and <see cref="Wobble"/> change that ratio grain by
+/// grain. Unvoiced sound ("s", "f") uses 10 ms grains at a fixed 10 ms spacing that play the input on at the
+/// formant speed and splice back now and then (WSOLA-style), so noise never picks up a tone (or is left out with
+/// <see cref="VoicedOnly"/>).
 /// </para>
-/// With no pitch or body change the clean input is heard, only delayed (bit-exact); going in or out of that state
-/// crossfades over 20 ms. Every buffer is allocated in the constructor; <see cref="Process"/> never allocates or
-/// locks and reads the two parameters once per call.
+/// With no pitch, body, wobble or monotone the clean input is heard, only delayed (bit-exact); going in or out of
+/// that state crossfades over 20 ms. Every buffer is allocated in the constructor; <see cref="Process"/> never
+/// allocates or locks and reads the parameters once per call.
 /// </summary>
 public sealed class VoiceShifter : IAudioEffect
 {
@@ -87,10 +89,22 @@ public sealed class VoiceShifter : IAudioEffect
 
     private double pitchSemitones;
     private double formantFactor = 1;
+    private double wobble, monotone;
+    private volatile bool voicedOnly;
 
-    public VoiceShifter(int sampleRate)
+    // Wobble and Monotone (decided per voiced grain).
+    private readonly int sampleRate;
+    private readonly double lowestSemitones;
+    private double usualLogHz;           // the speaker's usual pitch (log Hz), followed slowly; 0 = none yet
+    private double wobblePhase;
+    private double wobbleAt;             // synthPos when the wobble phase last moved on
+
+    /// <param name="lowestSemitones">How deep <see cref="PitchSemitones"/> may go (a voice's octave layer goes below -12).</param>
+    public VoiceShifter(int sampleRate, double lowestSemitones = MinSemitones)
     {
         if (sampleRate < 8000) throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        this.sampleRate = sampleRate;
+        this.lowestSemitones = Math.Min(MinSemitones, lowestSemitones);
         hop = Math.Max(1, sampleRate / 100);
         grainMax = DspUtil.Samples(sampleRate, 0.010);
         uvHalf = DspUtil.Samples(sampleRate, 0.010);
@@ -142,8 +156,25 @@ public sealed class VoiceShifter : IAudioEffect
     public double PitchSemitones
     {
         get => Volatile.Read(ref pitchSemitones);
-        set => Volatile.Write(ref pitchSemitones, double.IsNaN(value) ? 0 : Math.Clamp(value, MinSemitones, MaxSemitones));
+        set => Volatile.Write(ref pitchSemitones, double.IsNaN(value) ? 0 : Math.Clamp(value, lowestSemitones, MaxSemitones));
     }
+
+    /// <summary>0..1: the pitch sways up and down (up to ±1.2 semitones, 4–7 times a second), like a wavering ghost or alien.</summary>
+    public double Wobble
+    {
+        get => Volatile.Read(ref wobble);
+        set => Volatile.Write(ref wobble, DspUtil.Clamp01(value));
+    }
+
+    /// <summary>0..1: the melody of the voice is flattened towards the speaker's usual pitch (1 = one robotic note).</summary>
+    public double Monotone
+    {
+        get => Volatile.Read(ref monotone);
+        set => Volatile.Write(ref monotone, DspUtil.Clamp01(value));
+    }
+
+    /// <summary>Only voiced sound comes out ("s", "f" and the like are left out): for a layer added on top of another voice.</summary>
+    public bool VoicedOnly { get => voicedOnly; set => voicedOnly = value; }
 
     /// <summary>Formant scale, 0.75..1.33 (1 = unchanged; above 1 = smaller, brighter voice body).</summary>
     public double FormantFactor
@@ -157,9 +188,9 @@ public sealed class VoiceShifter : IAudioEffect
 
     public void Process(Span<float> mono)
     {
-        double semis = PitchSemitones, formant = FormantFactor;
+        double semis = PitchSemitones, formant = FormantFactor, wob = Wobble, flat = Monotone;
         double ratio = Math.Pow(2, semis / 12);
-        double wetTarget = IsNeutral(semis, formant) ? 0 : 1;
+        double wetTarget = IsNeutral(semis, formant, wob, flat) ? 0 : 1;
         double wetStep = 1.0 / fade;
 
         int i = 0;
@@ -171,7 +202,7 @@ public sealed class VoiceShifter : IAudioEffect
             for (int k = 0; k < len; k++) Write(chunk[k]);
             if (written % hop == 0) Track();
             Mark();
-            Synthesize(ratio, formant, readPos + len - 1);
+            Synthesize(ratio, formant, wob, flat, readPos + len - 1);
 
             for (int k = 0; k < len; k++)
             {
@@ -209,10 +240,14 @@ public sealed class VoiceShifter : IAudioEffect
         cursor = 0;
         uvSrc = 0;
         uvRun = 0;
-        wet = IsNeutral(PitchSemitones, FormantFactor) ? 0 : 1;
+        usualLogHz = 0;
+        wobblePhase = 0;
+        wobbleAt = 0;
+        wet = IsNeutral(PitchSemitones, FormantFactor, Wobble, Monotone) ? 0 : 1;
     }
 
-    private static bool IsNeutral(double semis, double formant) => Math.Abs(semis) < 1e-3 && Math.Abs(formant - 1) < 1e-4;
+    private static bool IsNeutral(double semis, double formant, double wobble, double monotone) =>
+        Math.Abs(semis) < 1e-3 && Math.Abs(formant - 1) < 1e-4 && wobble <= 0 && monotone <= 0;
 
     // ---------------------------------------------------------------- input
 
@@ -418,10 +453,8 @@ public sealed class VoiceShifter : IAudioEffect
     // ---------------------------------------------------------------- synthesis
 
     /// <param name="due">The newest output sample handed out after this call: every grain reaching it must be in.</param>
-    private void Synthesize(double ratio, double formant, long due)
+    private void Synthesize(double ratio, double formant, double wob, double flat, long due)
     {
-        // Same loudness: ratio times more periods per second add power, a grain squeezed by formant carries less.
-        double voicedGain = Math.Sqrt(formant / ratio);
         while (true)
         {
             bool late = synthPos - grainMax <= due;
@@ -441,9 +474,11 @@ public sealed class VoiceShifter : IAudioEffect
                 long centre = markPos[slot];
                 if (centre + halfOut * formant + 3 <= written - 1)
                 {
-                    AddGrain(synthPos, centre, halfOut, formant, voicedGain);
+                    double r = GrainRatio(ratio, period, wob, flat);
+                    // Same loudness: r times more periods per second add power, a grain squeezed by formant carries less.
+                    AddGrain(synthPos, centre, halfOut, formant, Math.Sqrt(formant / r));
                     uvRun = 0;
-                    synthPos += period / ratio;
+                    synthPos += period / r;
                     continue;
                 }
                 if (!late) break;
@@ -454,6 +489,26 @@ public sealed class VoiceShifter : IAudioEffect
             AddUnvoicedGrain(formant);
             synthPos += uvHalf;
         }
+    }
+
+    /// <summary>
+    /// The pitch ratio of one voiced grain: <paramref name="ratio"/>, with the melody pulled towards the speaker's
+    /// usual pitch by Monotone (followed over about 2.5 s, so the voice keeps its register) and swayed by Wobble.
+    /// </summary>
+    private double GrainRatio(double ratio, double period, double wob, double flat)
+    {
+        double logHz = Math.Log(sampleRate / period);
+        usualLogHz = usualLogHz == 0 ? logHz : usualLogHz + (logHz - usualLogHz) * Math.Min(1, period / (2.5 * sampleRate));
+        double r = ratio;
+        if (flat > 0) r *= Math.Exp(flat * (usualLogHz - logHz));
+        if (wob > 0)
+        {
+            wobblePhase += 2 * Math.PI * (4 + 3 * wob) * (synthPos - wobbleAt) / sampleRate;
+            if (wobblePhase > 2 * Math.PI) wobblePhase %= 2 * Math.PI;
+            r *= Math.Pow(2, 1.2 * wob * Math.Sin(wobblePhase) / 12);
+        }
+        wobbleAt = synthPos;
+        return Math.Clamp(r, 0.2, 5);
     }
 
     /// <summary>
@@ -477,8 +532,11 @@ public sealed class VoiceShifter : IAudioEffect
                 splice = true;
             }
         }
-        AddGrain(synthPos, src, uvHalf, formant, 1);
-        if (splice && uvRun >= 2) LevelCrossfade(rho);
+        if (!voicedOnly)
+        {
+            AddGrain(synthPos, src, uvHalf, formant, 1);
+            if (splice && uvRun >= 2) LevelCrossfade(rho);
+        }
         uvSrc = src;
         if (uvRun < 2) uvRun++;
     }

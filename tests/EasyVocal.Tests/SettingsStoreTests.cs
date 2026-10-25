@@ -343,4 +343,41 @@ public class SettingsStoreTests : IDisposable
         clone.Whisper = 0.9;
         Assert.Equal(0.1, v.Whisper);
     }
+
+    [Fact]
+    public void Load_OldCustomVoiceWithoutTheNewSliders_GetsThemOff()
+    {
+        WriteFile("{\"Voices\":[{\"Id\":\"mine\",\"Name\":\"Mine\",\"Sliders\":{\"Pitch\":0.3,\"Echo\":0.2}}]}");
+        var mine = SettingsStore.Load(tmp).Voices.Single(v => v.Id == "mine");
+        Assert.Equal(0.3, mine.Sliders.Pitch);
+        var s = mine.Sliders;
+        Assert.Equal(0.0, s.Growl + s.Room + s.Octave + s.Bass + s.Treble + s.Wobble + s.Monotone + s.Vocoder);
+        Assert.False(SettingsStore.Load(tmp).SoundsUseVoice); // missing key: off
+    }
+
+    [Fact]
+    public void SaveThenLoad_KeepsTheNewSliders_ClampedAndTheSoundsUseVoiceSwitch()
+    {
+        WriteFile("{\"SoundsUseVoice\":true,\"Voices\":[{\"Id\":\"mine\",\"Name\":\"Mine\",\"Sliders\":{\"Growl\":5,\"Room\":0.4,\"Bass\":-3,\"Vocoder\":0.5,\"IsNeutral\":true}}]}");
+        var s = SettingsStore.Load(tmp);
+        Assert.True(s.SoundsUseVoice);
+        var mine = s.Voices.Single(v => v.Id == "mine").Sliders;
+        Assert.Equal((1.0, 0.4, -1.0, 0.5), (mine.Growl, mine.Room, mine.Bass, mine.Vocoder));
+        mine.Wobble = 0.25;
+        SettingsStore.Save(tmp, s);
+        Assert.DoesNotContain("IsNeutral", File.ReadAllText(SettingsPath)); // computed, not saved
+        var back = SettingsStore.Load(tmp);
+        Assert.True(back.SoundsUseVoice);
+        Assert.Equal(0.25, back.Voices.Single(v => v.Id == "mine").Sliders.Wobble);
+    }
+
+    [Fact]
+    public void CopyOfABuiltInVoice_KeepsItsCharacter()
+    {
+        var s = SettingsStore.Load(tmp);
+        var copy = ItemOps.DuplicateVoice(s, "demon");
+        var demon = s.Voices.Single(v => v.Id == "demon").Sliders;
+        Assert.Equal((demon.Octave, demon.Room, demon.Treble), (copy.Sliders.Octave, copy.Sliders.Room, copy.Sliders.Treble));
+        Assert.True(copy.Sliders.Octave > 0);
+    }
 }

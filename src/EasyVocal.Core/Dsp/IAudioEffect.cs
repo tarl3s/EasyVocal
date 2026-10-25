@@ -13,3 +13,9 @@ public interface IAudioEffect
     /// <summary>Clears every delay line and filter state (silence in, silence out).</summary>
     void Reset();
 }
+
+/// <summary>An effect with one 0..1 strength; 0 leaves the buffer bit-exact.</summary>
+public interface IAmountEffect : IAudioEffect
+{
+    double Amount { get; set; }
+}
