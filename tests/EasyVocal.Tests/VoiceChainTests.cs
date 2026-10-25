@@ -314,7 +314,11 @@ public class VoiceChainTests
     private static long AllocatedBytes(Func<long> attempt)
     {
         long best = long.MaxValue;
-        for (int k = 0; k < 6 && best != 0; k++) best = Math.Min(best, attempt());
+        for (int k = 0; k < 6 && best != 0; k++)
+        {
+            if (k > 0) Thread.Sleep(250); // lets the JIT finish moving hot methods to their faster code (a busy runner is slow at it)
+            best = Math.Min(best, attempt());
+        }
         return best;
     }
 
