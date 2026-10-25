@@ -60,7 +60,8 @@ Os atalhos globais precisam de uma sessão X11 (Xorg); no Wayland, use os botõe
 Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
 
 > **A voz só funciona com o EasyVocal aberto.** Fechar a janela manda o app para a bandeja (perto do relógio, ou a
-> barra de menus no Mac), onde ele continua funcionando. Se você sair de vez, suas chamadas não ouvem nada até você
+> barra de menus no Mac), onde ele continua funcionando; num Linux sem ícones na bandeja ela é minimizada, e as
+> configurações têm **Sair do EasyVocal**. Se você sair de vez, suas chamadas não ouvem nada até você
 > abrir de novo. Nas configurações dá para marcar **Iniciar com o Windows** (no Mac ou Linux: iniciar ao entrar) para
 > nunca esquecer.
 

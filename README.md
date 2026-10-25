@@ -59,7 +59,8 @@ Global hotkeys need an X11 (Xorg) session; on Wayland, use the buttons in the wi
 That's it: whatever you do in EasyVocal is what the other side of the call hears.
 
 > **The voice only works while EasyVocal is open.** Closing the window sends it to the tray (next to the clock, or the
-> menu bar on a Mac), where it keeps working. If you quit it, your calls hear nothing until you open it again. You can
+> menu bar on a Mac), where it keeps working; on a Linux desktop without tray icons it is minimised instead, and
+> Settings has **Quit EasyVocal**. If you quit it, your calls hear nothing until you open it again. You can
 > tick **Start with Windows** (on a Mac or Linux: start at login) in the settings so you never forget.
 
 ## What you get
