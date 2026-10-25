@@ -92,9 +92,10 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
             output.WriteLine($"played {total / (double)Sr:0.0} s in {clock.Elapsed.TotalSeconds:0.0} s, recorded {got.Length / (double)Sr:0.0} s");
 
             // Where the timeline starts in the recording: Normal (the clean voice) against what was played.
-            int lag = Lag(got, play, starts[0], input.Length);
-            output.WriteLine($"the recording is {lag / (double)Sr * 1000:0} ms behind the timeline");
-            Assert.True(lag >= 0, "Normal's syllables were found in the recording");
+            int? found = Lag(got, play, starts[0], input.Length);
+            Assert.True(found != null, "Normal's syllables were found in the recording");
+            int lag = found!.Value;
+            output.WriteLine($"the recording is {lag / (double)Sr * 1000:0} ms off the timeline");
 
             var offline = new Dictionary<string, (float[] Out, int Latency)>();
             var failures = new List<string>();
@@ -104,7 +105,7 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 var sliders = voices[v].Sliders;
                 var reference = Render(sliders, input, out int latency);
                 int from = starts[v] + lag;
-                if (from + input.Length + after > got.Length) { failures.Add(voices[v].Id + ": not recorded"); continue; }
+                if (from < 0 || from + input.Length + after > got.Length) { failures.Add(voices[v].Id + ": not recorded"); continue; }
                 var real = got.AsSpan(from, input.Length + Math.Min(after, got.Length - from - input.Length)).ToArray();
                 var padded = new float[reference.Length];
                 Array.Copy(real, padded, Math.Min(real.Length, padded.Length));
@@ -161,8 +162,12 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         return o;
     }
 
-    /// <summary>The delay of <paramref name="played"/>[start..start+length] in <paramref name="got"/>: the best match of their envelopes, then of the samples.</summary>
-    private static int Lag(float[] got, float[] played, int start, int length)
+    /// <summary>
+    /// Where the timeline is in the recording (recording index = timeline index + the result, which may be negative: the
+    /// recorder may miss the first moments), from <paramref name="played"/>[start..start+length] (Normal, the clean
+    /// voice): the best normalised match of their envelopes within the first seconds, then of the samples. Null: not found.
+    /// </summary>
+    private static int? Lag(float[] got, float[] played, int start, int length)
     {
         const int Hop = 240;
         double[] Env(float[] x, int from, int count)
@@ -178,17 +183,18 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         }
         var want = Env(played, start, length);
         var have = Env(got, 0, got.Length);
-        int best = -1;
+        int? best = null;
         double bestScore = 0;
-        for (int shift = 0; shift + want.Length <= have.Length; shift++)
+        for (int d = -start / Hop; d <= 3 * Sr / Hop; d++)
         {
-            double s = 0;
-            for (int k = 0; k < want.Length; k++) s += want[k] * have[shift + k];
-            if (s > bestScore) { bestScore = s; best = shift; }
+            int at0 = start / Hop + d;
+            if (at0 < 0 || at0 + want.Length > have.Length) continue;
+            double s = 0, energy = 1e-12;
+            for (int k = 0; k < want.Length; k++) { s += want[k] * have[at0 + k]; energy += have[at0 + k] * have[at0 + k]; }
+            s /= Math.Sqrt(energy);
+            if (s > bestScore) { bestScore = s; best = d * Hop; }
         }
-        if (best < 0) return -1;
-        // Refine to the sample around the envelope's match.
-        int coarse = best * Hop - start;
+        if (best is not int coarse) return null;
         int fine = coarse;
         bestScore = double.NegativeInfinity;
         for (int d = coarse - Hop; d <= coarse + Hop; d++)

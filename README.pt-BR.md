@@ -90,12 +90,15 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   FLAC, M4A, AAC, WMA, AIFF) ou o som de um vídeo (MP4, MOV, WMV...), ou só arraste e solte, e dê um nome, um emoji e
   um volume. Apertar de novo num som tocando para ele. Dá para tocar vários ao mesmo tempo. Marque
   **🎭 Sons usam a voz** e os seus sons também passam pela voz (troque de voz enquanto um som toca e ele muda junto).
+- **A sua ordem:** arraste os cartões de vozes e de sons para deixá-los na ordem que quiser (ou use **Mover para a
+  esquerda / direita** no menu do cartão); o menu da bandeja segue a mesma ordem.
 - **Um editor de som** (**✂ Editar áudio...** em qualquer som): veja a onda, escolha um trecho com o mouse e ouça no
   seu fone, e então corte, mantenha só aquele trecho ou divida o som em dois; deixe mais rápido ou mais lento
   (mantendo o tom ou não), mais agudo ou mais grave, mais alto, mais baixo ou o mais alto possível; faça aparecer ou
   sumir aos poucos, toque de trás para frente, coloque eco, passe por qualquer uma das suas vozes ou corte o silêncio
   do começo e do fim. Desfaça e refaça quanto quiser. O seu arquivo original nunca é alterado: **Voltar ao original**
-  está sempre a um clique, e **Salvar uma cópia como...** exporta em WAV ou MP3.
+  está sempre a um clique, e **Salvar uma cópia como...** exporta em WAV ou MP3. Mudar de novo a velocidade, o tom ou a voz de um
+  trecho parte de como ele era antes: 0,75× e depois 2× é simplesmente 2×, e **1×** ou **Normal** devolvem o trecho como era.
 - **Atalhos globais** para cada voz e cada som, além de ligar/desligar a voz, parar todos os sons e silenciar o
   microfone. Funcionam com o jogo em tela cheia. (Uma tecla sozinha, sem Ctrl ou Alt, deixa de digitar aquele
   caractere nos outros programas enquanto o EasyVocal roda, e o app avisa.)

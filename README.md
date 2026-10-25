@@ -88,12 +88,15 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   M4A, AAC, WMA, AIFF) or the sound of a video (MP4, MOV, WMV...), or just drag and drop it, then give it a name, an
   emoji and a volume. Press a playing sound again to stop it. Sounds can overlap. Tick **🎭 Sounds use the voice** and
   your sounds go through the voice too (switch voices while a sound plays and it changes).
+- **Your order:** drag the voice and sound cards to put them in the order you like (or use **Move left / right** in a
+  card's menu); the tray menu follows it.
 - **A sound editor** (**✂ Edit audio...** on any sound): see the wave, pick a part with the mouse and hear it on
   your headphones, then cut it, keep only that part or split the sound in two; make it faster or slower (keeping the
   pitch or not), higher or lower, louder, quieter or as loud as possible; fade in or out, play it backwards, add an
   echo, run it through any of your voices, or cut the silence at the start and end. Undo and redo as much as you
   like. Your original file is never changed: **Back to original** is always one click away, and **Save a copy as...**
-  exports WAV or MP3.
+  exports WAV or MP3. Changing the speed, the pitch or the voice of a part again starts from how it was before,
+  so 0.75× then 2× is simply 2×, and **1×** or **Normal** give the part back as it was.
 - **Global hotkeys** for every voice and every sound, plus turning the voice on/off, stopping all sounds and muting
   the mic. They work while a game is fullscreen. (A plain key without Ctrl or Alt stops typing that character
   elsewhere while EasyVocal runs, so the app warns you.)

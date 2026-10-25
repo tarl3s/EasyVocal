@@ -48,6 +48,9 @@ public class HeadlessAppTests
             var code = await RunSession(data, "--e2e", new TestAudioDevices(cablePresent: false));
             var log = Path.Combine(data, "e2e.log");
             output.WriteLine(File.Exists(log) ? File.ReadAllText(log) : "(no e2e.log was written)");
+            var appLog = Path.Combine(data, "easyvocal.log");
+            if (code != 0 && File.Exists(appLog)) // what went wrong, with its stack
+                output.WriteLine(string.Join("\n", File.ReadAllLines(appLog).Where(l => !l.Contains("[info]"))));
             Assert.Equal(0, code);
             Assert.Contains("E2E test passed", File.ReadAllText(log));
         }

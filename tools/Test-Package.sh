@@ -76,3 +76,13 @@ ls "$work/data"
 [ "$code" = 0 ] || fail "the smoke test of the unpacked download exited with $code"
 ls "$work/data"/smoke_*.png >/dev/null 2>&1 || fail "the smoke test saved no pictures"
 echo "PASS: $(basename "$archive") unpacks, installs and starts"
+
+# The end-to-end test of the unpacked program: pretend devices, the real windows, a quit and a relaunch.
+mkdir -p "$work/e2e" || fail "can't make $work/e2e"
+echo "== $program --data $work/e2e --e2e"
+HOME="$work/home" perl -e 'alarm shift; exec @ARGV or die "exec: $!"' 400 $runner "$program" --data "$work/e2e" --e2e
+code=$?
+echo "exit code $code"
+[ -f "$work/e2e/e2e.log" ] && cat "$work/e2e/e2e.log"
+[ "$code" = 0 ] || { [ -f "$work/e2e/easyvocal.log" ] && tail -n 80 "$work/e2e/easyvocal.log"; fail "the e2e test of the unpacked download exited with $code"; }
+echo "PASS: $(basename "$archive") passes the e2e test"
