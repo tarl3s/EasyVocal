@@ -68,6 +68,8 @@ public sealed unsafe class CarbonHotkeys : IGlobalHotkeys, IHotkeyTestHooks
     private const uint Signature = 0x45566F63;     // 'EVoc'
     private const uint Exclusive = 1 << 1;
     public const int HotKeyExists = -9878;
+    /// <summary>eventNotHandledErr: the event goes on to the next handler.</summary>
+    public const int NotHandled = -9874;
     /// <summary>The id <see cref="Check"/> borrows; the real ones count up from 1.</summary>
     private const uint ProbeId = 0xBFFF;
 
@@ -124,19 +126,22 @@ public sealed unsafe class CarbonHotkeys : IGlobalHotkeys, IHotkeyTestHooks
     {
         try
         {
-            if (GCHandle.FromIntPtr(userData).Target is not CarbonHotkeys me) return 0;
+            if (GCHandle.FromIntPtr(userData).Target is not CarbonHotkeys me) return NotHandled;
             EventHotKeyId id;
-            if (GetEventParameter(theEvent, DirectObject, HotKeyIdType, IntPtr.Zero, (nuint)sizeof(EventHotKeyId), IntPtr.Zero, &id) != 0) return 0;
-            if (id.Signature == Signature) me.Raise(id.Id);
+            if (GetEventParameter(theEvent, DirectObject, HotKeyIdType, IntPtr.Zero, (nuint)sizeof(EventHotKeyId), IntPtr.Zero, &id) != 0) return NotHandled;
+            if (id.Signature != Signature) return NotHandled; // another handler's hotkey: let it have it
+            return me.Raise(id.Id) ? 0 : NotHandled;
         }
         catch (Exception ex) { AppLog.Error("A hotkey press failed", ex); } // never into Carbon
         return 0;
     }
 
-    private void Raise(uint id)
+    /// <summary>True when the id is one of this instance's hotkeys (then it was raised).</summary>
+    private bool Raise(uint id)
     {
-        if (disposed || !registered.TryGetValue(id, out var r)) return;
+        if (disposed || !registered.TryGetValue(id, out var r)) return false;
         Pressed?.Invoke(r.Action);
+        return true;
     }
 
     public bool Available => true;

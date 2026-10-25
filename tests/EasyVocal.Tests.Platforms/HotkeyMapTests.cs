@@ -103,6 +103,10 @@ public class HotkeyMapTests(ITestOutputHelper output)
         Assert.False(second.Register("voice:other", rare)); // X says BadAccess: another client has it
         Assert.Equal(HotkeyCheck.Taken, second.Check(rare));
 
+        Assert.True(first.SimulateLayoutChange()); // a keyboard layout change: grabbed again, still ours
+        Assert.Equal(1, first.Regrabs);
+        Assert.Equal(1, first.Count);
+        Assert.False(second.Register("voice:other", rare));
         Assert.True(first.SimulatePress("voice:robot"));
         lock (pressed) Assert.Equal(new[] { "voice:robot" }, pressed);
         first.UnregisterAll();

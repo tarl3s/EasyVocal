@@ -102,10 +102,10 @@ public sealed class BlackHoleProvider(ICommandRunner? runner = null) : IVirtualM
         return lines.Length == 0 ? "" : lines[^1];
     }
 
-    /// <summary>The askpass helper sudo runs for the password: a macOS dialog (osascript), the typed text on stdout.</summary>
+    /// <summary>The askpass helper sudo runs for the password: a macOS dialog (osascript, brought to the front), the typed text on stdout.</summary>
     public static string AskpassScript { get; } =
         "#!/bin/sh\n" +
-        "exec /usr/bin/osascript -e 'display dialog \"EasyVocal is installing BlackHole, the free virtual microphone. Type your Mac password to allow it:\" " +
+        "exec /usr/bin/osascript -e 'activate' -e 'display dialog \"EasyVocal is installing BlackHole, the free virtual microphone. Type your Mac password to allow it:\" " +
         "default answer \"\" with hidden answer with title \"EasyVocal\" with icon caution' -e 'text returned of result'\n";
 
     private static string WriteAskpass()

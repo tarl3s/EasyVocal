@@ -93,13 +93,11 @@ internal sealed partial class AppSession
         L.Load(language == "en" ? null : ReadLanguage(language), language);
 
         window = new MainWindow(controller);
+        bool trayLater = false;
         if (!options.Hosted)
         {
-            if (TrayAvailable(platform))
-            {
-                try { tray = new Tray(controller, ShowMainWindow, () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting")); }
-                catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
-            }
+            if (TrayAvailable(platform)) MakeTray();
+            else if (args.StartHidden) trayLater = true; // at login the tray's host may not be up yet: asked again below
             else AppLog.Info("This desktop shows no tray icons: closing the window minimises it");
             WatchDockReopen();
         }
@@ -114,8 +112,9 @@ internal sealed partial class AppSession
             ShowMainWindow();
         }));
         SetUpUpdates(args, DataFolder, controller);
-        bool startHidden = args.StartHidden && tray != null; // no tray to come back from: show the window
+        bool startHidden = args.StartHidden && (tray != null || trayLater); // no tray to come back from: show the window
         if (!startHidden) window.Show();
+        if (trayLater) WaitForTray(platform);
 
         // Opening the devices takes a moment: let the window paint first.
         var started = controller;
@@ -148,6 +147,46 @@ internal sealed partial class AppSession
         if (!Args.TestMode) return real;
         var audio = (IAudioBackend?)e2eDevices ?? PlatformFactory.ReadOnlyAudio(real);
         return real with { Audio = audio, Startup = SmokeStartup() };
+    }
+
+    private void MakeTray()
+    {
+        try { tray = new Tray(controller!, ShowMainWindow, () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting")); }
+        catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
+    }
+
+    /// <summary>How long a <c>--tray</c> start waits for the desktop's tray to appear (it may start after EasyVocal at login).</summary>
+    private static readonly TimeSpan TrayWait = TimeSpan.FromSeconds(6);
+
+    /// <summary>
+    /// A <c>--tray</c> start found no tray yet: asks again (off the UI thread) for a few seconds. When it comes, EasyVocal
+    /// stays hidden in it; when it doesn't, the window is shown (there would be nothing to bring it back from).
+    /// </summary>
+    private void WaitForTray(PlatformServices platform)
+    {
+        FireAndForget.Watch(Task.Run(async () =>
+        {
+            var until = DateTime.UtcNow + TrayWait;
+            bool found = false;
+            while (!found && DateTime.UtcNow < until && !quitting)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                found = TrayAvailable(platform);
+            }
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (quitting || window == null || controller == null) return;
+                if (found)
+                {
+                    MakeTray();
+                    window.CanHideToTray = tray != null;
+                    AppLog.Info("The desktop's tray appeared: EasyVocal stays hidden there");
+                    if (tray != null) return;
+                }
+                AppLog.Info("This desktop shows no tray icons: showing the window (closing it minimises it)");
+                window.Show();
+            });
+        }), "Waiting for the tray");
     }
 
     /// <summary>The desktop can show a tray icon (asked of the platform; GNOME without an AppIndicator extension can't).</summary>

@@ -51,8 +51,8 @@ public sealed record PlatformTexts(
     public static PlatformTexts MacOS { get; } = new(
         StartAtLogin: UiText.Mark("Open at login"),
         StartAtLoginRecommended: UiText.Mark("Open at login (recommended)"),
-        StartAtLoginRefused: UiText.Mark("EasyVocal couldn't be set to open at login."),
-        StartAtLoginRefusedTryAgain: UiText.Mark("EasyVocal couldn't be set to open at login. You can try again in Settings."),
+        StartAtLoginRefused: UiText.Mark("EasyVocal couldn't be set to open at login. If it isn't in your Applications folder yet, move it there first."),
+        StartAtLoginRefusedTryAgain: UiText.Mark("EasyVocal couldn't be set to open at login. If it isn't in your Applications folder yet, move it there, then try again in Settings."),
         AutomaticMic: UiText.Mark("Automatic (system default)"),
         DefaultHeadphones: UiText.Mark("System default"),
         WaitingForInstall: UiText.Mark("Waiting for macOS to finish installing…"),

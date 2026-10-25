@@ -35,12 +35,17 @@ public static class MicPermission
             {
                 if (!loaded)
                 {
-                    NativeLibrary.Load(AVFoundation); // registers AVCaptureDevice with the Objective-C runtime
+                    var library = NativeLibrary.Load(AVFoundation); // registers AVCaptureDevice with the Objective-C runtime
                     captureDevice = objc_getClass("AVCaptureDevice");
                     statusSelector = sel_registerName("authorizationStatusForMediaType:");
-                    // AVMediaTypeAudio is the NSString "soun".
-                    audioType = SendPtr(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), "soun");
-                    if (audioType != IntPtr.Zero) SendNint(audioType, sel_registerName("retain"), IntPtr.Zero);
+                    // AVFoundation's own AVMediaTypeAudio constant (an NSString *); its value "soun" only if it can't be read.
+                    if (NativeLibrary.TryGetExport(library, "AVMediaTypeAudio", out var symbol) && symbol != IntPtr.Zero)
+                        audioType = Marshal.ReadIntPtr(symbol);
+                    if (audioType == IntPtr.Zero)
+                    {
+                        audioType = SendPtr(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), "soun");
+                        if (audioType != IntPtr.Zero) SendNint(audioType, sel_registerName("retain"), IntPtr.Zero);
+                    }
                     loaded = true;
                     if (captureDevice == IntPtr.Zero || audioType == IntPtr.Zero) throw new EntryPointNotFoundException("AVCaptureDevice");
                 }

@@ -92,6 +92,10 @@ public static class DesktopFile
     }
 
     /// <summary>The largest PNG inside an .ico file (EasyVocal's icon is drawn as PNGs), or null.</summary>
+    /// <summary>A PNG's width from its IHDR chunk (bytes 16–19, big-endian); 256 when it can't be read.</summary>
+    public static int PngWidth(byte[] png) =>
+        png.Length >= 24 ? (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16, 4)) is var w and > 0 and <= 4096 ? w : 256 : 256;
+
     public static byte[]? LargestPngInIco(byte[] ico)
     {
         if (ico.Length < 6 || BitConverter.ToUInt16(ico, 2) != 1) return null;
@@ -186,7 +190,13 @@ public sealed class AppMenuEntry : IShortcutService
 
     public string ShortcutPath => Path.Combine(dataHome, "applications", DesktopFile.FileName);
 
-    public string IconPath => Path.Combine(dataHome, "icons", "hicolor", "256x256", "apps", DesktopFile.IconName + ".png");
+    /// <summary>Where the icon goes: the hicolor theme's folder for its size (<c>256x256</c> for a 256 px PNG).</summary>
+    public string IconPath => IconPathFor(IconPng() is { } png ? DesktopFile.PngWidth(png) : 256);
+
+    public string IconPathFor(int size) =>
+        Path.Combine(dataHome, "icons", "hicolor", size + "x" + size, "apps", DesktopFile.IconName + ".png");
+
+    private byte[]? IconPng() => icon?.Invoke() is { } ico ? DesktopFile.LargestPngInIco(ico) : null;
 
     private string Program => programPath ?? Environment.ProcessPath ?? throw new InvalidOperationException("The path of the running program is unknown.");
 
@@ -205,11 +215,12 @@ public sealed class AppMenuEntry : IShortcutService
     public void Create()
     {
         string? iconFile = null;
-        if (icon?.Invoke() is { } ico && DesktopFile.LargestPngInIco(ico) is { } png)
+        if (IconPng() is { } png)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(IconPath)!);
-            File.WriteAllBytes(IconPath, png);
-            iconFile = IconPath;
+            var path = IconPathFor(DesktopFile.PngWidth(png));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, png);
+            iconFile = path;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(ShortcutPath)!);
         File.WriteAllText(ShortcutPath, DesktopFile.Build(Program, Array.Empty<string>(), iconFile, autostart: false), new UTF8Encoding(false));

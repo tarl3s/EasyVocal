@@ -1,6 +1,7 @@
 using System.Security;
 using System.Text;
 using EasyVocal.Core.Platform;
+using EasyVocal.Platform.Unix;
 
 namespace EasyVocal.Platform.MacOS;
 
@@ -52,19 +53,34 @@ public sealed class LaunchAgent : IStartupService
 
     public bool IsEnabled() => File.Exists(PlistPath);
 
+    /// <summary>
+    /// Adds the plist (refused, with a sentence why, while EasyVocal runs from a translocated copy: that path is gone at
+    /// the next login) or removes it.
+    /// </summary>
     public void Set(bool on)
     {
         if (on)
         {
+            var program = Program;
+            if (InstallLayout.IsTranslocated(program))
+                throw new InvalidOperationException("Move EasyVocal to the Applications folder first: it runs from a temporary copy macOS made (" + program + ").");
             Directory.CreateDirectory(folder);
-            File.WriteAllText(PlistPath, BuildPlist(Program), new UTF8Encoding(false));
+            File.WriteAllText(PlistPath, BuildPlist(program), new UTF8Encoding(false));
         }
         else if (File.Exists(PlistPath)) File.Delete(PlistPath);
     }
 
-    /// <summary>Writes the plist again when it is missing or starts another place (EasyVocal moved). True when it wrote.</summary>
+    /// <summary>
+    /// Writes the plist again when it is missing or starts another place (EasyVocal moved). True when it wrote. A run from a
+    /// translocated copy never overwrites a good plist (it would point at a path that vanishes).
+    /// </summary>
     public bool Refresh()
     {
+        if (InstallLayout.IsTranslocated(Program))
+        {
+            AppLog.Info("Open at login: EasyVocal runs from a temporary copy macOS made; the login item is left as it is");
+            return false;
+        }
         var wanted = BuildPlist(Program);
         try
         {

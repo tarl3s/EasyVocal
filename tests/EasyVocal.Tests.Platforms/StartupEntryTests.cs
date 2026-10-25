@@ -91,7 +91,8 @@ public class StartupEntryTests : IDisposable
         Assert.Contains("\nIcon=" + menu.IconPath.Replace("\\", "\\\\") + "\n", text); // (a backslash, on Windows, is written doubled)
         Assert.Contains("\nCategories=AudioVideo;Audio;\n", text);
         Assert.EndsWith(Path.Combine("share", "applications", "easyvocal.desktop"), menu.ShortcutPath);
-        Assert.EndsWith(Path.Combine("icons", "hicolor", "256x256", "apps", "easyvocal.png"), menu.IconPath);
+        int size = DesktopFile.PngWidth(png);
+        Assert.EndsWith(Path.Combine("icons", "hicolor", size + "x" + size, "apps", "easyvocal.png"), menu.IconPath); // the folder of its size
 
         var moved = new AppMenuEntry(Path.Combine(temp, "share"), "/opt/EasyVocal/EasyVocal", () => ico);
         Assert.True(moved.Refresh());
@@ -104,5 +105,31 @@ public class StartupEntryTests : IDisposable
         Assert.False(NoAppMenuEntry.Instance.Supported);
         Assert.False(NoAppMenuEntry.Instance.Refresh());
         Assert.Throws<PlatformNotSupportedException>(NoAppMenuEntry.Instance.Create);
+    }
+
+    [Fact]
+    public void LaunchAgent_FromATranslocatedCopy_IsRefused_AndNeverOverwritesAGoodOne()
+    {
+        var agents = Path.Combine(temp, "LaunchAgents");
+        var good = new LaunchAgent(agents, "/Applications/EasyVocal.app/Contents/MacOS/EasyVocal");
+        good.Set(true);
+        var plist = File.ReadAllText(good.PlistPath);
+        var translocated = new LaunchAgent(agents, "/private/var/folders/ab/AppTranslocation/1234-5678/d/EasyVocal.app/Contents/MacOS/EasyVocal");
+        Assert.False(translocated.Refresh()); // a run from the temporary copy leaves the login item alone
+        Assert.Equal(plist, File.ReadAllText(good.PlistPath));
+        var refused = Assert.Throws<InvalidOperationException>(() => translocated.Set(true));
+        Assert.Contains("Applications", refused.Message);
+        Assert.Equal(plist, File.ReadAllText(good.PlistPath));
+        translocated.Set(false); // turning it off still works
+        Assert.False(good.IsEnabled());
+    }
+
+    [Fact]
+    public void PngWidth_ReadsTheHeader()
+    {
+        var png = new byte[32];
+        new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0, 0, 13, (byte)'I', (byte)'H', (byte)'D', (byte)'R', 0, 0, 2, 0, 0, 0, 2, 0 }.CopyTo(png, 0);
+        Assert.Equal(512, DesktopFile.PngWidth(png));
+        Assert.Equal(256, DesktopFile.PngWidth(new byte[3]));
     }
 }
