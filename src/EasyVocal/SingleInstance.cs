@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.Versioning;
 using System.IO.Pipes;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using EasyVocal.Core.Storage;
@@ -286,33 +287,25 @@ public sealed class SingleInstance : IDisposable
 
     private async Task ListenLoopAsync(SemaphoreSlim slots, CancellationToken ct)
     {
+        // macOS/Linux: one Unix socket of our own at the path .NET's pipe clients connect to (a second launch's Knock).
+        // .NET's own pipe server shares one socket between its instances and, under a quick connect-write-close, lost a
+        // wake now and then on macOS; a plain socket accepts every connection the same way.
+        using var unix = OperatingSystem.IsWindows() ? null : new UnixListener(SocketPath(names.PipeName));
         int failures = 0;
         while (!ct.IsCancellationRequested)
         {
             try
             {
                 await slots.WaitAsync(ct).ConfigureAwait(false);
-                NamedPipeServerStream server;
-                try
-                {
-                    // Several instances: the next one listens while a connection is still being read, so a client that
-                    // connects and says nothing never makes a real second launch wait (nor loses its wake).
-                    server = new NamedPipeServerStream(names.PipeName, PipeDirection.In, MaxClients + 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                }
+                Stream connection;
+                try { connection = unix != null ? await unix.AcceptAsync(ct).ConfigureAwait(false) : await AcceptPipeAsync(ct).ConfigureAwait(false); }
                 catch
                 {
-                    slots.Release();
-                    throw;
-                }
-                try { await server.WaitForConnectionAsync(ct).ConfigureAwait(false); }
-                catch
-                {
-                    server.Dispose();
                     slots.Release();
                     throw;
                 }
                 failures = 0;
-                _ = ReadOneAsync(server, slots, ct);
+                _ = ReadOneAsync(connection, slots, ct);
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)
@@ -329,8 +322,68 @@ public sealed class SingleInstance : IDisposable
         }
     }
 
+    /// <summary>Windows: the next connection on a named pipe instance of its own.</summary>
+    private async Task<Stream> AcceptPipeAsync(CancellationToken ct)
+    {
+        // Several instances: the next one listens while a connection is still being read, so a client that connects and
+        // says nothing never makes a real second launch wait (nor loses its wake).
+        var server = new NamedPipeServerStream(names.PipeName, PipeDirection.In, MaxClients + 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        try
+        {
+            await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
+            return server;
+        }
+        catch
+        {
+            server.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>A listening Unix socket at <c>path</c>, made on the first accept (again after a failure), removed on dispose.</summary>
+    private sealed class UnixListener(string path) : IDisposable
+    {
+        private Socket? socket;
+
+        public async Task<Stream> AcceptAsync(CancellationToken ct)
+        {
+            if (socket == null)
+            {
+                var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                try
+                {
+                    // We hold the lock and nobody answered on it (TryAcquire): a socket file there is a stale one.
+                    if (File.Exists(path)) File.Delete(path);
+                    s.Bind(new UnixDomainSocketEndPoint(path));
+                    s.Listen(16);
+                }
+                catch
+                {
+                    s.Dispose();
+                    throw;
+                }
+                socket = s;
+            }
+            try { return new NetworkStream(await socket.AcceptAsync(ct).ConfigureAwait(false), ownsSocket: true); }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (socket == null) return;
+            socket.Dispose();
+            socket = null;
+            try { File.Delete(path); } catch (Exception) { /* gone already */ }
+        }
+    }
+
     /// <summary>Reads one connection's byte (at most <see cref="ReadTimeout"/>), then frees its slot. Never throws.</summary>
-    private async Task ReadOneAsync(NamedPipeServerStream server, SemaphoreSlim slots, CancellationToken ct)
+    private async Task ReadOneAsync(Stream server, SemaphoreSlim slots, CancellationToken ct)
     {
         try
         {

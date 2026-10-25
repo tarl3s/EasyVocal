@@ -501,15 +501,17 @@ public class PactlTests(ITestOutputHelper output)
     private static string PulseState()
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var what in new[] { "list short sinks", "list short sources", "list short sink-inputs", "list source-outputs", "list short modules", "info" })
+        foreach (var what in new[] { "pactl list short sinks", "pactl list short sources", "pactl list sink-inputs", "pactl list source-outputs",
+                     "pactl list short modules", "pactl info", "timeout 2 parec --raw -d easyvocal_out.monitor | wc -c",
+                     "timeout 2 parec --raw -d easyvocal_mic | wc -c", "timeout 2 parec --raw -d easyvocal_mic --format=float32le --rate=48000 --channels=1 --latency-msec=10 | wc -c" })
         {
             try
             {
-                var psi = new System.Diagnostics.ProcessStartInfo("pactl", what) { RedirectStandardOutput = true, RedirectStandardError = true };
+                var psi = new System.Diagnostics.ProcessStartInfo("sh", new[] { "-c", what }) { RedirectStandardOutput = true, RedirectStandardError = true };
                 using var p = System.Diagnostics.Process.Start(psi)!;
                 string text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
                 p.WaitForExit(5000);
-                sb.Append("pactl ").Append(what).Append(":\n").Append(text);
+                sb.Append(what).Append(":\n").Append(text);
             }
             catch (Exception ex) { sb.Append(what).Append(": ").Append(ex.Message).Append('\n'); }
         }
