@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The macOS and Linux platform projects (and what they share), tested on any OS: the key maps, plist and .desktop
+       files, pactl's arguments and output, the sh helper, the updater's names; the system itself through fakes. Tests that
+       need the real system (CoreAudio, Carbon, X11, PulseAudio, sh) check OperatingSystem first and say "SKIPPED"
+       elsewhere. CA1416 is off here: the tests call macOS-/Linux-marked code on purpose and guard where it matters. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <!-- PortAudio for Windows too, so the shared PortAudio code also runs (and is checked) on a Windows machine. -->
+    <PackageReference Include="org.k2fsa.portaudio.runtime.win-x64" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <ProjectReference Include="..\..\src\EasyVocal.Platform.Unix\EasyVocal.Platform.Unix.csproj" />
+    <ProjectReference Include="..\..\src\EasyVocal.Platform.MacOS\EasyVocal.Platform.MacOS.csproj" />
+    <ProjectReference Include="..\..\src\EasyVocal.Platform.Linux\EasyVocal.Platform.Linux.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>
