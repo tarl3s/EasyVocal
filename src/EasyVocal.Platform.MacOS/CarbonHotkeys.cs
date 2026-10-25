@@ -66,7 +66,7 @@ public sealed unsafe class CarbonHotkeys : IGlobalHotkeys, IHotkeyTestHooks
     private const uint DirectObject = 0x2D2D2D2D;  // '----'
     private const uint HotKeyIdType = 0x686B6964;  // 'hkid'
     private const uint Signature = 0x45566F63;     // 'EVoc'
-    private const uint Exclusive = 1 << 1;
+    private const uint Exclusive = 1 << 0; // kEventHotKeyExclusive (1 << 1 is no option at all: every key was refused with paramErr)
     public const int HotKeyExists = -9878;
     /// <summary>eventNotHandledErr: the event goes on to the next handler.</summary>
     public const int NotHandled = -9874;

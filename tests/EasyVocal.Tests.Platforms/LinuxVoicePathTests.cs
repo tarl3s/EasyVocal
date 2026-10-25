@@ -239,11 +239,21 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         {
             double r = 0, o = 0;
             for (int i = at; i < at + W; i++) { r += real[i] * real[i]; o += reference[i] * reference[i]; }
-            bool hole = o / W > 1e-4 && r < 0.01 * o;
+            // Only inside a syllable (its edges move by a grain with where the blocks fall): sound 20 ms before and after.
+            bool inside = Loud(reference, at - 4 * W, W) && Loud(reference, at + 4 * W, W);
+            bool hole = inside && o / W > 1e-4 && r < 0.01 * o;
             if (hole && !inGap) gaps++;
             inGap = hole;
         }
         return gaps;
+    }
+
+    private static bool Loud(float[] x, int at, int count)
+    {
+        if (at < 0 || at + count > x.Length) return false;
+        double s = 0;
+        for (int i = at; i < at + count; i++) s += x[i] * x[i];
+        return s / count > 1e-4;
     }
 
     private static string Pactl(params string[] args)

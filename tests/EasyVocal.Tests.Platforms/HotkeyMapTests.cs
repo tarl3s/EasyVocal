@@ -127,11 +127,8 @@ public class HotkeyMapTests(ITestOutputHelper output)
         var rare = Key("Ctrl+Alt+Shift+F13");
         var pressed = new List<string>();
         hotkeys.Pressed += pressed.Add;
-        if (!hotkeys.Register("voice:robot", rare))
-        {
-            output.WriteLine("SKIPPED: Carbon refused the hotkey (no window server session?)");
-            return;
-        }
+        // A Mac with a session (CI's has one) must take it: a refusal here meant no hotkey ever worked on a Mac.
+        Assert.True(hotkeys.Register("voice:robot", rare), "Carbon took Ctrl+Alt+Shift+F13");
         Assert.Equal(1, hotkeys.Count);
         Assert.True(hotkeys.SimulatePress("voice:robot"));
         Assert.Equal(new[] { "voice:robot" }, pressed);
