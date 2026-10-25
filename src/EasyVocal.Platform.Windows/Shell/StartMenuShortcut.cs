@@ -63,15 +63,19 @@ public sealed class StartMenuShortcut : IShortcutService
     }
 
     /// <summary>For when the person asked for it: writes the shortcut again if it is missing or opens another place
-    /// (EasyVocal.exe was moved). Never throws: returns the error, or null when all is well.</summary>
-    public Exception? Refresh()
+    /// (EasyVocal.exe was moved). Never throws: false (and the error in the log) when it failed.</summary>
+    public bool Refresh()
     {
         try
         {
             if (!string.Equals(ReadTarget(), Target, StringComparison.OrdinalIgnoreCase)) Create();
-            return null;
+            return true;
         }
-        catch (Exception ex) { return ex; }
+        catch (Exception ex)
+        {
+            AppLog.Error("Couldn't create the Start menu shortcut", ex);
+            return false;
+        }
     }
 
     private static object CreateShell() =>

@@ -36,7 +36,7 @@
                         </StackPanel>
 
                         <StackPanel x:Name="CableMissingPanel" Margin="0,10,0,0">
-                            <TextBlock Text="{loc:T 'EasyVocal sends your voice to calls through a free virtual microphone called VB-CABLE.'}"
+                            <TextBlock x:Name="CableExplanation"
                                        TextWrapping="Wrap" />
                             <DockPanel Margin="0,10,0,0" LastChildFill="True">
                                 <Button x:Name="InstallButton" DockPanel.Dock="Left" Style="{StaticResource AccentButton}" MinWidth="96"

@@ -22,7 +22,7 @@
 
                 <TextBlock Text="{loc:T 'Call output'}" FontWeight="SemiBold" Margin="0,14,0,0" />
                 <ComboBox x:Name="OutputBox" Margin="0,6,0,0" SelectionChanged="OutputBox_SelectionChanged" />
-                <TextBlock Text="{loc:T 'Automatic sends your voice to the virtual microphone (CABLE Input). Change it only if you know why.'}"
+                <TextBlock x:Name="OutputHint"
                            Foreground="{StaticResource TextDim}" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
 
                 <TextBlock Text="{loc:T 'Headphones for “Hear me”'}" FontWeight="SemiBold" Margin="0,14,0,0" />

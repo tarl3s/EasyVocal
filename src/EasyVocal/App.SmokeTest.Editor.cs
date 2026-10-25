@@ -79,7 +79,7 @@ public partial class App
         SoundWriter.WriteWav(source, speech);
         var fileName = ItemOps.ImportSoundFile(source, c.SoundsFolder);
         var item = new SoundItem { Id = ItemOps.NewId(), Name = "Smoke speech", Emoji = "🗣️", FileName = fileName, Volume = 0.8 };
-        c.AddSound(item, SoundLoader.Load(Path.Combine(c.SoundsFolder, fileName)));
+        c.AddSound(item, SoundLoader.Load(Path.Combine(c.SoundsFolder, fileName), c.Platform.Decoders));
         int len = c.SoundSamples(item.Id)!.Length;
 
         main.Tabs.SelectedIndex = 1;
@@ -159,11 +159,11 @@ public partial class App
 
             // Save a copy as WAV (and MP3 when Windows can).
             var wav = Path.Combine(dataFolder, "smoke copy.wav");
-            Check(await w.Export(wav) && SoundLoader.Load(wav).Length == w.Current.Length, "Save a copy as WAV");
-            if (SoundWriter.Mp3Supported)
+            Check(await w.Export(wav) && SoundLoader.Load(wav, c.Platform.Decoders).Length == w.Current.Length, "Save a copy as WAV");
+            if (c.Platform.Mp3Encoder is { Supported: true })
             {
                 var mp3 = Path.Combine(dataFolder, "smoke copy.mp3");
-                Check(await w.Export(mp3) && SoundLoader.Load(mp3).Length > 0, "Save a copy as MP3");
+                Check(await w.Export(mp3) && SoundLoader.Load(mp3, c.Platform.Decoders).Length > 0, "Save a copy as MP3");
             }
 
             // Back to original, then one edit to save.

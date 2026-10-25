@@ -25,6 +25,9 @@ public partial class App : Application
     private const string InstanceMutexName = "EasyVocal.SingleInstance";
     private const string ShowWindowEventName = "EasyVocal.ShowWindow";
 
+    /// <summary>This computer's platform (Windows): the one place the app picks it. The tests swap some parts.</summary>
+    private static readonly PlatformServices RealPlatform = WindowsPlatform.Services;
+
     private Mutex? instanceMutex;
     private EventWaitHandle? showSignal;
     private RegisteredWaitHandle? showWait;
@@ -37,8 +40,6 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // Windows' own decoders (Media Foundation) and MP3 encoder for SoundLoader / SoundWriter.
-        WindowsPlatform.UseCodecs();
         var args = AppArgs.Parse(e.Args);
         string dataFolder = args.DataFolder ?? SettingsStore.DefaultFolder;
         bool smokeTest = args.SmokeTest, startHidden = args.StartHidden;
@@ -95,7 +96,7 @@ public partial class App : Application
         if (args.E2E) e2eDevices = new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
         // A test never changes Windows' real default devices (the smoke test lists the real devices, read-only).
         // ...and never touch the real "Start with Windows" entry.
-        var platform = WindowsPlatform.Services;
+        var platform = RealPlatform;
         if (args.TestMode) platform = platform with { Audio = (IAudioBackend?)e2eDevices ?? WindowsAudioBackend.ReadOnlyDefaults, Startup = SmokeStartup };
         controller = new AppController(dataFolder, platform);
         // ...and never downloads or runs the VB-CABLE installer: the e2e test "installs" its test cable instead.
@@ -124,7 +125,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
             if (quitting || window == null) return;
-            started.Start(new WpfHotkeys(window));
+            started.Start();
             // The tests must never touch the real Start menu.
             if (!args.TestMode) OfferStartMenuShortcut(started, startHidden ? null : window);
             // First run: the setup comes first (not in the tests: the smoke test opens it itself, and they must never download anything).
@@ -159,8 +160,7 @@ public partial class App : Application
             settings.StartMenuAsked = true;
             controller.Save();
         }
-        if (settings.StartMenuShortcut && shortcut.Refresh() is { } error)
-            AppLog.Error("Couldn't create the Start menu shortcut", error);
+        if (settings.StartMenuShortcut) shortcut.Refresh(); // a failure is logged
     }
 
     private void OnTextFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>

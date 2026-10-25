@@ -1,5 +1,6 @@
 using System;
 using EasyVocal.Core.Engine;
+using EasyVocal.Core.Platform;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -35,9 +36,10 @@ public sealed class WasapiMicInput : IAudioInput
             var f = capture.WaveFormat;
             converter = new FormatConverter(f.SampleRate, f.Channels, f.BitsPerSample, IsFloat(f));
         }
-        catch
+        catch (Exception ex)
         {
             device.Dispose();
+            if (IsAccessDenied(ex)) throw Denied(ex);
             throw;
         }
         capture.DataAvailable += OnData;
@@ -47,7 +49,18 @@ public sealed class WasapiMicInput : IAudioInput
     public event Action<float[], int>? Samples;
     public event Action<Exception?>? Stopped;
 
-    public void Start() => capture.StartRecording();
+    public void Start()
+    {
+        try { capture.StartRecording(); }
+        catch (Exception ex) when (IsAccessDenied(ex)) { throw Denied(ex); }
+    }
+
+    /// <summary>Windows' privacy settings ("Let apps access your microphone") refuse with E_ACCESSDENIED.</summary>
+    internal static bool IsAccessDenied(Exception ex) =>
+        ex is UnauthorizedAccessException || ex.HResult == unchecked((int)0x80070005);
+
+    private static MicPermissionDeniedException Denied(Exception ex) =>
+        new("Windows doesn't let EasyVocal use the microphone (Settings, Privacy, Microphone).", ex);
 
     /// <summary>Shared-mode devices usually report WAVE_FORMAT_EXTENSIBLE; the sub-format tells float from integer.</summary>
     private static bool IsFloat(WaveFormat f) => f.Encoding switch

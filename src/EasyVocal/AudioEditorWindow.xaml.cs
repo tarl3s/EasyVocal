@@ -23,6 +23,8 @@ public partial class AudioEditorWindow : Window
     private const int Sr = AudioFormat.SampleRate;
 
     private readonly AppController controller;
+    /// <summary>Stops a decode still running when the window closes.</summary>
+    private readonly CancellationTokenSource closing = new();
     private readonly string soundName;
     private readonly string emoji;
     private readonly double volume;
@@ -70,6 +72,7 @@ public partial class AudioEditorWindow : Window
         Root.SizeChanged += (_, _) => FitTools();
         Closed += (_, _) =>
         {
+            closing.Cancel();
             controller.PreviewEnded -= OnPreviewEnded;
             playTimer.Stop();
             if (playOffset >= 0) controller.StopPreview();
@@ -512,9 +515,10 @@ public partial class AudioEditorWindow : Window
             try
             {
                 var path = originalPath;
-                originalSamples = await Task.Run(() => SoundLoader.Load(path));
+                originalSamples = await Task.Run(() => SoundLoader.Load(path, controller.Platform.Decoders, closing.Token));
                 Status("");
             }
+            catch (OperationCanceledException) { return; } // the window closed
             catch (Exception ex)
             {
                 AppLog.Info("The original sound file couldn't be read: " + ex.Message);
@@ -538,7 +542,7 @@ public partial class AudioEditorWindow : Window
     private async void ExportButton_Click(object sender, RoutedEventArgs e)
     {
         StopPlaying();
-        bool mp3 = SoundWriter.Mp3Supported;
+        bool mp3 = Mp3 != null;
         var dialog = new SaveFileDialog
         {
             Title = L.T("Save a copy as…"),
@@ -552,11 +556,14 @@ public partial class AudioEditorWindow : Window
         await Export(dialog.FileName);
     }
 
-    /// <summary>Writes the sound as it is now to <paramref name="path"/> (.mp3 when the name says so and Windows can, else WAV).</summary>
+    /// <summary>This computer's MP3 encoder when it has a working one, else null (only WAV is offered).</summary>
+    private IMp3Encoder? Mp3 => controller.Platform.Mp3Encoder is { Supported: true } m ? m : null;
+
+    /// <summary>Writes the sound as it is now to <paramref name="path"/> (.mp3 when the name says so and the computer can, else WAV).</summary>
     internal async Task<bool> Export(string path)
     {
         var samples = AudioEdit.Clamped(Current);
-        bool asMp3 = string.Equals(Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase) && SoundWriter.Mp3Supported;
+        bool asMp3 = string.Equals(Path.GetExtension(path), ".mp3", StringComparison.OrdinalIgnoreCase) && Mp3 != null;
         busy = true;
         Status(L.T("Working…"));
         UpdateAll();
@@ -564,7 +571,7 @@ public partial class AudioEditorWindow : Window
         {
             await Task.Run(() =>
             {
-                if (asMp3) SoundWriter.WriteMp3(path, samples);
+                if (asMp3) Mp3!.Write(path, samples);
                 else SoundWriter.WriteWav(path, samples);
             });
             Status(L.F("Saved a copy: {0}", Path.GetFileName(path)));

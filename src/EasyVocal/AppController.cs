@@ -118,14 +118,13 @@ public sealed class AppController : IDisposable
 
     // ---------- start / stop ----------
 
-    /// <summary>Opens the audio, takes over <paramref name="globalHotkeys"/> (registers the keys, disposes it at the end) and loads the sounds.</summary>
-    public void Start(IGlobalHotkeys globalHotkeys)
+    /// <summary>
+    /// Creates the platform's virtual mic when it makes one, opens the audio, registers the hotkeys and loads the sounds.
+    /// UI thread (the hotkeys are created on it).
+    /// </summary>
+    public void Start()
     {
-        if (started || disposed)
-        {
-            globalHotkeys.Dispose();
-            return;
-        }
+        if (started || disposed) return;
         started = true;
 
         if (FirstRun) Save(); // settings.json exists from now on
@@ -140,15 +139,16 @@ public sealed class AppController : IDisposable
         mixer.PlayingChanged += OnPlayingChanged;
         engine.StateChanged += OnEngineStateChanged;
 
-        hotkeys = globalHotkeys;
-        hotkeys.Pressed += OnHotkey;
+        hotkeys = CreateHotkeys();
+        if (hotkeys != null) hotkeys.Pressed += OnHotkeyPressed;
         RebuildHotkeys();
 
+        PrepareVirtualMic();
         devices.Changed += OnDevicesChanged;
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio started: " + engine.State);
-        if (RemembersDefaults && Platform.VirtualMic.Find(devices.Outputs()) == null)
+        if (TakesDefaults && RemembersDefaults && Platform.VirtualMic.Find(devices.Outputs()) == null)
         {
             AppLog.Info("VB-CABLE never showed up: the default devices remembered for its install are forgotten");
             ForgetDefaultsBeforeCable();
@@ -181,14 +181,16 @@ public sealed class AppController : IDisposable
             devices.Changed -= OnDevicesChanged;
             if (hotkeys != null)
             {
-                hotkeys.Pressed -= OnHotkey;
+                hotkeys.Pressed -= OnHotkeyPressed;
                 hotkeys.Dispose();
             }
             engine.StateChanged -= OnEngineStateChanged;
             mixer.PlayingChanged -= OnPlayingChanged;
         }
         StopPreview();
+        loadCancel.Cancel();
         engine.Dispose();
+        RemoveVirtualMic();
         if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
         if (savePending) SaveNow();
         saveTimer.Stop();
@@ -719,7 +721,8 @@ public sealed class AppController : IDisposable
         }
         else
         {
-            try { samples = SoundLoader.Load(load.Path); }
+            try { samples = SoundLoader.Load(load.Path, Platform.Decoders, loadCancel.Token); }
+            catch (OperationCanceledException) { return false; } // quitting
             catch (Exception ex) { AppLog.Info($"Sound '{load.Id}' skipped ({load.FileName}): {ex.Message}"); }
         }
         ui.BeginInvoke(() =>
@@ -742,10 +745,38 @@ public sealed class AppController : IDisposable
 
     // ---------- hotkeys ----------
 
-    /// <summary>Registers every hotkey of <see cref="HotkeyMap.All"/> again; the ones Windows refuses go to <see cref="HotkeyProblems"/>.</summary>
+    /// <summary>The platform's hotkeys, or null when they can't be made (logged; everything else works with clicks).</summary>
+    private IGlobalHotkeys? CreateHotkeys()
+    {
+        try
+        {
+            var made = Platform.CreateHotkeys(null);
+            if (!made.Available) AppLog.Info("Global hotkeys are not available here: " + made.UnavailableReason);
+            return made;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Global hotkeys could not be set up", ex);
+            return null;
+        }
+    }
+
+    /// <summary>A press may arrive on any thread: it is handled on the UI thread (right away when it is already there).</summary>
+    private void OnHotkeyPressed(string action)
+    {
+        if (ui.CheckAccess()) OnHotkey(action);
+        else ui.BeginInvoke(() => OnHotkey(action));
+    }
+
+    /// <summary>Registers every hotkey of <see cref="HotkeyMap.All"/> again; the ones the system refuses go to <see cref="HotkeyProblems"/>.</summary>
     public void RebuildHotkeys()
     {
         if (hotkeys == null || disposed) return;
+        if (!hotkeys.Available)
+        {
+            hotkeyProblems = new[] { L.T(hotkeys.UnavailableReason ?? "Global hotkeys aren't available on this computer.") };
+            return;
+        }
         hotkeys.UnregisterAll();
         if (typing && TypingProbe?.Invoke() == false) typing = false; // the box was left without telling us
         if (captureSuspends > 0 || typing) return; // taken back by ResumeHotkeys / SetTyping(false)
@@ -803,7 +834,7 @@ public sealed class AppController : IDisposable
     internal int RegisteredHotkeyCount => hotkeys?.Count ?? 0;
 
     /// <summary>The highest hotkey id in use (the e2e test checks it doesn't keep growing).</summary>
-    internal int HighestHotkeyId => hotkeys?.HighestId ?? 0;
+    internal int HighestHotkeyId => (hotkeys as IHotkeyTestHooks)?.HighestId ?? 0;
 
     /// <summary>The headphones of the running session stopped working (unplugged).</summary>
     internal bool MonitorLost => engine.MonitorLost;
@@ -812,10 +843,13 @@ public sealed class AppController : IDisposable
     internal bool IsSoundLoaded(string soundId) => mixer.TryGet(soundId, out _);
 
     /// <summary>For the e2e test: Windows reporting the press of the hotkey registered for <paramref name="action"/>.</summary>
-    internal bool SimulateHotkeyPress(string action) => hotkeys?.SimulatePress(action) ?? false;
+    internal bool SimulateHotkeyPress(string action) => (hotkeys as IHotkeyTestHooks)?.SimulatePress(action) ?? false;
 
-    /// <summary>True when Windows would accept this combination now. Only meaningful after <see cref="SuspendHotkeys"/>.</summary>
-    public bool IsHotkeyFree(Hotkey key) => hotkeys?.IsFree(key) ?? true;
+    /// <summary>
+    /// False only when the system says another app (or EasyVocal) owns this combination now; "can't tell" counts as free.
+    /// Only meaningful after <see cref="SuspendHotkeys"/>.
+    /// </summary>
+    public bool IsHotkeyFree(Hotkey key) => hotkeys?.Check(key) != HotkeyCheck.Taken;
 
     /// <summary>What to call an action ("voice:robot"…) on screen: built-in names translated, the person's own as typed.</summary>
     public string ActionDisplayName(string action)
@@ -890,6 +924,11 @@ public sealed class AppController : IDisposable
 
     // The three factories run on the UI thread, inside engine.Start / TryRecover; each notes what it opened.
 
+    /// <summary>The last time a microphone was opened, the system refused it (privacy settings). Any thread.</summary>
+    public bool MicPermissionDenied { get => Volatile.Read(ref micDenied); private set => Volatile.Write(ref micDenied, value); }
+
+    private bool micDenied;
+
     private IAudioInput MakeInput()
     {
         micInUse = null;
@@ -897,7 +936,15 @@ public sealed class AppController : IDisposable
         // Never pass null: null means Windows' default microphone, which could be the virtual cable (a feedback loop).
         var pick = micPicker.Pick(Settings.MicDeviceId, devices.Inputs(), DateTime.UtcNow);
         var id = pick.Id ?? throw new InvalidOperationException("No microphone is connected.");
-        var input = devices.OpenMic(id);
+        IAudioInput input;
+        try { input = devices.OpenMic(id); }
+        catch (MicPermissionDeniedException ex)
+        {
+            if (!MicPermissionDenied) AppLog.Error("The system refuses EasyVocal the microphone", ex);
+            MicPermissionDenied = true;
+            throw;
+        }
+        MicPermissionDenied = false;
         if (pick.Fallback) AppLog.Info("The chosen microphone is missing: using " + pick.Name + " for now");
         micInUse = pick;
         usedMic = id;
@@ -943,12 +990,62 @@ public sealed class AppController : IDisposable
 
     private bool RemembersDefaults => Settings.PreCableOutputId != null || Settings.PreCableInputId != null;
 
+    /// <summary>The virtual mic's install may take the system's default devices (VB-CABLE): the remember / put back / Fix logic runs.</summary>
+    private bool TakesDefaults => Platform.VirtualMic.TakesDefaultsOnInstall;
+
+    // ---------- the virtual mic EasyVocal makes itself (Linux) ----------
+
+    private static readonly TimeSpan VirtualMicWait = TimeSpan.FromSeconds(5);
+    private bool virtualMicCreated;
+    private readonly CancellationTokenSource loadCancel = new();
+
+    /// <summary>
+    /// Where the platform makes the virtual mic (CanCreate): removes one a crashed run left, then creates this session's,
+    /// before any device is opened. Waits at most a few seconds; a failure is logged (the setup then shows it missing).
+    /// </summary>
+    private void PrepareVirtualMic()
+    {
+        var vm = Platform.VirtualMic;
+        if (!vm.CanCreate) return;
+        try
+        {
+            var task = Task.Run(async () =>
+            {
+                using var cts = new CancellationTokenSource(VirtualMicWait);
+                await vm.CleanStaleAsync(cts.Token).ConfigureAwait(false);
+                return await vm.CreateAsync(cts.Token).ConfigureAwait(false);
+            });
+            virtualMicCreated = task.Wait(VirtualMicWait + TimeSpan.FromSeconds(1)) && task.Result;
+        }
+        catch (Exception ex) { AppLog.Error("Creating the virtual microphone failed", ex); }
+        AppLog.Info(virtualMicCreated ? vm.Name + " created" : vm.Name + " could not be created");
+    }
+
+    /// <summary>On quit: removes the virtual mic this session created (waits a few seconds at most).</summary>
+    private void RemoveVirtualMic()
+    {
+        if (!virtualMicCreated) return;
+        virtualMicCreated = false;
+        var vm = Platform.VirtualMic;
+        try
+        {
+            Task.Run(async () =>
+            {
+                using var cts = new CancellationTokenSource(VirtualMicWait);
+                await vm.RemoveAsync(cts.Token).ConfigureAwait(false);
+            }).Wait(VirtualMicWait + TimeSpan.FromSeconds(1));
+            AppLog.Info(vm.Name + " removed");
+        }
+        catch (Exception ex) { AppLog.Error("Removing the virtual microphone failed", ex); }
+    }
+
     /// <summary>
     /// Right before the VB-CABLE installer runs: remembers Windows' default playback device and microphone (not when
     /// they are cable devices already), so they can be put back if the install makes the cable the default.
     /// </summary>
     public void RememberDefaultsBeforeCable()
     {
+        if (!TakesDefaults) return;
         Settings.PreCableOutputId = DefaultDeviceRules.Remember(devices.Defaults(playback: true), devices.Outputs());
         Settings.PreCableInputId = DefaultDeviceRules.Remember(devices.Defaults(playback: false), devices.Inputs());
         restoreUntil = null;
@@ -971,7 +1068,7 @@ public sealed class AppController : IDisposable
     /// </summary>
     private void CheckDefaults()
     {
-        if (disposed) return;
+        if (disposed || !TakesDefaults) return;
         var outputs = devices.Outputs();
         var outDefaults = devices.Defaults(playback: true);
         if (RemembersDefaults)
@@ -1006,7 +1103,7 @@ public sealed class AppController : IDisposable
     /// </summary>
     public bool FixDefaults()
     {
-        if (disposed) return false;
+        if (disposed || !TakesDefaults) return false;
         bool ok = true;
         var outputs = devices.Outputs();
         var outDefaults = devices.Defaults(playback: true);

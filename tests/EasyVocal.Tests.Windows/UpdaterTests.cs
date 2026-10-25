@@ -6,11 +6,12 @@ using System.Text;
 using System.Text.RegularExpressions;
 using EasyVocal.Core.Update;
 using EasyVocal.Platform.Windows;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
-/// <summary>The updater on Windows, without the network: the release zip, the helper script (run for real on
-/// throwaway folders whose names have spaces, accents and quotes) and the service with a fake source and launcher.</summary>
+/// <summary>The updater on Windows, without the network: the release zip, the PowerShell helper (run for real on
+/// throwaway folders whose names have spaces, accents and quotes) and the service with Windows' platform.</summary>
 public class UpdaterTests : IDisposable
 {
     private readonly string temp = Path.Combine(Path.GetTempPath(), "EV_Test_Update_" + Guid.NewGuid().ToString("N"));
@@ -70,37 +71,32 @@ public class UpdaterTests : IDisposable
     }
 
     [Fact]
-    public void ExtractExe_TakesTheExeOut()
+    public void Unpack_TakesTheExeOut_AndRefusesANonProgram()
     {
         var zip = MakeZip("ok.zip", ("EasyVocal.exe", FakeExe), ("README.txt", new byte[] { 1 }));
-        var exe = UpdatePackage.ExtractExe(zip, Path.Combine(temp, "out"), Win);
+        var exe = Win.Unpack(zip, Path.Combine(temp, "out"), default);
         Assert.Equal(Path.Combine(temp, "out", "EasyVocal.exe"), exe);
         Assert.Equal(FakeExe, File.ReadAllBytes(exe));
         Assert.False(File.Exists(Path.Combine(temp, "out", "README.txt"))); // only the exe is unpacked
 
-        var nested = MakeZip("nested.zip", ("EasyVocal-0.3.0/EasyVocal.exe", FakeExe));
-        Assert.Equal(FakeExe, File.ReadAllBytes(UpdatePackage.ExtractExe(nested, Path.Combine(temp, "out2"), Win)));
+        var text = MakeZip("text.zip", ("EasyVocal.exe", Encoding.ASCII.GetBytes("<html>404</html>")));
+        Assert.Equal(UpdateProblem.NotAnExe, Assert.Throws<UpdateException>(() => Win.Unpack(text, Path.Combine(temp, "x"), default)).Problem);
+        Assert.False(File.Exists(Path.Combine(temp, "x", "EasyVocal.exe"))); // the non-program was removed again
+        Assert.Equal(UpdateProblem.MissingExe,
+            Assert.Throws<UpdateException>(() => Win.Unpack(MakeZip("none.zip", ("Other.exe", FakeExe)), Path.Combine(temp, "y"), default)).Problem);
     }
 
     [Fact]
-    public void ExtractExe_RefusesBadZips()
+    public void InstallRootAndSelfUpdate_AreTheExeAndItsFolder()
     {
-        void Fails(UpdateProblem problem, string zip) =>
-            Assert.Equal(problem, Assert.Throws<UpdateException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "x"), Win)).Problem);
-
-        Fails(UpdateProblem.MissingExe, MakeZip("none.zip", ("Other.exe", FakeExe)));
-        Fails(UpdateProblem.MissingExe, MakeZip("deep.zip", ("a/b/EasyVocal.exe", FakeExe)));
-        Fails(UpdateProblem.MissingExe, MakeZip("empty.zip"));
-        Fails(UpdateProblem.UnsafeZip, MakeZip("slip.zip", ("EasyVocal.exe", FakeExe), ("../../evil.txt", new byte[] { 1 })));
-        Fails(UpdateProblem.UnsafeZip, MakeZip("slip2.zip", ("..\\EasyVocal.exe", FakeExe)));
-        Fails(UpdateProblem.NotAnExe, MakeZip("text.zip", ("EasyVocal.exe", Encoding.ASCII.GetBytes("<html>404</html>"))));
-        var notZip = Path.Combine(temp, "page.zip");
-        File.WriteAllText(notZip, "<html>rate limited</html>");
-        Fails(UpdateProblem.NotAZip, notZip);
-
-        Assert.False(File.Exists(Path.Combine(temp, "evil.txt")));
-        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(temp)!, "evil.txt")));
-        Assert.False(File.Exists(Path.Combine(temp, "x", "EasyVocal.exe"))); // the non-program was removed again
+        var dir = Path.Combine(temp, "app");
+        Directory.CreateDirectory(dir);
+        var exe = Path.Combine(dir, "EasyVocal.exe");
+        Assert.Equal(exe, Win.InstallRoot(exe));
+        Assert.True(Win.CanSelfUpdate(exe));
+        Assert.Empty(Directory.GetFiles(dir)); // the probe file is gone again
+        Assert.False(Win.CanSelfUpdate(Path.Combine(temp, "missing", "EasyVocal.exe")));
+        Assert.IsType<PowerShellLauncher>(Win.Launcher);
     }
 
     // ---------- the helper script ----------
@@ -252,85 +248,25 @@ public class UpdaterTests : IDisposable
         Assert.Equal("MZ new version", File.ReadAllText(target));
     }
 
-    // ---------- the service, with fakes ----------
 
-    private sealed class FakeSource : IUpdateSource
-    {
-        public string? Json;
-        public Exception? CheckError;
-        public string? ZipPath;
-        public int Downloads;
-        public TaskCompletionSource? Gate;
+    // ---------- the service with Windows' platform (the rest is in the portable UpdateServiceTests) ----------
 
-        public Task<string> GetLatestReleaseJsonAsync(CancellationToken ct) =>
-            CheckError != null ? Task.FromException<string>(CheckError) : Task.FromResult(Json ?? "");
-
-        public async Task DownloadAsync(string url, string path, long maxBytes, IProgress<double>? progress, CancellationToken ct)
-        {
-            Downloads++;
-            if (Gate != null) await Gate.Task.WaitAsync(ct);
-            File.Copy(ZipPath ?? throw new HttpRequestException("offline"), path, overwrite: true);
-            progress?.Report(1);
-        }
-    }
-
-    private sealed class FakeLauncher : IHelperLauncher
-    {
-        public readonly List<string> Started = new();
-        public void Start(string scriptPath) => Started.Add(scriptPath);
-    }
-
-    private (UpdateService Service, FakeSource Source, FakeLauncher Launcher, string Exe) MakeService()
+    [Fact]
+    public async Task Download_ThenInstall_WritesThePowerShellHelper()
     {
         var installDir = Path.Combine(temp, "Área de Trabalho", "EasyVocal");
         Directory.CreateDirectory(installDir);
         var exe = Path.Combine(installDir, "EasyVocal.exe");
         File.WriteAllText(exe, "MZ old");
-        var source = new FakeSource();
-        var launcher = new FakeLauncher();
-        return (new UpdateService(Win, source, launcher, new AppVersion(0, 2, 0), exe, Path.Combine(temp, "work")), source, launcher, exe);
-    }
-
-    [Fact]
-    public async Task Check_TellsUpToDateAvailableOrFailed()
-    {
-        var (service, source, _, _) = MakeService();
-        source.Json = ReleaseJson("v0.2.0");
-        Assert.Equal(UpdateStatus.UpToDate, (await service.CheckAsync(null, manual: false)).Status);
-
-        source.Json = ReleaseJson("v0.3.0");
-        var available = await service.CheckAsync(null, manual: false);
-        Assert.Equal(UpdateStatus.Available, available.Status);
-        Assert.Equal("EasyVocal-win-x64.zip", available.Asset!.Name);
-        Assert.Equal(UpdateStatus.UpToDate, (await service.CheckAsync("0.3.0", manual: false)).Status);
-        Assert.Equal(UpdateStatus.Available, (await service.CheckAsync("0.3.0", manual: true)).Status);
-
-        source.Json = ReleaseJson("v0.3.0", assets: "[]");
-        Assert.Equal(UpdateStatus.Failed, (await service.CheckAsync(null, manual: true)).Status);
-        source.Json = "{\"message\":\"Not Found\"}";
-        Assert.Equal(UpdateStatus.Failed, (await service.CheckAsync(null, manual: true)).Status);
-        source.CheckError = new HttpRequestException("no internet");
-        Assert.Equal(UpdateStatus.Failed, (await service.CheckAsync(null, manual: true)).Status);
-        source.CheckError = new TaskCanceledException("timeout");
-        Assert.Equal(UpdateStatus.Failed, (await service.CheckAsync(null, manual: true)).Status);
-    }
-
-    [Fact]
-    public async Task Download_ThenInstall_WritesTheHelperAndStartsIt()
-    {
-        var (service, source, launcher, exe) = MakeService();
-        source.ZipPath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe));
-        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
-        double last = 0;
-        var newExe = await service.DownloadAsync(asset, new SyncProgress(p => last = p), CancellationToken.None);
+        var source = new FakeUpdateSource { ArchivePath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe)) };
+        var launcher = new FakeHelperLauncher();
+        var service = new UpdateService(Win, source, launcher, new AppVersion(0, 2, 0), exe, Path.Combine(temp, "work"));
+        var newExe = await service.DownloadAsync(new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000), null, CancellationToken.None);
         Assert.Equal(FakeExe, File.ReadAllBytes(newExe));
-        Assert.Equal(1, last);
-        Assert.StartsWith(Path.Combine(temp, "work"), newExe);
-        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(newExe)!)!, "release.zip")), "the zip is removed once unpacked");
 
-        var log = Path.Combine(temp, "update.log");
-        var script = service.StartInstall(newExe, 4321, log, "--data \"C:\\d\"");
+        var script = service.StartInstall(newExe, 4321, Path.Combine(temp, "update.log"), "--data \"C:\\d\"");
         Assert.Equal(new[] { script }, launcher.Started);
+        Assert.Equal("update.ps1", Path.GetFileName(script));
         var bytes = File.ReadAllBytes(script);
         Assert.True(bytes.Take(3).SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF }), "the script has a BOM");
         var text = File.ReadAllText(script);
@@ -338,87 +274,5 @@ public class UpdaterTests : IDisposable
         Assert.Contains("$NewExe = " + HelperScript.Quote(newExe), text);
         Assert.Contains("$WaitPid = 4321", text);
         Assert.Equal("MZ old", File.ReadAllText(exe)); // nothing is replaced until the helper runs
-    }
-
-    [Fact]
-    public async Task Download_FailuresLeaveNothingBehind()
-    {
-        var (service, source, _, _) = MakeService();
-        var work = Path.Combine(temp, "work");
-        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
-
-        var tooBig = await Assert.ThrowsAsync<UpdateException>(() => service.DownloadAsync(asset with { Size = UpdateRules.MaxDownloadBytes + 1 }, null, default));
-        Assert.Equal(UpdateProblem.TooBig, tooBig.Problem);
-        Assert.Equal(0, source.Downloads);
-
-        var offline = await Assert.ThrowsAsync<UpdateException>(() => service.DownloadAsync(asset, null, default));
-        Assert.Equal(UpdateProblem.Download, offline.Problem);
-
-        source.ZipPath = MakeZip("bad.zip", ("Readme.txt", new byte[] { 1 }));
-        Assert.Equal(UpdateProblem.MissingExe, (await Assert.ThrowsAsync<UpdateException>(() => service.DownloadAsync(asset, null, default))).Problem);
-
-        source.ZipPath = MakeZip("good.zip", ("EasyVocal.exe", FakeExe));
-        source.Gate = new TaskCompletionSource();
-        using var cancel = new CancellationTokenSource();
-        var running = service.DownloadAsync(asset, null, cancel.Token);
-        cancel.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
-
-        Assert.Empty(Directory.Exists(work) ? Directory.GetFileSystemEntries(work) : Array.Empty<string>());
-    }
-
-    [Fact]
-    public void ExtractExe_Cancelled_StopsAndRemovesWhatItWrote()
-    {
-        var zip = MakeZip("big.zip", ("EasyVocal.exe", FakeExe));
-        using var cancel = new CancellationTokenSource();
-        cancel.Cancel();
-        Assert.ThrowsAny<OperationCanceledException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "cancelled"), Win, cancel.Token));
-        Assert.False(File.Exists(Path.Combine(temp, "cancelled", "EasyVocal.exe")));
-    }
-
-    [Fact]
-    public async Task Download_CancelledWhileTheZipIsChecked_LeavesNothingBehind()
-    {
-        // "Checking the download…" (the progress reached 100 %) and the window closes.
-        var (service, source, _, _) = MakeService();
-        source.ZipPath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe));
-        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
-        using var cancel = new CancellationTokenSource();
-        var progress = new SyncProgress(p => { if (p >= 1) cancel.Cancel(); });
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.DownloadAsync(asset, progress, cancel.Token));
-        var work = Path.Combine(temp, "work");
-        Assert.Empty(Directory.Exists(work) ? Directory.GetFileSystemEntries(work) : Array.Empty<string>());
-    }
-
-    [Fact]
-    public async Task Discard_RemovesADownloadNobodyInstalls()
-    {
-        var (service, source, _, exe) = MakeService();
-        source.ZipPath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe));
-        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
-        var newExe = await service.DownloadAsync(asset, null, CancellationToken.None);
-        service.Discard(newExe);
-        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(temp, "work")));
-        service.Discard(Path.Combine(Path.GetDirectoryName(exe)!, "new", "EasyVocal.exe")); // not a download: left alone
-        Assert.True(File.Exists(exe));
-    }
-
-    [Fact]
-    public void CleanStale_RemovesTheOldCopy()
-    {
-        var (service, _, _, exe) = MakeService();
-        File.WriteAllText(exe + ".old", "left by an update");
-        service.CleanStale();
-        Assert.False(File.Exists(exe + ".old"));
-        Assert.True(File.Exists(exe));
-        Assert.True(service.CanReplaceExe());
-    }
-
-    // ---------- helpers ----------
-
-    private sealed class SyncProgress(Action<double> report) : IProgress<double>
-    {
-        public void Report(double value) => report(value);
     }
 }

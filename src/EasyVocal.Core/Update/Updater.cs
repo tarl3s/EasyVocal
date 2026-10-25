@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Formats.Tar;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Reflection;
@@ -261,63 +262,179 @@ public static class ReleaseNotes
     }
 }
 
-/// <summary>Checks a downloaded release zip and takes its EasyVocal.exe out.</summary>
+/// <summary>
+/// Unpacks downloaded releases with the same safety checks for every platform: no entry outside its folder (zip-slip),
+/// no links, a size limit; Unix permission bits (the executable bit) are kept on macOS and Linux.
+/// </summary>
 public static class UpdatePackage
 {
-    /// <summary>A zip that unpacks to more than this is not a release (a "zip bomb").</summary>
+    /// <summary>A release that unpacks to more than this is not a release (a "zip bomb").</summary>
     public const long MaxUnpackedBytes = 600L * 1024 * 1024;
 
     /// <summary>
-    /// Checks <paramref name="zipPath"/> (a zip; no entry outside its folder; an EasyVocal.exe at its top or in its one
-    /// top folder that is a program for this system) and writes that exe to <paramref name="folder"/>. Returns its path.
-    /// A cancellation while it is written stops it and removes what was written.
+    /// Checks the zip at <paramref name="zipPath"/> (every entry stays inside its folder, the size limit) and writes its
+    /// <paramref name="fileName"/> (at the top or in its one top folder) to <paramref name="folder"/>. Returns its path.
+    /// A cancellation while it is written stops it and removes what was written. The platform checks the file itself.
     /// </summary>
-    public static string ExtractExe(string zipPath, string folder, IUpdaterPlatform platform, CancellationToken ct = default)
+    public static string ExtractFile(string zipPath, string folder, string fileName, CancellationToken ct = default)
     {
-        var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var root = Root(folder);
         ZipArchive archive;
         try { archive = ZipFile.OpenRead(zipPath); }
         catch (InvalidDataException ex) { throw new UpdateException(UpdateProblem.NotAZip, "The download is not a zip file.", ex); }
         using (archive)
         {
-            ZipArchiveEntry? exe = null;
-            int exeDepth = int.MaxValue;
+            ZipArchiveEntry? found = null;
+            int foundDepth = int.MaxValue;
             long total = 0;
             foreach (var entry in archive.Entries)
             {
-                string target;
-                try { target = Path.GetFullPath(Path.Combine(root, entry.FullName)); }
-                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-                {
-                    throw new UpdateException(UpdateProblem.UnsafeZip, "The download has a file with a broken name.", ex);
-                }
-                if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                    throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a file outside its folder: " + entry.FullName);
+                SafeTarget(root, entry.FullName);
                 total += Math.Max(0, entry.Length);
-                if (total > MaxUnpackedBytes) throw new UpdateException(UpdateProblem.TooBig, "The download unpacks to more than expected.");
-                if (!string.Equals(entry.Name, platform.ExeName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (total > MaxUnpackedBytes) throw TooBig();
+                if (!string.Equals(entry.Name, fileName, StringComparison.OrdinalIgnoreCase)) continue;
                 int depth = entry.FullName.Replace('\\', '/').Trim('/').Split('/').Length;
-                if (depth <= 2 && depth < exeDepth) { exe = entry; exeDepth = depth; }
+                if (depth <= 2 && depth < foundDepth) { found = entry; foundDepth = depth; }
             }
-            if (exe == null) throw new UpdateException(UpdateProblem.MissingExe, "The download doesn't contain " + platform.ExeName + ".");
+            if (found == null) throw new UpdateException(UpdateProblem.MissingExe, "The download doesn't contain " + fileName + ".");
 
             Directory.CreateDirectory(root);
-            var dest = Path.Combine(root, platform.ExeName);
+            var dest = Path.Combine(root, fileName);
             ct.ThrowIfCancellationRequested();
-            CopyOut(exe, dest, ct);
-            if (!platform.LooksLikeProgram(dest))
-            {
-                TryDelete(dest);
-                throw new UpdateException(UpdateProblem.NotAnExe, "The EasyVocal.exe in the download is not a program for this computer.");
-            }
+            using (var from = found.Open()) CopyOut(from, dest, ct);
+            SetMode(dest, UnixMode(found));
             return dest;
         }
     }
 
-    /// <summary>Writes the entry to <paramref name="dest"/> in chunks, so a cancellation stops it quickly (the exe is ~80 MB).</summary>
-    private static void CopyOut(ZipArchiveEntry entry, string dest, CancellationToken ct)
+    /// <summary>
+    /// Unpacks a whole zip or tar.gz (told apart by their first bytes) into <paramref name="folder"/>, with the checks
+    /// above; symbolic and hard links are refused. A cancellation stops it (what was written stays for the caller to remove).
+    /// </summary>
+    public static void ExtractAll(string archivePath, string folder, CancellationToken ct = default)
     {
-        using (var from = entry.Open())
+        var root = Root(folder);
+        Directory.CreateDirectory(root);
+        if (IsGzip(archivePath)) ExtractTarGz(archivePath, root, ct);
+        else ExtractZip(archivePath, root, ct);
+    }
+
+    private static void ExtractZip(string zipPath, string root, CancellationToken ct)
+    {
+        ZipArchive archive;
+        try { archive = ZipFile.OpenRead(zipPath); }
+        catch (InvalidDataException ex) { throw new UpdateException(UpdateProblem.NotAZip, "The download is not a zip or tar.gz file.", ex); }
+        using (archive)
+        {
+            long total = 0;
+            foreach (var entry in archive.Entries)
+            {
+                SafeTarget(root, entry.FullName);
+                total += Math.Max(0, entry.Length);
+                if (total > MaxUnpackedBytes) throw TooBig();
+            }
+            foreach (var entry in archive.Entries)
+            {
+                ct.ThrowIfCancellationRequested();
+                var target = SafeTarget(root, entry.FullName);
+                var mode = UnixMode(entry);
+                if (mode.HasValue && (mode.Value & UnixTypeMask) == UnixSymlink)
+                    throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a link: " + entry.FullName);
+                if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
+                {
+                    Directory.CreateDirectory(target);
+                    continue;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                using (var from = entry.Open()) CopyOut(from, target, ct);
+                SetMode(target, mode);
+            }
+        }
+    }
+
+    private static void ExtractTarGz(string path, string root, CancellationToken ct)
+    {
+        try
+        {
+            using var file = File.OpenRead(path);
+            using var gzip = new GZipStream(file, CompressionMode.Decompress);
+            using var tar = new TarReader(gzip);
+            long total = 0;
+            while (tar.GetNextEntry() is { } entry)
+            {
+                ct.ThrowIfCancellationRequested();
+                var target = SafeTarget(root, entry.Name);
+                switch (entry.EntryType)
+                {
+                    case TarEntryType.Directory:
+                        Directory.CreateDirectory(target);
+                        continue;
+                    case TarEntryType.RegularFile or TarEntryType.V7RegularFile or TarEntryType.ContiguousFile:
+                        total += Math.Max(0, entry.Length);
+                        if (total > MaxUnpackedBytes) throw TooBig();
+                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                        if (entry.DataStream is { } data) CopyOut(data, target, ct);
+                        else File.WriteAllBytes(target, Array.Empty<byte>());
+                        SetMode(target, (int)entry.Mode);
+                        continue;
+                    case TarEntryType.SymbolicLink or TarEntryType.HardLink:
+                        throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a link: " + entry.Name);
+                    default:
+                        continue; // pax/GNU headers and the like carry no file
+                }
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or FormatException or EndOfStreamException)
+        {
+            throw new UpdateException(UpdateProblem.NotAZip, "The download is not a valid tar.gz file.", ex);
+        }
+    }
+
+    private static string Root(string folder) =>
+        Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+    /// <summary>Where an entry lands; an entry outside <paramref name="root"/> (or with a broken name) is an error.</summary>
+    private static string SafeTarget(string root, string entryName)
+    {
+        string target;
+        try { target = Path.GetFullPath(Path.Combine(root, entryName.Replace('\\', '/'))); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new UpdateException(UpdateProblem.UnsafeZip, "The download has a file with a broken name.", ex);
+        }
+        if (!PathCompare.IsUnder(target, root) && !PathCompare.Same(target + Path.DirectorySeparatorChar, root))
+            throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a file outside its folder: " + entryName);
+        return target;
+    }
+
+    private static UpdateException TooBig() => new(UpdateProblem.TooBig, "The download unpacks to more than expected.");
+
+    private static bool IsGzip(string path)
+    {
+        using var f = File.OpenRead(path);
+        return f.ReadByte() == 0x1F && f.ReadByte() == 0x8B;
+    }
+
+    private const int UnixTypeMask = 0xF000, UnixSymlink = 0xA000;
+
+    /// <summary>The Unix mode a zip made on macOS/Linux stores in the high half of its external attributes, or null.</summary>
+    private static int? UnixMode(ZipArchiveEntry entry)
+    {
+        int mode = (entry.ExternalAttributes >> 16) & 0xFFFF;
+        return mode == 0 ? null : mode;
+    }
+
+    /// <summary>Keeps the permission bits (the executable one above all) where the system has them.</summary>
+    private static void SetMode(string path, int? mode)
+    {
+        if (mode is not { } m || OperatingSystem.IsWindows()) return;
+        try { File.SetUnixFileMode(path, (UnixFileMode)(m & 0xFFF)); }
+        catch (Exception) { /* a file system without permissions: nothing to keep */ }
+    }
+
+    /// <summary>Writes the stream to <paramref name="dest"/> in chunks, so a cancellation stops it quickly (the exe is ~80 MB).</summary>
+    private static void CopyOut(Stream from, string dest, CancellationToken ct)
+    {
         using (var to = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             var buffer = new byte[81920];
@@ -329,17 +446,19 @@ public static class UpdatePackage
         ct.ThrowIfCancellationRequested();
     }
 
-    internal static void TryDelete(string file)
+    public static void TryDelete(string file)
     {
         try { if (File.Exists(file)) File.Delete(file); }
         catch (Exception) { /* in use: the stale-folder cleanup gets it later */ }
     }
 }
 
-/// <summary>What the helper script does: wait for <see cref="WaitPid"/>, put <see cref="NewExe"/> in place of
-/// <see cref="TargetExe"/> (with a .old copy until it worked), open EasyVocal again, delete <see cref="StagingFolder"/>.</summary>
-public sealed record HelperPlan(int WaitPid, string TargetExe, string NewExe, string? StagingFolder, string LogFile,
+/// <summary>What the helper script does: wait for <see cref="WaitPid"/>, put <see cref="NewPayload"/> in place of
+/// <see cref="Target"/> (the platform's install root, with a .old copy until it worked), open EasyVocal again, delete
+/// <see cref="StagingFolder"/>.</summary>
+public sealed record HelperPlan(int WaitPid, string Target, string NewPayload, string? StagingFolder, string LogFile,
     bool Relaunch, string RelaunchArguments);
+
 /// <summary>Where releases come from (GitHub; a fake in the tests).</summary>
 public interface IUpdateSource
 {
@@ -415,6 +534,7 @@ public sealed class UpdateService
     private readonly IHelperLauncher launcher;
     private readonly Action<string> log;
 
+    /// <param name="launcher">Starts the helper (normally <see cref="IUpdaterPlatform.Launcher"/>; the tests pass a fake).</param>
     /// <param name="workRoot">Where downloads are unpacked, one folder per attempt (<c>%TEMP%\EasyVocal_update</c>).</param>
     public UpdateService(IUpdaterPlatform platform, IUpdateSource source, IHelperLauncher launcher, AppVersion current, string exePath, string workRoot,
         Action<string>? log = null)
@@ -458,15 +578,15 @@ public sealed class UpdateService
         var asset = UpdateRules.PickAsset(release, platform.AssetNames(RuntimeInformation.OSArchitecture));
         if (asset == null)
         {
-            log($"Update check: {release.Tag} has no zip for this PC ({RuntimeInformation.OSArchitecture})");
-            return new UpdateCheck(UpdateStatus.Failed, release, Detail: "no zip for this PC");
+            log($"Update check: {release.Tag} has no file for this computer ({RuntimeInformation.OSArchitecture})");
+            return new UpdateCheck(UpdateStatus.Failed, release, Detail: "no file for this computer");
         }
         log($"Update check: {release.Tag} is available (this is {Current})");
         return new UpdateCheck(UpdateStatus.Available, release, asset);
     }
 
-    /// <summary>Downloads the zip, checks it and unpacks its EasyVocal.exe; returns that exe's path (in its own
-    /// folder under <see cref="WorkRoot"/>). On a failure or cancellation nothing is left behind.</summary>
+    /// <summary>Downloads the release file, checks and unpacks it (<see cref="IUpdaterPlatform.Unpack"/>); returns the
+    /// payload's path (in its own folder under <see cref="WorkRoot"/>). On a failure or cancellation nothing is left behind.</summary>
     public async Task<string> DownloadAsync(ReleaseAsset asset, IProgress<double>? progress, CancellationToken ct)
     {
         if (asset.Size > UpdateRules.MaxDownloadBytes) throw new UpdateException(UpdateProblem.TooBig, "The download is bigger than expected.");
@@ -475,17 +595,17 @@ public sealed class UpdateService
         try
         {
             Directory.CreateDirectory(folder);
-            var zip = Path.Combine(folder, "release.zip");
-            try { await source.DownloadAsync(asset.Url, zip, UpdateRules.MaxDownloadBytes, progress, ct).ConfigureAwait(false); }
+            var archive = Path.Combine(folder, asset.Name.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) ? "release.tar.gz" : "release.zip");
+            try { await source.DownloadAsync(asset.Url, archive, UpdateRules.MaxDownloadBytes, progress, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not UpdateException and not OperationCanceledException)
             {
                 throw new UpdateException(UpdateProblem.Download, ex.GetType().Name + ": " + ex.Message, ex);
             }
             ct.ThrowIfCancellationRequested();
-            var exe = UpdatePackage.ExtractExe(zip, Path.Combine(folder, "new"), platform, ct);
-            UpdatePackage.TryDelete(zip);
-            log("Update downloaded and checked: " + exe);
-            return exe;
+            var payload = platform.Unpack(archive, Path.Combine(folder, "new"), ct);
+            UpdatePackage.TryDelete(archive);
+            log("Update downloaded and checked: " + payload);
+            return payload;
         }
         catch
         {
@@ -494,34 +614,20 @@ public sealed class UpdateService
         }
     }
 
-    /// <summary>Can the running exe be swapped (its folder is writable)?</summary>
-    public bool CanReplaceExe()
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(ExePath)!;
-            var probe = Path.Combine(dir, "EasyVocal.update-check." + Guid.NewGuid().ToString("N")[..8] + ".tmp");
-            File.WriteAllBytes(probe, Array.Empty<byte>());
-            File.Delete(probe);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            log("Update: the folder of " + ExePath + " can't be written: " + ex.Message);
-            return false;
-        }
-    }
+    /// <summary>Can the running EasyVocal replace itself? If not, the release page is opened instead.</summary>
+    public bool CanSelfUpdate() => platform.CanSelfUpdate(ExePath, log);
 
     /// <summary>
-    /// Writes the helper next to <paramref name="newExe"/> and starts it; it waits for <paramref name="waitPid"/> to
+    /// Writes the helper next to <paramref name="newPayload"/> and starts it; it waits for <paramref name="waitPid"/> to
     /// exit, so the caller quits right after. Returns the script's path.
     /// </summary>
-    public string StartInstall(string newExe, int waitPid, string logFile, string relaunchArguments, bool relaunch = true)
+    public string StartInstall(string newPayload, int waitPid, string logFile, string relaunchArguments, bool relaunch = true)
     {
-        if (!CanReplaceExe()) throw new UpdateException(UpdateProblem.FolderNotWritable, "The folder of EasyVocal.exe can't be written.");
-        var staging = StagingOf(newExe);
+        if (!CanSelfUpdate())
+            throw new UpdateException(UpdateProblem.FolderNotWritable, "EasyVocal can't replace " + platform.ExeName + ": its folder can't be written.");
+        var staging = StagingOf(newPayload);
         var script = Path.Combine(staging, platform.HelperFileName);
-        var plan = new HelperPlan(waitPid, ExePath, newExe, staging, logFile, relaunch, relaunchArguments);
+        var plan = new HelperPlan(waitPid, platform.InstallRoot(ExePath), newPayload, staging, logFile, relaunch, relaunchArguments);
         File.WriteAllText(script, platform.BuildHelper(plan), platform.HelperEncoding);
         try { launcher.Start(script); }
         catch (Exception ex) when (ex is not UpdateException)
@@ -532,23 +638,30 @@ public sealed class UpdateService
         return script;
     }
 
-    /// <summary>A downloaded exe nobody will install (the window closed while it was checked): its folder goes.</summary>
-    public void Discard(string newExe)
+    /// <summary>A downloaded payload nobody will install (the window closed while it was checked): its folder goes.</summary>
+    public void Discard(string newPayload)
     {
-        var staging = StagingOf(newExe);
+        var staging = StagingOf(newPayload);
         var root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (Path.GetFullPath(staging).StartsWith(root, StringComparison.OrdinalIgnoreCase)) TryDeleteFolder(staging);
-        log("Update download discarded: " + newExe);
+        if (PathCompare.IsUnder(Path.GetFullPath(staging), root)) TryDeleteFolder(staging);
+        log("Update download discarded: " + newPayload);
     }
 
-    /// <summary>The attempt's own folder under <see cref="WorkRoot"/> (the exe is in its "new" subfolder).</summary>
-    private static string StagingOf(string newExe) => Path.GetDirectoryName(Path.GetDirectoryName(newExe)!)!;
+    /// <summary>The attempt's own folder: the child of <see cref="WorkRoot"/> the payload is in.</summary>
+    private string StagingOf(string newPayload)
+    {
+        var root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar);
+        var dir = Path.GetDirectoryName(Path.GetFullPath(newPayload));
+        while (dir != null && Path.GetDirectoryName(dir) is { } parent && !PathCompare.Same(parent.TrimEnd(Path.DirectorySeparatorChar), root))
+            dir = parent;
+        return dir ?? Path.GetDirectoryName(newPayload)!;
+    }
 
     /// <summary>Removes old attempts' folders and the .old copy a finished update could not delete.</summary>
     public void CleanStale()
     {
         TempFolders.CleanStale(WorkRoot, StaleAfter);
-        UpdatePackage.TryDelete(ExePath + ".old");
+        UpdatePackage.TryDelete(platform.InstallRoot(ExePath) + ".old");
     }
 
     private static void TryDeleteFolder(string folder)

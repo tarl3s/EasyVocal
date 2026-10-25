@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <!-- Built first, not referenced: DecoderTests runs it in place of ffmpeg (from its own bin folder). -->
+    <ProjectReference Include="..\EasyVocal.FfmpegStandIn\EasyVocal.FfmpegStandIn.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>

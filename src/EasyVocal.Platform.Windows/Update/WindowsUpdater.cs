@@ -59,8 +59,8 @@ public static class HelperScript
         var sb = new StringBuilder();
         sb.Append("# EasyVocal update helper: written by EasyVocal, runs once after it closes, then removes its folder.\r\n");
         sb.Append("$WaitPid = ").Append(plan.WaitPid.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
-        sb.Append("$Target = ").Append(Quote(plan.TargetExe)).Append("\r\n");
-        sb.Append("$NewExe = ").Append(Quote(plan.NewExe)).Append("\r\n");
+        sb.Append("$Target = ").Append(Quote(plan.Target)).Append("\r\n");
+        sb.Append("$NewExe = ").Append(Quote(plan.NewPayload)).Append("\r\n");
         sb.Append("$Staging = ").Append(Quote(plan.StagingFolder ?? "")).Append("\r\n");
         sb.Append("$Log = ").Append(Quote(plan.LogFile)).Append("\r\n");
         sb.Append("$Relaunch = ").Append(plan.Relaunch ? "$true" : "$false").Append("\r\n");
@@ -146,13 +146,16 @@ public sealed class PowerShellLauncher : IHelperLauncher
     }
 }
 
-/// <summary>The Windows side of the updater: <c>EasyVocal-win-x64.zip</c>, <c>EasyVocal.exe</c>, the PowerShell swap.</summary>
+/// <summary>
+/// The Windows side of the updater: <c>EasyVocal-win-x64.zip</c>, whose <c>EasyVocal.exe</c> (a Windows program)
+/// replaces the running one through the PowerShell helper.
+/// </summary>
 public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
 {
     public static WindowsUpdaterPlatform Instance { get; } = new();
 
     /// <summary>The zip for this PC: <c>EasyVocal-win-x64.zip</c> (also on ARM PCs, which run x64 programs).</summary>
-    public IReadOnlyList<string> AssetNames(Architecture os) => os switch
+    public IReadOnlyList<string> AssetNames(Architecture arch) => arch switch
     {
         Architecture.X64 => new[] { "EasyVocal-win-x64.zip" },
         Architecture.Arm64 => new[] { "EasyVocal-win-arm64.zip", "EasyVocal-win-x64.zip" },
@@ -161,8 +164,38 @@ public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
 
     public string ExeName => "EasyVocal.exe";
 
+    /// <summary>On Windows the update replaces the exe itself (a single-file program).</summary>
+    public string InstallRoot(string exePath) => exePath;
+
+    /// <summary>The exe's folder can be written (a probe file is created and removed).</summary>
+    public bool CanSelfUpdate(string exePath, Action<string>? log = null)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(exePath))!;
+            var probe = Path.Combine(dir, "EasyVocal.update-check." + Guid.NewGuid().ToString("N")[..8] + ".tmp");
+            File.WriteAllBytes(probe, Array.Empty<byte>());
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log?.Invoke("Update: the folder of " + exePath + " can't be written: " + ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>Takes the release zip's EasyVocal.exe out (the shared checks) and makes sure it is a Windows program.</summary>
+    public string Unpack(string archivePath, string folder, CancellationToken ct)
+    {
+        var exe = UpdatePackage.ExtractFile(archivePath, folder, ExeName, ct);
+        if (LooksLikeProgram(exe)) return exe;
+        UpdatePackage.TryDelete(exe);
+        throw new UpdateException(UpdateProblem.NotAnExe, "The " + ExeName + " in the download is not a Windows program.");
+    }
+
     /// <summary>A Windows program starts with "MZ".</summary>
-    public bool LooksLikeProgram(string path)
+    public static bool LooksLikeProgram(string path)
     {
         try
         {
@@ -177,6 +210,8 @@ public sealed class WindowsUpdaterPlatform : IUpdaterPlatform
     public Encoding HelperEncoding => HelperScript.FileEncoding;
 
     public string BuildHelper(HelperPlan plan) => HelperScript.Build(plan);
+
+    public IHelperLauncher Launcher { get; } = new PowerShellLauncher();
 
     public string RelaunchArguments(string? dataFolder) => HelperScript.RelaunchArguments(dataFolder);
 }

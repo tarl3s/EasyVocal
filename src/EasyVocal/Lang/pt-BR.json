@@ -46,6 +46,8 @@
   "That kind of file isn't supported. Please pick a sound or video file (WAV, MP3, OGG, FLAC, M4A, WMA, MP4…).": "Esse tipo de arquivo não é suportado. Escolha um arquivo de som ou de vídeo (WAV, MP3, OGG, FLAC, M4A, WMA, MP4…).",
   "We couldn't read that sound file. It may be damaged.": "Não conseguimos ler esse arquivo de som. Ele pode estar danificado.",
   "That sound file is empty.": "Esse arquivo de som está vazio.",
+  "That sound took too long to open.": "Esse som demorou demais para abrir.",
+  "Global hotkeys aren't available on this computer.": "Atalhos globais não estão disponíveis neste computador.",
   "That sound is too long. Please pick one shorter than 10 minutes.": "Esse som é longo demais. Escolha um com menos de 10 minutos.",
   "EasyVocal can't open this kind of file by itself on this computer. Install the free program ffmpeg and try again.": "O EasyVocal não consegue abrir esse tipo de arquivo sozinho neste computador. Instale o programa gratuito ffmpeg e tente de novo.",
 

@@ -1,8 +1,10 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using EasyVocal.Core.Dsp;
 
@@ -12,21 +14,26 @@ namespace EasyVocal.Core.Sounds;
 /// Anything else through the <c>ffmpeg</c> program, when it is installed (found on PATH, or in Homebrew's folders on
 /// macOS, where apps opened from Finder don't get the shell's PATH). It decodes the first sound track straight to
 /// mono 48 kHz 32-bit float on its standard output; nothing is written to disk. EasyVocal never installs it.
+/// One deadline covers the whole run: past it ffmpeg is stopped and the answer is "took too long".
 /// </summary>
 public sealed class FfmpegDecoder : ISoundDecoder
 {
     /// <summary>How long one file may take to decode before ffmpeg is stopped.</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
 
-    private static readonly Lazy<string?> OnThisComputer = new(() => Find(Environment.GetEnvironmentVariable("PATH")));
+    /// <summary>How long to wait for ffmpeg to go away once it was told to stop.</summary>
+    private static readonly TimeSpan KillWait = TimeSpan.FromSeconds(2);
+
+    private static readonly object ProbeSync = new();
+    private static string? found; // guarded by ProbeSync
 
     private readonly string? explicitPath;
     private readonly bool useSearch;
 
-    /// <summary>The ffmpeg found on this computer (looked for once).</summary>
+    /// <summary>The ffmpeg on this computer: looked for again while there is none, so installing it needs no restart.</summary>
     public FfmpegDecoder() => useSearch = true;
 
-    /// <summary>A given ffmpeg program (null = none: the decoder takes nothing). For tests.</summary>
+    /// <summary>A given program standing for ffmpeg (null = none: the decoder takes nothing). For tests.</summary>
     public FfmpegDecoder(string? ffmpegPath, TimeSpan? timeout = null)
     {
         explicitPath = ffmpegPath;
@@ -38,7 +45,7 @@ public sealed class FfmpegDecoder : ISoundDecoder
     public string Name => "ffmpeg";
 
     /// <summary>The program that runs, or null when ffmpeg isn't there.</summary>
-    public string? ProgramPath => useSearch ? OnThisComputer.Value : explicitPath;
+    public string? ProgramPath => useSearch ? Located() : explicitPath;
 
     /// <summary>True when an ffmpeg program was found.</summary>
     public bool Available => ProgramPath is { } p && File.Exists(p);
@@ -46,15 +53,36 @@ public sealed class FfmpegDecoder : ISoundDecoder
     /// <summary>Any supported file, when ffmpeg is there (it comes after the built-in decoders).</summary>
     public bool CanDecode(string extension) => Available;
 
-    /// <summary>The ffmpeg in one of the folders of <paramref name="pathVariable"/> (or Homebrew's), or null.</summary>
+    private static string? Located()
+    {
+        lock (ProbeSync)
+        {
+            if (found == null || !File.Exists(found)) found = Find(Environment.GetEnvironmentVariable("PATH"));
+            return found;
+        }
+    }
+
+    /// <summary>
+    /// The ffmpeg in one of the folders of <paramref name="pathVariable"/> (or Homebrew's), or null. Snap's folders come
+    /// last: a snap ffmpeg is confined and may not be allowed to read the person's files.
+    /// </summary>
     public static string? Find(string? pathVariable)
     {
         string exe = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
         var folders = new List<string>();
-        foreach (var dir in (pathVariable ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            folders.Add(dir.Trim('"'));
+        var snap = new List<string>();
+        foreach (var raw in (pathVariable ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var dir = raw.Trim('"');
+            (dir.StartsWith("/snap/", StringComparison.Ordinal) ? snap : folders).Add(dir);
+        }
         if (OperatingSystem.IsMacOS()) folders.AddRange(new[] { "/opt/homebrew/bin", "/usr/local/bin" });
-        if (OperatingSystem.IsLinux()) folders.AddRange(new[] { "/usr/bin", "/usr/local/bin", "/snap/bin" });
+        if (OperatingSystem.IsLinux())
+        {
+            folders.AddRange(new[] { "/usr/bin", "/usr/local/bin" });
+            snap.Add("/snap/bin");
+        }
+        folders.AddRange(snap);
         foreach (var dir in folders)
         {
             try
@@ -67,82 +95,110 @@ public sealed class FfmpegDecoder : ISoundDecoder
         return null;
     }
 
-    /// <summary>The command-line arguments: quiet, first sound track only, mono 48 kHz f32 on stdout, a little over the limit.</summary>
+    /// <summary>
+    /// The command-line arguments: quiet, the file as a plain file (<c>file:</c>, so a name is never read as a URL or
+    /// protocol), first sound track only, mono 48 kHz f32 on stdout, a little over the length limit.
+    /// </summary>
     public static IReadOnlyList<string> Arguments(string path) => new[]
     {
         "-nostdin", "-hide_banner", "-loglevel", "error",
-        "-i", path,
-        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", AudioFormat.SampleRate.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        "-t", ((int)SoundLoader.MaxSeconds + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "-i", "file:" + Path.GetFullPath(path),
+        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", AudioFormat.SampleRate.ToString(CultureInfo.InvariantCulture),
+        "-t", ((int)SoundLoader.MaxSeconds + 1).ToString(CultureInfo.InvariantCulture),
         "-f", "f32le", "pipe:1",
     };
 
-    public float[] Decode(string path)
+    public float[] Decode(string path, CancellationToken ct)
     {
         var program = ProgramPath;
         if (program == null || !File.Exists(program)) throw new SoundLoadException(SoundLoader.NeedsFfmpeg);
+        ct.ThrowIfCancellationRequested();
 
         var psi = new ProcessStartInfo(program)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = false,
             CreateNoWindow = true,
         };
-        foreach (var a in Arguments(Path.GetFullPath(path))) psi.ArgumentList.Add(a);
+        foreach (var a in Arguments(path)) psi.ArgumentList.Add(a);
 
+        var watch = Stopwatch.StartNew();
         using var process = Process.Start(psi) ?? throw new InvalidOperationException("ffmpeg did not start.");
-        var errors = new System.Text.StringBuilder();
-        process.ErrorDataReceived += (_, e) => { if (e.Data != null && errors.Length < 2000) lock (errors) errors.AppendLine(e.Data); };
+        var errors = new StringBuilder();
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            lock (errors) if (errors.Length < 2000) errors.AppendLine(e.Data);
+        };
         process.BeginErrorReadLine();
 
-        bool timedOut = false, tooLong = false;
-        using var timer = new Timer(_ => { timedOut = true; Kill(process); }, null, Timeout, System.Threading.Timeout.InfiniteTimeSpan);
-        float[] samples;
-        try { samples = ReadFloats(process.StandardOutput.BaseStream, out tooLong); }
-        finally
+        // One deadline (or the caller's cancellation) stops ffmpeg; its stdout then ends and the read below returns.
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        stop.CancelAfter(Timeout);
+        using (stop.Token.Register(() => Kill(process)))
         {
+            float[] samples;
+            bool tooLong;
+            try { samples = ReadFloats(process.StandardOutput.BaseStream, out tooLong); }
+            catch (IOException) when (stop.IsCancellationRequested)
+            {
+                samples = Array.Empty<float>();
+                tooLong = false;
+            }
             if (tooLong) Kill(process);
-            if (!process.WaitForExit((int)Math.Min(int.MaxValue, Timeout.TotalMilliseconds))) { timedOut = true; Kill(process); }
-            timer.Dispose();
+
+            var left = Timeout - watch.Elapsed;
+            bool exited = left > TimeSpan.Zero && process.WaitForExit(left);
+            if (!exited)
+            {
+                Kill(process);
+                exited = process.WaitForExit(KillWait);
+            }
+            ct.ThrowIfCancellationRequested();
+            if (tooLong) throw SoundLoader.TooLong();
+            if (stop.IsCancellationRequested || !exited) throw new SoundLoadException(SoundLoader.TookTooLong);
+            // A non-zero exit is a failure even with some output (whatever reached stdout can't be trusted).
+            if (process.ExitCode != 0)
+            {
+                string detail;
+                lock (errors) detail = errors.ToString().Trim();
+                throw new InvalidDataException("ffmpeg failed (" + process.ExitCode + "): " + detail);
+            }
+            return samples;
         }
-        if (tooLong) throw SoundLoader.TooLong();
-        if (timedOut) throw new TimeoutException("ffmpeg took longer than " + Timeout.TotalSeconds + " s.");
-        process.WaitForExit(); // the stderr reader is done too
-        // A non-zero exit is a failure even with some output (whatever reached stdout can't be trusted).
-        if (process.ExitCode != 0)
-        {
-            string detail;
-            lock (errors) detail = errors.ToString().Trim();
-            throw new InvalidDataException("ffmpeg failed (" + process.ExitCode + "): " + detail);
-        }
-        return samples;
     }
 
-    /// <summary>Little-endian floats until the end of the stream, stopping (tooLong) past the length limit.</summary>
+    /// <summary>
+    /// Little-endian floats until the end of the stream, straight into a growing array; stops (tooLong) past the length
+    /// limit. A cut-off last sample is dropped.
+    /// </summary>
     public static float[] ReadFloats(Stream stdout, out bool tooLong)
     {
         tooLong = false;
-        long limitBytes = ((long)(SoundLoader.MaxSeconds * AudioFormat.SampleRate) + AudioFormat.SampleRate) * 4;
-        using var bytes = new MemoryStream();
+        long limit = (long)(SoundLoader.MaxSeconds * AudioFormat.SampleRate) + AudioFormat.SampleRate;
+        var samples = new float[AudioFormat.SampleRate * 4];
+        int count = 0;
         var buffer = new byte[64 * 1024];
+        int carry = 0; // bytes of an unfinished sample at the start of buffer
         int n;
-        while ((n = stdout.Read(buffer, 0, buffer.Length)) > 0)
+        while ((n = stdout.Read(buffer, carry, buffer.Length - carry)) > 0)
         {
-            if (bytes.Length + n > limitBytes)
+            int have = carry + n;
+            int whole = have / 4;
+            if (count + (long)whole > limit)
             {
                 tooLong = true;
                 break;
             }
-            bytes.Write(buffer, 0, n);
+            if (count + whole > samples.Length)
+                Array.Resize(ref samples, (int)Math.Min(limit, Math.Max(samples.Length * 2L, count + (long)whole)));
+            for (int i = 0; i < whole; i++)
+                samples[count++] = BinaryPrimitives.ReadSingleLittleEndian(buffer.AsSpan(i * 4, 4));
+            carry = have - whole * 4;
+            if (carry > 0) Buffer.BlockCopy(buffer, whole * 4, buffer, 0, carry);
         }
-        int count = (int)(bytes.Length / 4);
-        var samples = new float[count];
-        MemoryMarshal.Cast<byte, float>(bytes.GetBuffer().AsSpan(0, count * 4)).CopyTo(samples);
-        if (!BitConverter.IsLittleEndian)
-            for (int i = 0; i < count; i++)
-                samples[i] = BitConverter.Int32BitsToSingle(System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(BitConverter.SingleToInt32Bits(samples[i])));
+        if (count != samples.Length) Array.Resize(ref samples, count);
         return samples;
     }
 

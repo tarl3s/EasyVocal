@@ -48,7 +48,8 @@ public partial class SettingsWindow : Window
             micShown = MicBox.SelectedItem as ComboBoxItem;
             MicProblem.Visibility = Visibility.Collapsed;
 
-            DeviceBox.Fill(OutputBox, L.T("Automatic (CABLE Input)"), outputs, s.OutputDeviceId);
+            OutputHint.Text = L.T(controller.Platform.VirtualMic.Texts.OutputHint);
+            DeviceBox.Fill(OutputBox, L.T(controller.Platform.VirtualMic.Texts.AutomaticOutput), outputs, s.OutputDeviceId);
             DeviceBox.Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(outputs), s.MonitorDeviceId);
 
             LanguageBox.Items.Clear();

@@ -112,7 +112,7 @@ public partial class UpdateWindow : Window
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (download != null || !canInstall) return;
-        if (!service.CanReplaceExe())
+        if (!service.CanSelfUpdate())
         {
             ShowStatus(ProblemText(UpdateProblem.FolderNotWritable), problem: true);
             OpenPage(release.PageUrl);

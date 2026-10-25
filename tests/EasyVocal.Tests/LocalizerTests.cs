@@ -124,6 +124,7 @@ public class LocalizerTests
     private static readonly Regex XamlLiteral = new(@"\{loc:T\s+(?:'([^']*)'|([^}]*))\}", RegexOptions.Compiled);
     private static readonly Regex SoundLoadMessage = new(@"new\s+SoundLoadException\(\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
     private static readonly Regex SoundLoadFactory = new(@"SoundLoadException\s+\w+\(\)\s*=>\s*new\(\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
+    private static readonly Regex UiTextMark = new(@"UiText\.Mark\(\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
     private static readonly Regex MessageConst = new(@"public\s+const\s+string\s+\w+\s*=\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
 
     /// <summary>Every English text the person can see: literals in the app's sources plus built-in names.</summary>
@@ -159,6 +160,13 @@ public class LocalizerTests
             if (Path.GetFileName(file) == "SoundLoader.cs")
                 foreach (Match m in MessageConst.Matches(code)) yield return Unescape(m.Groups[1].Value);
         }
+        // Sentences written in Core or a platform project and shown through L.T (the virtual mic's setup texts…).
+        foreach (var project in Directory.EnumerateDirectories(Path.Combine(root, "src"), "EasyVocal.*"))
+            foreach (var file in Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories))
+            {
+                if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)) continue;
+                foreach (Match m in UiTextMark.Matches(File.ReadAllText(file))) yield return Unescape(m.Groups[1].Value);
+            }
         // Built-in names are translated where they are shown.
         foreach (var v in BuiltInVoices.All()) yield return v.Name;
         foreach (var s in StarterSounds.Items()) yield return s.Name;

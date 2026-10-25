@@ -17,6 +17,8 @@ namespace EasyVocal;
 public partial class SoundEditorWindow : Window
 {
     private readonly AppController controller;
+    /// <summary>Stops a decode still running when the window closes.</summary>
+    private readonly CancellationTokenSource closing = new();
     private readonly SoundItem? editing;
     private readonly string itemId;
     private readonly EmojiGrid emojiGrid;
@@ -62,6 +64,7 @@ public partial class SoundEditorWindow : Window
         Closing += (_, e) => e.Cancel |= saving; // the edited copy is being written: Save closes the window when done
         Closed += (_, _) =>
         {
+            closing.Cancel();
             controller.PreviewEnded -= OnPreviewEnded;
             controller.StopPreview();
         };
@@ -117,7 +120,7 @@ public partial class SoundEditorWindow : Window
         try
         {
             if (path == null) throw new SoundLoadException("We couldn't find that sound file.");
-            var data = await Task.Run(() => SoundLoader.Load(path));
+            var data = await Task.Run(() => SoundLoader.Load(path, controller.Platform.Decoders, closing.Token));
             if (ticket != loadTicket) return;
             samples = fileSamples = data;
             if (!existing)
@@ -129,6 +132,7 @@ public partial class SoundEditorWindow : Window
             }
             HideStatus();
         }
+        catch (OperationCanceledException) { return; } // the window closed
         catch (SoundLoadException ex)
         {
             if (ticket != loadTicket) return;

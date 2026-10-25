@@ -13,11 +13,12 @@ public partial class App
 {
     private UpdateCoordinator? updates;
 
-    private static UpdateService RealUpdateService()
+    /// <summary>The real updater for this platform (its release file, unpacking, helper script and launcher).</summary>
+    private static UpdateService RealUpdateService(IUpdaterPlatform platform)
     {
         var current = UpdateRules.RunningVersion(typeof(App).Assembly);
-        var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, WindowsPlatform.Updater.ExeName);
-        return new UpdateService(WindowsPlatform.Updater, new GitHubUpdateSource("EasyVocal-updater/" + current), new PowerShellLauncher(), current, exe,
+        var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, platform.ExeName);
+        return new UpdateService(platform, new GitHubUpdateSource("EasyVocal-updater/" + current), platform.Launcher, current, exe,
             UpdateService.DefaultWorkRoot, AppLog.Info);
     }
 
@@ -26,13 +27,13 @@ public partial class App
     {
         if (args.TestMode) return;
         bool sourceBuild = UpdateRules.IsSourceBuild(AppContext.BaseDirectory);
-        updates = new UpdateCoordinator(c, RealUpdateService(),
+        updates = new UpdateCoordinator(c, RealUpdateService(c.Platform.Updater),
             canCheck: !sourceBuild || args.UpdateCheck, canInstall: !sourceBuild, forceCheck: args.UpdateCheck,
             visibleWindow: VisibleUpdateOwner,
             balloon: (text, click) => tray?.ShowBalloon(text, click),
             quit: () => Quit(ask: false),
             logFile: Path.Combine(dataFolder, "update.log"),
-            relaunchArguments: WindowsPlatform.Updater.RelaunchArguments(args.DataFolder));
+            relaunchArguments: c.Platform.Updater.RelaunchArguments(args.DataFolder));
         c.Updates = updates;
         if (sourceBuild) AppLog.Info("Running from the source code: updates are " + (args.UpdateCheck ? "only checked (--update-check)" : "off"));
     }
@@ -78,7 +79,8 @@ public partial class App
 
     private static async Task<int> UpdateNowAsync(AppArgs args, string dataFolder)
     {
-        var service = RealUpdateService();
+        var updater = RealPlatform.Updater;
+        var service = RealUpdateService(updater);
         AppLog.Info($"--update-now: EasyVocal {service.Current} at {service.ExePath}");
         if (UpdateRules.IsSourceBuild(AppContext.BaseDirectory))
         {
@@ -95,8 +97,13 @@ public partial class App
         var check = await service.CheckAsync(skippedVersion: null, manual: true);
         if (check.Status == UpdateStatus.UpToDate) return 0;
         if (check.Status != UpdateStatus.Available || check.Asset == null) return 1;
-        var exe = await service.DownloadAsync(check.Asset, null, CancellationToken.None);
-        service.StartInstall(exe, Environment.ProcessId, Path.Combine(dataFolder, "update.log"), WindowsPlatform.Updater.RelaunchArguments(args.DataFolder));
+        var payload = await service.DownloadAsync(check.Asset, null, CancellationToken.None);
+        if (!service.CanSelfUpdate())
+        {
+            AppLog.Info("--update-now: this EasyVocal can't replace itself here: get the new version from " + check.Release!.PageUrl);
+            return 1;
+        }
+        service.StartInstall(payload, Environment.ProcessId, Path.Combine(dataFolder, "update.log"), updater.RelaunchArguments(args.DataFolder));
         return 0;
     }
 }

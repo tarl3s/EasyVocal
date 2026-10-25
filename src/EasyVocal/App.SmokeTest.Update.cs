@@ -62,7 +62,7 @@ public partial class App
         var current = UpdateRules.RunningVersion(typeof(App).Assembly);
         var source = new SmokeUpdateSource(SmokeReleaseJson("v9.9.0"), zip);
         var launcher = new SmokeLauncher();
-        var service = new UpdateService(WindowsPlatform.Updater, source, launcher, current, exe, Path.Combine(folder, "work"), AppLog.Info);
+        var service = new UpdateService(c.Platform.Updater, source, launcher, current, exe, Path.Combine(folder, "work"), AppLog.Info);
         var release = UpdateRules.ParseRelease(source.Json)!;
         var asset = release.Assets[0];
         string? skippedBefore = c.Settings.SkippedUpdateVersion;
@@ -124,7 +124,7 @@ public partial class App
         Check(prepared != null && File.ReadAllText(prepared) == "MZ pretend new EasyVocal", "Update now unpacks the new EasyVocal.exe");
         if (prepared != null)
         {
-            var script = service.StartInstall(prepared, Environment.ProcessId, Path.Combine(folder, "update.log"), HelperScript.RelaunchArguments(dataFolder));
+            var script = service.StartInstall(prepared, Environment.ProcessId, Path.Combine(folder, "update.log"), c.Platform.Updater.RelaunchArguments(dataFolder));
             Check(launcher.Started.Count == 1 && launcher.Started[0] == script && File.ReadAllText(script).Contains(HelperScript.Quote(exe)),
                 "the helper is written for this exe and started (a fake launcher: it never runs)");
             Check(File.ReadAllText(exe) == "MZ pretend old EasyVocal", "nothing is replaced before EasyVocal quits");

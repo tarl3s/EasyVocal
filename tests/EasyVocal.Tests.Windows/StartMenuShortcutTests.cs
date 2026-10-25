@@ -40,7 +40,7 @@ public class StartMenuShortcutTests : IDisposable
         new StartMenuShortcut(folder, @"C:\Old place\EasyVocal.exe").Create();
 
         var moved = new StartMenuShortcut(folder, exe);
-        Assert.Null(moved.Refresh());
+        Assert.True(moved.Refresh());
 
         Assert.Equal(exe, moved.ReadTarget(), ignoreCase: true);
     }
@@ -49,7 +49,7 @@ public class StartMenuShortcutTests : IDisposable
     public void Refresh_CreatesAMissingShortcut()
     {
         var shortcut = new StartMenuShortcut(folder, exe);
-        Assert.Null(shortcut.Refresh());
+        Assert.True(shortcut.Refresh());
         Assert.True(shortcut.Exists());
     }
 }

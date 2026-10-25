@@ -16,8 +16,11 @@ namespace EasyVocal;
 /// </summary>
 public partial class SetupWindow : Window
 {
-    /// <summary>The recording end of VB-CABLE as Windows names it: what a call app must pick as its microphone.</summary>
-    public const string CableOutputName = "CABLE Output (VB-Audio Virtual Cable)";
+    /// <summary>What a call app must pick as its microphone (VB-CABLE's recording end on Windows).</summary>
+    private string CallAppDevice => controller.Platform.VirtualMic.CallAppDeviceName;
+
+    /// <summary>The setup's sentences about this platform's virtual microphone.</summary>
+    private VirtualMicTexts MicTexts => controller.Platform.VirtualMic.Texts;
 
     private static readonly TimeSpan WaitForDevice = TimeSpan.FromSeconds(60);
 
@@ -37,6 +40,7 @@ public partial class SetupWindow : Window
         this.controller = controller;
         this.cableProbe = cableProbe ?? (() => controller.Platform.VirtualMic.Find(controller.Devices.Outputs()) != null);
         InitializeComponent();
+        CableExplanation.Text = L.T(MicTexts.Explanation);
         DarkTitleBar.Use(this);
         WindowPlacer.Use(this, "setup", controller);
 
@@ -108,7 +112,7 @@ public partial class SetupWindow : Window
         DoneButton.IsEnabled = false; // finishing now would leave the installer running behind a closed window
         ProgressTrack.Visibility = Visibility.Visible;
         SetProgress(0);
-        SetStatus(L.T("Downloading VB-CABLE…"), false);
+        SetStatus(L.T(MicTexts.Downloading), false);
         cancelInstall = new CancellationTokenSource();
         // VB-CABLE may make itself Windows' default playback device and microphone: what the person has now is put back.
         controller.RememberDefaultsBeforeCable();
@@ -162,20 +166,20 @@ public partial class SetupWindow : Window
     private void OnInstallProgress(double value)
     {
         SetProgress(value);
-        if (value >= 1) SetStatus(L.T("Allow the installer to make changes, then click Install Driver in its window."), false);
+        if (value >= 1) SetStatus(L.T(MicTexts.InstallerPrompt), false);
     }
 
     /// <summary>The download didn't work: open the official page and say what to do there.</summary>
     internal void ShowOfficialPageFallback(bool open = true)
     {
-        SetStatus(L.T("Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
+        SetStatus(L.T(MicTexts.InstallManually), true);
         if (open) controller.Platform.VirtualMic.OpenPage();
     }
 
     /// <summary>The downloaded installer isn't signed by VB-Audio: it was not run. Open the official page and say so.</summary>
     internal void ShowNotVerifiedFallback(bool open = true)
     {
-        SetStatus(L.T("The download could not be verified as VB-Audio's, so EasyVocal did not run it. Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
+        SetStatus(L.T(MicTexts.NotVerified), true);
         if (open) controller.Platform.VirtualMic.OpenPage();
     }
 
@@ -298,7 +302,7 @@ public partial class SetupWindow : Window
             Padding = new Thickness(10, 7, 10, 7),
         };
         var fakeRow = new Grid();
-        fakeRow.Children.Add(new TextBlock { Text = CableOutputName, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 24, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+        fakeRow.Children.Add(new TextBlock { Text = CallAppDevice, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 24, 0), TextTrimming = TextTrimming.CharacterEllipsis });
         fakeRow.Children.Add(new Path
         {
             Data = Geometry.Parse("M0,0 L4,4 L8,0"),
@@ -313,7 +317,7 @@ public partial class SetupWindow : Window
 
         var line1 = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
         line1.Inlines.Add(new Run(path + " "));
-        line1.Inlines.Add(new Run(CableOutputName) { FontWeight = FontWeights.Bold, Foreground = (Brush)res["Accent"] });
+        line1.Inlines.Add(new Run(CallAppDevice) { FontWeight = FontWeights.Bold, Foreground = (Brush)res["Accent"] });
         var line2 = new TextBlock { Text = tip, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), Foreground = (Brush)res["TextDim"] };
 
         var panel = new StackPanel();
