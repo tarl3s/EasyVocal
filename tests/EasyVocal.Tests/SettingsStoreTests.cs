@@ -138,6 +138,75 @@ public class SettingsStoreTests : IDisposable
         Assert.True(loaded.BuiltIn);
     }
 
+
+    [Fact]
+    public void SaveThenLoad_EditedBuiltInSound_PlaysTheEditedCopyAndKeepsItsOriginal()
+    {
+        var s = SettingsStore.Load(tmp);
+        var ding = s.Sounds.Single(x => x.Id == "ding");
+        ding.OriginalFileName = "ding.wav";
+        ding.FileName = "ding (edited).wav";
+        SettingsStore.Save(tmp, s);
+
+        var loaded = SettingsStore.Load(tmp).Sounds.Single(x => x.Id == "ding");
+        Assert.Equal("ding (edited).wav", loaded.FileName);
+        Assert.Equal("ding.wav", loaded.OriginalFileName);
+    }
+
+    [Theory]
+    [InlineData(@"..\evil.wav")]
+    [InlineData(@"C:\Windows\x.wav")]
+    public void Load_EditedBuiltInPointingOutOfTheFolder_PlaysItsOwnFile(string file)
+    {
+        var s = SettingsStore.Load(tmp);
+        var ding = s.Sounds.Single(x => x.Id == "ding");
+        ding.OriginalFileName = "ding.wav";
+        ding.FileName = file;
+        SettingsStore.Save(tmp, s);
+
+        var loaded = SettingsStore.Load(tmp).Sounds.Single(x => x.Id == "ding");
+        Assert.Equal("ding.wav", loaded.FileName);
+        Assert.Null(loaded.OriginalFileName);
+    }
+
+    [Fact]
+    public void SaveThenLoad_UserSoundKeepsItsOriginalFileName()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Sounds.Add(new SoundItem { Id = "my-1", Name = "Mine", FileName = "mine (edited).wav", OriginalFileName = "mine.mp3" });
+        s.Sounds.Add(new SoundItem { Id = "my-2", Name = "Odd", FileName = "odd.wav", OriginalFileName = "odd.wav" });
+        SettingsStore.Save(tmp, s);
+
+        var loaded = SettingsStore.Load(tmp);
+        Assert.Equal("mine.mp3", loaded.Sounds.Single(x => x.Id == "my-1").OriginalFileName);
+        Assert.Null(loaded.Sounds.Single(x => x.Id == "my-2").OriginalFileName); // "original" = itself means nothing
+    }
+
+    [Fact]
+    public void SaveThenLoad_WindowPlacementsRoundTrip_AndNonsenseIsDropped()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.WindowPlacements["main"] = new WindowBox(10, 20, 600, 500);
+        s.WindowPlacements["settings"] = new WindowBox(30, 40, 0, 0);
+        SettingsStore.Save(tmp, s);
+        var text = File.ReadAllText(SettingsPath);
+        Assert.DoesNotContain("Right", text); // only the four numbers are saved
+        text = text.Replace("\"settings\"", "\"bad\": { \"Left\": 1, \"Top\": 1, \"Width\": -5, \"Height\": 3 }, \"settings\"");
+        File.WriteAllText(SettingsPath, text);
+
+        var loaded = SettingsStore.Load(tmp);
+        Assert.Equal(new WindowBox(10, 20, 600, 500), loaded.WindowPlacements["main"]);
+        Assert.Equal(new WindowBox(30, 40, 0, 0), loaded.WindowPlacements["settings"]);
+        Assert.False(loaded.WindowPlacements.ContainsKey("bad"));
+    }
+
+    [Fact]
+    public void Load_NoWindowPlacements_IsAnEmptyList()
+    {
+        WriteFile("{ \"WindowPlacements\": null }");
+        Assert.Empty(SettingsStore.Load(tmp).WindowPlacements);
+    }
+
     [Fact]
     public void Load_BuiltInSoundWithEmptyNameOrEmoji_UsesTheCatalogOnes()
     {

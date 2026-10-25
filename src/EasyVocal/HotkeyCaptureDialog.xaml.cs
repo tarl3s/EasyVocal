@@ -22,6 +22,7 @@ public partial class HotkeyCaptureDialog : Window
         this.actionId = actionId;
         InitializeComponent();
         DarkTitleBar.Use(this);
+        WindowPlacer.Use(this, "hotkey", null); // kept on screen; it opens over its owner every time
         ItemText.Text = L.F("Hotkey for {0}", itemName);
         RemoveButton.Visibility = string.IsNullOrEmpty(current) ? Visibility.Collapsed : Visibility.Visible;
         if (Hotkey.TryParse(current, out var key)) captured = key;

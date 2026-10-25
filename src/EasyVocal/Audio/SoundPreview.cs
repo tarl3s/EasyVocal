@@ -19,6 +19,7 @@ public sealed class SoundPreview : IDisposable
     private readonly Action ended;
     private readonly Thread thread;
     private volatile bool cancelled;
+    private volatile int played;
 
     /// <param name="ended">Called on the playback thread when the sound is over or stopped (post to the UI yourself).</param>
     public SoundPreview(IAudioOutput output, float[] samples, float volume, Action ended)
@@ -40,6 +41,7 @@ public sealed class SoundPreview : IDisposable
             int pos = 0;
             while (!cancelled && pos < samples.Length)
             {
+                played = Math.Max(0, pos - output.BufferedSamples);
                 if (output.BufferedSamples >= QueueTarget)
                 {
                     Thread.Sleep(5);
@@ -50,7 +52,12 @@ public sealed class SoundPreview : IDisposable
                 output.Write(chunk.AsSpan(0, n));
                 pos += n;
             }
-            while (!cancelled && output.BufferedSamples > 0) Thread.Sleep(10); // let the tail finish
+            while (!cancelled && output.BufferedSamples > 0) // let the tail finish
+            {
+                played = Math.Max(0, pos - output.BufferedSamples);
+                Thread.Sleep(10);
+            }
+            played = samples.Length;
             if (!cancelled) Thread.Sleep(40);
         }
         catch (Exception)
@@ -63,6 +70,9 @@ public sealed class SoundPreview : IDisposable
             try { ended(); } catch (Exception) { /* a faulty listener must not matter */ }
         }
     }
+
+    /// <summary>About how much of the sound has been heard so far (written minus still queued), for a moving playhead.</summary>
+    public int PlayedSamples => played;
 
     /// <summary>Stops the sound and waits for the device to close.</summary>
     public void Dispose()

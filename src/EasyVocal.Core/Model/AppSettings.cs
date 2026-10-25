@@ -53,6 +53,11 @@ public class SoundItem
     public string Emoji { get; set; } = "🔊";
     /// <summary>Relative to the Sounds folder.</summary>
     public string FileName { get; set; } = "";
+    /// <summary>
+    /// Set once the sound was changed in the sound editor: <see cref="FileName"/> is then the edited copy and this
+    /// is the file it came from (never modified), which "Back to original" goes back to. Null = never edited.
+    /// </summary>
+    public string? OriginalFileName { get; set; }
     public double Volume { get; set; } = 0.8;
     public string? Hotkey { get; set; }
     public bool BuiltIn { get; set; }
@@ -93,4 +98,6 @@ public class AppSettings
     public List<SoundItem> Sounds { get; set; } = new();
     /// <summary>Keys: the ids of <see cref="Hotkeys.HotkeyMap.General"/> ("toggleFilter", "stopSounds", "muteMic").</summary>
     public Dictionary<string, string> GeneralHotkeys { get; set; } = new();
+    /// <summary>Where each window was last (keys: "main", "filterEditor", "soundEditor", "audioEditor", "settings", "setup").</summary>
+    public Dictionary<string, WindowBox> WindowPlacements { get; set; } = new();
 }

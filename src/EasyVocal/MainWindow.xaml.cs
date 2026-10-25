@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         this.controller = controller;
         InitializeComponent();
         DarkTitleBar.Use(this);
+        WindowPlacer.Use(this, "main", controller);
         emojiFont = (FontFamily)FindResource("EmojiFont");
 
         meterTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(33) };
@@ -433,6 +434,7 @@ public partial class MainWindow : Window
         var id = s.Id;
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem(L.T("Edit…"), () => EditSound(id)));
+        menu.Items.Add(MenuItem("✂  " + L.T("Edit audio…"), () => EditSoundAudio(id)));
         menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetSoundHotkey(id)));
         menu.Items.Add(MenuItem(L.T("Duplicate"), () => controller.DuplicateSound(id)));
         menu.Items.Add(new Separator());
@@ -464,6 +466,11 @@ public partial class MainWindow : Window
     private void EditSound(string id)
     {
         if (SoundById(id) is { } s) new SoundEditorWindow(controller, s, null) { Owner = this }.ShowDialog();
+    }
+
+    private void EditSoundAudio(string id)
+    {
+        if (SoundById(id) is { } s) AudioEditorWindow.EditSavedSound(this, controller, s);
     }
 
     private void SetVoiceHotkey(string id)

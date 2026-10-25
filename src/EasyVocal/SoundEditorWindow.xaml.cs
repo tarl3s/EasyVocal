@@ -11,7 +11,8 @@ namespace EasyVocal;
 
 /// <summary>
 /// Adds or edits a soundboard sound: the file (chosen or dropped), a name, an emoji, the volume, a preview on the
-/// headphones and a hotkey. A file that can't be opened shows a friendly reason and adds nothing.
+/// headphones, "✂ Edit audio…" and a hotkey. A file that can't be opened shows a friendly reason and adds nothing.
+/// Audio edits wait for Save like everything else: Save writes the edited copy (the original file is kept).
 /// </summary>
 public partial class SoundEditorWindow : Window
 {
@@ -25,6 +26,10 @@ public partial class SoundEditorWindow : Window
     private bool nameTouched, settingName, loadingFile, previewing, saving;
     private int loadTicket;
 
+    private enum AudioChange { None, Edited, Restored }
+    /// <summary>What the audio editor did, applied on Save: Edited = <see cref="samples"/> is an edited version to save as a copy; Restored = back to the original file.</summary>
+    private AudioChange audioChange;
+
     /// <param name="editing">The sound to edit in place, or null to add one.</param>
     /// <param name="droppedPath">A file to start from (dropped on the Sounds tab), or null.</param>
     public SoundEditorWindow(AppController controller, SoundItem? editing, string? droppedPath)
@@ -34,6 +39,7 @@ public partial class SoundEditorWindow : Window
         itemId = editing?.Id ?? ItemOps.NewId();
         InitializeComponent();
         DarkTitleBar.Use(this);
+        WindowPlacer.Use(this, "soundEditor", controller);
 
         SetName(editing != null ? AppController.DisplayName(editing) : "");
         nameTouched = editing != null;
@@ -71,7 +77,7 @@ public partial class SoundEditorWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = L.T("Choose file…"),
-            Filter = L.T("Sound files") + "|*.wav;*.mp3;*.ogg",
+            Filter = L.T("Sound and video files") + "|" + SoundLoader.DialogPattern,
             CheckFileExists = true,
         };
         if (dialog.ShowDialog(this) == true) _ = LoadFileAsync(dialog.FileName);
@@ -113,6 +119,7 @@ public partial class SoundEditorWindow : Window
             samples = data;
             if (!existing)
             {
+                audioChange = AudioChange.None;
                 newFilePath = path;
                 FileText.Text = Path.GetFileName(path);
                 if (!nameTouched) SetName(Path.GetFileNameWithoutExtension(path));
@@ -195,6 +202,48 @@ public partial class SoundEditorWindow : Window
     {
         PreviewButton.Content = previewing ? "■  " + L.T("Stop") : "▶  " + L.T("Preview");
         PreviewButton.IsEnabled = samples != null && !loadingFile;
+        EditAudioButton.Content = "✂  " + L.T("Edit audio…");
+        EditAudioButton.IsEnabled = samples != null && !loadingFile;
+    }
+
+    // ---------- edit audio ----------
+
+    private void EditAudioButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (samples == null) return;
+        if (previewing)
+        {
+            controller.StopPreview();
+            previewing = false;
+            UpdatePreviewButton();
+        }
+        bool neverEdited = newFilePath != null || string.IsNullOrEmpty(editing?.OriginalFileName);
+        bool isOriginal = audioChange == AudioChange.Restored || (audioChange == AudioChange.None && neverEdited);
+        var name = string.IsNullOrWhiteSpace(NameBox.Text) ? L.T("New sound") : NameBox.Text.Trim();
+        var editor = new AudioEditorWindow(controller, name, emojiGrid.Selected, VolumeSlider.Value, samples,
+            isOriginal, isOriginal ? null : OriginalPath(), editing?.Id) { Owner = this };
+        if (editor.ShowDialog() != true || editor.Result is not { } result) return;
+        samples = result.Samples;
+        audioChange = !result.IsOriginal ? AudioChange.Edited : neverEdited ? AudioChange.None : AudioChange.Restored;
+        UpdateFileText();
+        UpdateSave();
+    }
+
+    /// <summary>The file the sound came from: a file just picked, else the sound's original (or its only) file.</summary>
+    private string? OriginalPath() =>
+        newFilePath ?? (string.IsNullOrEmpty(editing?.OriginalFileName) ? controller.SoundPath(editing?.FileName) : controller.SoundPath(editing!.OriginalFileName));
+
+    private void UpdateFileText()
+    {
+        string file = newFilePath != null ? Path.GetFileName(newFilePath) : editing?.FileName ?? L.T("No file chosen yet");
+        if (audioChange == AudioChange.Restored && editing?.OriginalFileName is { } original) file = original;
+        FileText.Text = audioChange == AudioChange.Edited ? file + "  ·  " + L.T("edited") : file;
+    }
+
+    /// <summary>Writes the edited audio as the sound's new file (the person is told when that fails).</summary>
+    private void SaveEditedAudio(float[] edited)
+    {
+        if (AudioEditorWindow.SaveResult(this, controller, itemId, new AudioState(edited, false))) audioChange = AudioChange.None;
     }
 
     // ---------- hotkey ----------
@@ -253,14 +302,25 @@ public partial class SoundEditorWindow : Window
             else
             {
                 string? oldFile = fileName != null ? editing.FileName : null;
+                // A new file starts a new story: the old original (if it had one) goes too when nothing uses it.
+                string? oldOriginal = fileName != null ? editing.OriginalFileName : null;
                 // A built-in keeps its English name (it is translated where shown) unless the person typed another.
                 if (!(editing.BuiltIn && name == AppController.DisplayName(editing))) editing.Name = name;
                 editing.Emoji = emojiGrid.Selected;
                 editing.Volume = VolumeSlider.Value;
                 editing.Hotkey = pendingHotkey;
-                if (fileName != null) editing.FileName = fileName;
-                controller.SoundEdited(editing.Id, fileName != null ? samples : null, editing.BuiltIn ? null : oldFile);
+                if (fileName != null)
+                {
+                    editing.FileName = fileName;
+                    editing.OriginalFileName = null;
+                }
+                controller.SoundEdited(editing.Id, fileName != null ? samples : null,
+                    editing.BuiltIn ? null : oldFile, editing.BuiltIn ? null : oldOriginal);
+                if (audioChange == AudioChange.Restored) controller.RestoreOriginalAudio(editing.Id, samples);
             }
+            // The edited audio is written as a copy next to the file it came from (that one is kept as the original).
+            // If that fails the person is told and the sound keeps its unedited audio.
+            if (audioChange == AudioChange.Edited && samples != null) SaveEditedAudio(samples);
 
             // Windows could still refuse the key (an app grabbed it since we checked): don't keep it.
             if (pendingHotkey != null && controller.RefusedActions.Contains("sound:" + itemId))

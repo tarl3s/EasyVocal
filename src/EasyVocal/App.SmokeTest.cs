@@ -193,6 +193,8 @@ public partial class App
         c.Save();
 
         SmokeSetupAndSettings(main, c, Png);
+        SmokeAudioEditor(main, c, dataFolder, Png);
+        SmokeSmallWindows(main, c, dataFolder, Png);
     }
 
     // ---------- first-run setup and settings ----------

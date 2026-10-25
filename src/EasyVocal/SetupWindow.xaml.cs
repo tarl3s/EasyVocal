@@ -39,7 +39,7 @@ public partial class SetupWindow : Window
         this.cableProbe = cableProbe ?? (() => DeviceRules.FindVirtualCable(controller.Devices.Outputs()) != null);
         InitializeComponent();
         DarkTitleBar.Use(this);
-        MaxHeight = Math.Max(400, SystemParameters.WorkArea.Height - 40);
+        WindowPlacer.Use(this, "setup", controller);
 
         BuildGuides();
         StartBox.IsChecked = controller.Settings.SetupDone ? controller.Settings.StartWithWindows : true;

@@ -203,6 +203,7 @@ public partial class App : Application
     {
         tray?.Dispose();
         tray = null;
+        if (window != null) WindowPlacer.Remember(window, "main", controller); // saved by Dispose below
         controller?.Dispose(); // stops the audio, unregisters the hotkeys (the window handle is still alive), saves
         controller = null;
         if (window != null)

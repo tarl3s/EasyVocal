@@ -14,13 +14,30 @@ public sealed class SoundLoadException : Exception
     public SoundLoadException(string message, Exception inner) : base(message, inner) { }
 }
 
-/// <summary>Reads a WAV, MP3 or OGG file into mono samples at <see cref="AudioFormat.SampleRate"/>.</summary>
+/// <summary>
+/// Reads a sound file into mono samples at <see cref="AudioFormat.SampleRate"/>: WAV, AIFF and MP3 through NAudio,
+/// OGG through NVorbis, and FLAC, M4A/AAC, WMA and the sound of a video (MP4, MOV, WMV…) through Windows' own
+/// decoders (Media Foundation).
+/// </summary>
 public static class SoundLoader
 {
     /// <summary>Longest sound we accept, in seconds.</summary>
     public const double MaxSeconds = 600;
 
-    public static readonly string[] Extensions = { ".wav", ".mp3", ".ogg" };
+    public static readonly string[] Extensions =
+    {
+        ".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".mp4", ".m4v", ".mov", ".wmv",
+    };
+
+    /// <summary>The extensions as a file-dialog pattern: "*.wav;*.mp3;…".</summary>
+    public static string DialogPattern => "*" + string.Join(";*", Extensions);
+
+    /// <summary>True when the file's extension is one <see cref="Load"/> reads.</summary>
+    public static bool IsSupported(string? path) =>
+        !string.IsNullOrEmpty(path) && Array.IndexOf(Extensions, Path.GetExtension(path).ToLowerInvariant()) >= 0;
+
+    /// <summary>Files Windows decodes (Media Foundation): everything but WAV, AIFF, MP3 and OGG.</summary>
+    private static bool UsesMediaFoundation(string ext) => ext is not (".wav" or ".mp3" or ".ogg" or ".aiff" or ".aif");
 
     public static float[] Load(string path)
     {
@@ -28,14 +45,30 @@ public static class SoundLoader
             throw new SoundLoadException("We couldn't find that sound file.");
         string ext = Path.GetExtension(path).ToLowerInvariant();
         if (Array.IndexOf(Extensions, ext) < 0)
-            throw new SoundLoadException("That kind of file isn't supported. Please pick a WAV, MP3 or OGG file.");
+            throw new SoundLoadException("That kind of file isn't supported. Please pick a sound or video file (WAV, MP3, OGG, FLAC, M4A, WMA, MP4…).");
 
         try
         {
-            using WaveStream reader = ext == ".ogg" ? OpenOgg(path) : new AudioFileReader(path);
-            if (reader.TotalTime.TotalSeconds > MaxSeconds)
-                throw TooLong();
-            return ReadMono(reader, (ISampleProvider)reader);
+            if (ext == ".ogg")
+            {
+                using var ogg = OpenOgg(path);
+                return ReadChecked(ogg, (ISampleProvider)ogg);
+            }
+            if (UsesMediaFoundation(ext))
+            {
+                // A video may carry no sound at all: Media Foundation then fails to open it (caught below).
+                using var mf = new MediaFoundationReader(path);
+                return ReadChecked(mf, mf.ToSampleProvider());
+            }
+            if (ext is ".aiff" or ".aif")
+            {
+                // AiffFileReader(path) leaves the file open when it can't read it: the stream is ours to close.
+                using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var aiff = new AiffFileReader(file);
+                return ReadChecked(aiff, aiff.ToSampleProvider());
+            }
+            using var reader = new AudioFileReader(path);
+            return ReadChecked(reader, reader);
         }
         catch (SoundLoadException) { throw; }
         catch (Exception ex)
@@ -50,6 +83,12 @@ public static class SoundLoader
         var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         try { return new VorbisWaveReader(file, closeOnDispose: true); }
         catch { file.Dispose(); throw; }
+    }
+
+    private static float[] ReadChecked(WaveStream stream, ISampleProvider source)
+    {
+        if (stream.TotalTime.TotalSeconds > MaxSeconds) throw TooLong();
+        return ReadMono(stream, source);
     }
 
     private static SoundLoadException TooLong() =>

@@ -274,4 +274,136 @@ public class ItemOpsTests : IDisposable
         Assert.Equal(Path.GetFileName(name), name);
         Assert.True(File.Exists(Path.Combine(sounds, name)));
     }
+
+    // ---------- the sound editor ----------
+
+    private static float[] Tone(int n)
+    {
+        var x = new float[n];
+        for (int i = 0; i < n; i++) x[i] = (float)(0.5 * Math.Sin(i * 0.05));
+        return x;
+    }
+
+    [Fact]
+    public void WriteSoundFile_WritesAReadableWav_UnderAFreeName()
+    {
+        var sounds = Path.Combine(_dir, "Sounds");
+        var a = ItemOps.WriteSoundFile(sounds, "ding (edited)", Tone(4800));
+        var b = ItemOps.WriteSoundFile(sounds, "ding (edited)", Tone(2400));
+        Assert.Equal("ding (edited).wav", a);
+        Assert.Equal("ding (edited) (2).wav", b);
+        var back = EasyVocal.Core.Sounds.SoundLoader.Load(Path.Combine(sounds, a));
+        Assert.Equal(4800, back.Length);
+        Assert.InRange(back[100], Tone(4800)[100] - 0.001f, Tone(4800)[100] + 0.001f);
+    }
+
+    [Theory]
+    [InlineData("a/b:c?", "a_b_c_")]
+    [InlineData("   ", "sound")]
+    [InlineData(null, "sound")]
+    [InlineData("dots...", "dots")]
+    public void SafeStem_MakesAFileName(string? name, string want) => Assert.Equal(want, ItemOps.SafeStem(name));
+
+    [Fact]
+    public void UseEditedFile_RemembersTheOriginalOnce_AndDropsOldEditedCopies()
+    {
+        var s = Fresh();
+        var sounds = Path.Combine(_dir, "Sounds");
+        Directory.CreateDirectory(sounds);
+        File.WriteAllText(Path.Combine(sounds, "mine.mp3"), "original");
+        var item = new SoundItem { Id = "my-1", Name = "Mine", FileName = "mine.mp3" };
+        s.Sounds.Add(item);
+
+        var first = ItemOps.WriteSoundFile(sounds, ItemOps.EditedStem(item), Tone(100));
+        ItemOps.UseEditedFile(s, item, first, sounds);
+        Assert.Equal("mine (edited).wav", item.FileName);
+        Assert.Equal("mine.mp3", item.OriginalFileName);
+
+        var second = ItemOps.WriteSoundFile(sounds, ItemOps.EditedStem(item), Tone(100));
+        ItemOps.UseEditedFile(s, item, second, sounds);
+        Assert.Equal("mine.mp3", item.OriginalFileName); // still the very first file
+        Assert.False(File.Exists(Path.Combine(sounds, first)));  // the older edit is gone
+        Assert.Equal("original", File.ReadAllText(Path.Combine(sounds, "mine.mp3"))); // never modified
+
+        Assert.True(ItemOps.BackToOriginal(s, item, sounds));
+        Assert.Equal("mine.mp3", item.FileName);
+        Assert.Null(item.OriginalFileName);
+        Assert.False(File.Exists(Path.Combine(sounds, second)));
+        Assert.False(ItemOps.BackToOriginal(s, item, sounds)); // nothing to go back to
+    }
+
+    [Fact]
+    public void EditedCopyAndOriginal_StayWhileACopyOfTheSoundUsesThem()
+    {
+        var s = Fresh();
+        var sounds = Path.Combine(_dir, "Sounds");
+        Directory.CreateDirectory(sounds);
+        File.WriteAllText(Path.Combine(sounds, "mine.mp3"), "original");
+        File.WriteAllText(Path.Combine(sounds, "mine (edited).wav"), "edited");
+        var item = new SoundItem { Id = "my-1", Name = "Mine", FileName = "mine (edited).wav", OriginalFileName = "mine.mp3" };
+        s.Sounds.Add(item);
+        var copy = ItemOps.DuplicateSound(s, "my-1");
+        Assert.Equal("mine.mp3", copy.OriginalFileName);
+
+        ItemOps.BackToOriginal(s, item, sounds);
+        Assert.True(File.Exists(Path.Combine(sounds, "mine (edited).wav"))); // the copy still plays it
+
+        ItemOps.DeleteSound(s, copy.Id, sounds);
+        Assert.False(File.Exists(Path.Combine(sounds, "mine (edited).wav")));
+        Assert.True(File.Exists(Path.Combine(sounds, "mine.mp3"))); // the first sound plays it again
+
+        ItemOps.DeleteSound(s, item.Id, sounds);
+        Assert.False(File.Exists(Path.Combine(sounds, "mine.mp3")));
+    }
+
+    [Fact]
+    public void DeleteSound_RemovesTheEditedCopyAndTheOriginal()
+    {
+        var s = Fresh();
+        var sounds = Path.Combine(_dir, "Sounds");
+        Directory.CreateDirectory(sounds);
+        File.WriteAllText(Path.Combine(sounds, "a.mp3"), "o");
+        File.WriteAllText(Path.Combine(sounds, "a (edited).wav"), "e");
+        s.Sounds.Add(new SoundItem { Id = "my-1", Name = "A", FileName = "a (edited).wav", OriginalFileName = "a.mp3" });
+        ItemOps.DeleteSound(s, "my-1", sounds);
+        Assert.Empty(Directory.GetFiles(sounds));
+    }
+
+    [Fact]
+    public void EditedBuiltIn_KeepsItsStarterFile()
+    {
+        var s = Fresh();
+        var sounds = Path.Combine(_dir, "Sounds");
+        Directory.CreateDirectory(sounds);
+        File.WriteAllText(Path.Combine(sounds, "ding.wav"), "starter");
+        var ding = s.Sounds.First(x => x.Id == "ding");
+        var edited = ItemOps.WriteSoundFile(sounds, ItemOps.EditedStem(ding), Tone(10));
+        ItemOps.UseEditedFile(s, ding, edited, sounds);
+        Assert.Equal("ding (edited).wav", ding.FileName);
+        ItemOps.DeleteFileIfUnused(s, "ding.wav", sounds);
+        Assert.True(File.Exists(Path.Combine(sounds, "ding.wav"))); // it is the original of an edited sound
+    }
+
+    [Fact]
+    public void AddSplitSounds_AddsTwoNumberedSoundsAfterTheOriginal()
+    {
+        var s = Fresh();
+        var ding = s.Sounds.First(x => x.Id == "ding");
+        int index = s.Sounds.IndexOf(ding);
+        var (a, b) = ItemOps.AddSplitSounds(s, "ding", "Ding", "🔔", 0.6, "Ding 1.wav", "Ding 2.wav");
+        Assert.Equal("Ding 1", a.Name);
+        Assert.Equal("Ding 2", b.Name);
+        Assert.Same(a, s.Sounds[index + 1]);
+        Assert.Same(b, s.Sounds[index + 2]);
+        Assert.False(a.BuiltIn || b.BuiltIn);
+        Assert.Null(a.Hotkey);
+        Assert.Equal(0.6, b.Volume);
+        Assert.Equal("🔔", a.Emoji);
+        Assert.NotEqual(a.Id, b.Id);
+
+        var (c, d) = ItemOps.AddSplitSounds(s, null, "Ding", "🔔", 0.6, "x.wav", "y.wav");
+        Assert.NotEqual("Ding 1", c.Name);
+        Assert.NotEqual(c.Name, d.Name);
+        Assert.Same(d, s.Sounds[^1]);
+    }
 }

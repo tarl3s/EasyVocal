@@ -30,6 +30,7 @@ public static class AskDialog
         };
         if (owner != null) window.Owner = owner;
         DarkTitleBar.Use(window);
+        WindowPlacer.Use(window, "ask", null);
         if (owner == null && Application.Current.MainWindow?.Icon != null) window.Icon = Application.Current.MainWindow.Icon;
 
         var root = new StackPanel { Margin = new Thickness(20) };

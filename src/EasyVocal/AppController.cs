@@ -466,7 +466,7 @@ public sealed class AppController : IDisposable
     /// The person edited this sound in place (the object was already changed). <paramref name="newSamples"/> is the
     /// decoded new file when it was replaced; <paramref name="oldFile"/> that file's name, deleted when nothing uses it.
     /// </summary>
-    public void SoundEdited(string id, float[]? newSamples, string? oldFile)
+    public void SoundEdited(string id, float[]? newSamples, string? oldFile, string? oldOriginal = null)
     {
         if (newSamples != null)
         {
@@ -474,9 +474,78 @@ public sealed class AppController : IDisposable
             SetSamples(id, newSamples);
         }
         if (oldFile != null) ItemOps.DeleteFileIfUnused(Settings, oldFile, SoundsFolder);
+        if (oldOriginal != null) ItemOps.DeleteFileIfUnused(Settings, oldOriginal, SoundsFolder);
         Save();
         RebuildHotkeys();
     }
+
+    // ---------- the sound editor ----------
+
+    /// <summary>The decoded audio the soundboard holds for a sound (null while it is still loading or broken).</summary>
+    public float[]? SoundSamples(string id) => mixer.TryGet(id, out var samples) ? samples : null;
+
+    /// <summary>
+    /// Saves edited audio as a new WAV in the Sounds folder and makes the sound play it. The original file is never
+    /// changed (it is remembered for "Back to original"). Throws <see cref="IOException"/> or
+    /// <see cref="UnauthorizedAccessException"/> when the file can't be written; nothing changes then.
+    /// </summary>
+    public void ApplyEditedAudio(string id, float[] samples)
+    {
+        var item = FindSound(id) ?? throw new ArgumentException("No sound with id '" + id + "'.", nameof(id));
+        var clean = AudioEdit.Clamped(samples); // what the file holds is what plays
+        var file = ItemOps.WriteSoundFile(SoundsFolder, ItemOps.EditedStem(item), clean);
+        ItemOps.UseEditedFile(Settings, item, file, SoundsFolder);
+        mixer.Stop(id);
+        SetSamples(id, clean);
+        AppLog.Info($"Sound '{id}' edited: now plays {file}");
+        Save();
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// "Back to original": the sound plays its original file again. <paramref name="originalSamples"/> is that
+    /// file already decoded (the editor has it), else it is decoded in the background.
+    /// </summary>
+    public void RestoreOriginalAudio(string id, float[]? originalSamples)
+    {
+        var item = FindSound(id);
+        if (item == null || !ItemOps.BackToOriginal(Settings, item, SoundsFolder)) return;
+        mixer.Stop(id);
+        if (originalSamples != null) SetSamples(id, originalSamples);
+        else LoadSound(item);
+        AppLog.Info($"Sound '{id}' back to its original file {item.FileName}");
+        Save();
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// "Split at cursor": two new sounds of the person's own, "<paramref name="name"/> 1" and "… 2", each with its
+    /// half saved as a WAV, right after <paramref name="afterId"/> (the sound being edited, if it is saved yet).
+    /// </summary>
+    public (SoundItem First, SoundItem Second) SplitSound(string? afterId, string name, string emoji, double volume, float[] first, float[] second)
+    {
+        var a = AudioEdit.Clamped(first);
+        var b = AudioEdit.Clamped(second);
+        var fileA = ItemOps.WriteSoundFile(SoundsFolder, name + " 1", a);
+        string fileB;
+        try { fileB = ItemOps.WriteSoundFile(SoundsFolder, name + " 2", b); }
+        catch
+        {
+            ItemOps.DeleteFileIfUnused(Settings, fileA, SoundsFolder);
+            throw;
+        }
+        var pair = ItemOps.AddSplitSounds(Settings, afterId, name, emoji, volume, fileA, fileB);
+        SetSamples(pair.First.Id, a);
+        SetSamples(pair.Second.Id, b);
+        AppLog.Info($"Sound split into '{pair.First.Name}' and '{pair.Second.Name}'");
+        Save();
+        RebuildHotkeys();
+        RaiseChanged();
+        return pair;
+    }
+
+    /// <summary>How far the headphone preview has played, in samples; -1 when nothing is previewing.</summary>
+    public int PreviewPosition => preview?.PlayedSamples ?? -1;
 
     /// <summary>Hides a built-in sound or removes the person's own (and its file when nothing else uses it).</summary>
     public void DeleteSound(string id)

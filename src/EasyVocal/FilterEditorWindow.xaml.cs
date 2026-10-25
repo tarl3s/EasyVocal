@@ -31,7 +31,7 @@ public partial class FilterEditorWindow : Window
         this.controller = controller;
         InitializeComponent();
         DarkTitleBar.Use(this);
-        MaxHeight = Math.Max(400, SystemParameters.WorkArea.Height - 40);
+        WindowPlacer.Use(this, "filterEditor", controller);
 
         bool asCopy = editing == null || editing.BuiltIn;
         this.editing = asCopy ? null : editing;

@@ -22,7 +22,7 @@ public partial class SettingsWindow : Window
         this.controller = controller;
         InitializeComponent();
         DarkTitleBar.Use(this);
-        MaxHeight = Math.Max(400, SystemParameters.WorkArea.Height - 40);
+        WindowPlacer.Use(this, "settings", controller);
         BuildHotkeyRows();
         Load();
     }

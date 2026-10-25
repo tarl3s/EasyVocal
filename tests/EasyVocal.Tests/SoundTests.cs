@@ -75,6 +75,11 @@ public class SoundTests : IDisposable
     [Theory]
     [InlineData(".mp3")]
     [InlineData(".wav")]
+    [InlineData(".flac")]
+    [InlineData(".m4a")]
+    [InlineData(".mp4")]
+    [InlineData(".wma")]
+    [InlineData(".aiff")]
     [InlineData(".ogg")]
     public void Load_CorruptFile_ThrowsSoundLoadException(string ext)
     {

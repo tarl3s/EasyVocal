@@ -30,13 +30,22 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   Ghost and Movie robot.
 - **Your own voices:** a small editor with 7 plain sliders (Deeper/Higher, Voice body, Robot, Echo, Old radio,
   Distortion, Whisper). Hear it live with **Hear me** while you drag.
-- **A soundboard:** 10 starter sounds that come with the app, and your own: add any MP3, WAV or OGG (or drag and
-  drop it), give it a name, an emoji and a volume. Press a playing sound again to stop it. Sounds can overlap.
+- **A soundboard:** 10 starter sounds that come with the app, and your own: add a sound file (MP3, WAV, OGG, FLAC,
+  M4A, AAC, WMA, AIFF) or the sound of a video (MP4, MOV, WMV...), or just drag and drop it, then give it a name, an
+  emoji and a volume. Press a playing sound again to stop it. Sounds can overlap.
+- **A sound editor** (**✂ Edit audio...** on any sound): see the wave, pick a part with the mouse and hear it on
+  your headphones, then cut it, keep only that part or split the sound in two; make it faster or slower (keeping the
+  pitch or not), higher or lower, louder, quieter or as loud as possible; fade in or out, play it backwards, add an
+  echo, run it through any of your voices, or cut the silence at the start and end. Undo and redo as much as you
+  like. Your original file is never changed: **Back to original** is always one click away, and **Save a copy as...**
+  exports WAV or MP3.
 - **Global hotkeys** for every voice and every sound, plus turning the voice on/off, stopping all sounds and muting
   the mic. They work while a game is fullscreen. (A plain key without Ctrl or Alt stops typing that character
   elsewhere while EasyVocal runs, so the app warns you.)
 - **Tray icon** with a quick voice menu, and **Start with Windows** (off by default).
 - **Start menu shortcut**: the first time you open EasyVocal it asks whether to add it to the Start menu.
+- **Fits small screens:** every window can be resized, scrolls instead of cutting things off, opens inside your
+  screen and remembers where you left it.
 - **English and Português (Brasil).**
 - **Light:** small download, almost no CPU when idle, a few percent while you talk.
 - **OFF or Normal = your clean voice.** Your friends still hear you.

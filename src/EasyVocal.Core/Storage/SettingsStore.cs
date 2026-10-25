@@ -171,6 +171,7 @@ public static class SettingsStore
     private static AppSettings Normalize(AppSettings s)
     {
         s.GeneralHotkeys ??= new();
+        s.WindowPlacements = KeepSaneBoxes(s.WindowPlacements);
         s.Voices = MergeVoices(s.Voices ?? new());
         s.Sounds = MergeSounds(s.Sounds ?? new());
         return s;
@@ -216,6 +217,12 @@ public static class SettingsStore
                 b.Volume = ClampVolume(f.Volume, b.Volume);
                 if (!string.IsNullOrWhiteSpace(f.Name)) b.Name = f.Name;
                 if (!string.IsNullOrWhiteSpace(f.Emoji)) b.Emoji = f.Emoji;
+                // Edited in the sound editor: it plays the edited copy; its own file stays the original.
+                if (!string.IsNullOrEmpty(f.OriginalFileName) && IsPlainName(f.FileName) && !string.Equals(f.FileName, b.FileName, StringComparison.OrdinalIgnoreCase))
+                {
+                    b.OriginalFileName = b.FileName;
+                    b.FileName = f.FileName;
+                }
             }
             result.Add(b);
         }
@@ -224,8 +231,23 @@ public static class SettingsStore
             if (x == null || string.IsNullOrEmpty(x.Id) || catalogIds.Contains(x.Id)) continue;
             x.BuiltIn = false;
             x.Volume = ClampVolume(x.Volume, 0.8);
+            if (x.OriginalFileName != null && (!IsPlainName(x.OriginalFileName) || string.Equals(x.OriginalFileName, x.FileName, StringComparison.OrdinalIgnoreCase)))
+                x.OriginalFileName = null;
             result.Add(x);
         }
+        return result;
+    }
+
+    /// <summary>A file name of the Sounds folder itself (no folders, nothing that leaves it).</summary>
+    private static bool IsPlainName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && Path.GetFileName(name) == name && name != "." && name != "..";
+
+    private static Dictionary<string, WindowBox> KeepSaneBoxes(Dictionary<string, WindowBox>? boxes)
+    {
+        var result = new Dictionary<string, WindowBox>();
+        if (boxes == null) return result;
+        foreach (var (key, box) in boxes)
+            if (!string.IsNullOrEmpty(key) && box.IsFinite && box.Width < 100000 && box.Height < 100000) result[key] = box;
         return result;
     }
 

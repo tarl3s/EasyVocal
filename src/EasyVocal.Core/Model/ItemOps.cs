@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using EasyVocal.Core.Sounds;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal.Core.Model;
@@ -94,6 +95,7 @@ public static class ItemOps
             Name = UniqueName(s.Sounds.ConvertAll(x => x.Name), CopyName(original.Name, original.BuiltIn)),
             Emoji = original.Emoji,
             FileName = original.FileName,
+            OriginalFileName = original.OriginalFileName,
             Volume = original.Volume,
             Hotkey = null,
             BuiltIn = false,
@@ -119,16 +121,18 @@ public static class ItemOps
         }
         s.Sounds.RemoveAt(index);
         DeleteFileIfUnused(s, item.FileName, soundsFolder);
+        if (item.OriginalFileName != null) DeleteFileIfUnused(s, item.OriginalFileName, soundsFolder);
     }
 
     /// <summary>
-    /// Deletes <paramref name="fileName"/> from <paramref name="soundsFolder"/> when no sound in the settings uses it.
+    /// Deletes <paramref name="fileName"/> from <paramref name="soundsFolder"/> when no sound in the settings uses it
+    /// (as its file or as the original of an edited one).
     /// Anything that isn't a plain file name (a path out of the folder) is left alone.
     /// </summary>
     public static void DeleteFileIfUnused(AppSettings s, string fileName, string soundsFolder)
     {
         if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName) return; // never leave the folder
-        if (s.Sounds.Exists(x => string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase))) return;
+        if (IsFileUsed(s, fileName)) return;
         try
         {
             var path = Path.Combine(soundsFolder, fileName);
@@ -167,5 +171,101 @@ public static class ItemOps
                 // taken: try the next number
             }
         }
+    }
+
+    /// <summary>True when a sound uses the file, as its file or as the original of an edited one.</summary>
+    public static bool IsFileUsed(AppSettings s, string fileName) =>
+        s.Sounds.Exists(x => string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(x.OriginalFileName, fileName, StringComparison.OrdinalIgnoreCase));
+
+    // ---------- the sound editor ----------
+
+    /// <summary>
+    /// Writes edited samples as a new WAV in <paramref name="soundsFolder"/> under a name nobody uses
+    /// ("<paramref name="stem"/>.wav", "… (2).wav"…) and returns that plain file name. Nothing is ever overwritten.
+    /// </summary>
+    public static string WriteSoundFile(string soundsFolder, string stem, float[] samples)
+    {
+        Directory.CreateDirectory(soundsFolder);
+        stem = SafeStem(stem);
+        for (int n = 1; ; n++)
+        {
+            var candidate = n == 1 ? stem + ".wav" : $"{stem} ({n}).wav";
+            var path = Path.Combine(soundsFolder, candidate);
+            FileStream stream;
+            try { stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
+            catch (IOException) when (File.Exists(path)) { continue; } // taken: try the next number
+            try
+            {
+                SoundWriter.WriteWav(stream, samples); // closes the stream
+            }
+            catch
+            {
+                stream.Dispose();
+                try { File.Delete(path); } catch (Exception) { /* a half-written file is only clutter */ }
+                throw;
+            }
+            return candidate;
+        }
+    }
+
+    /// <summary>A file name stem made of the name's allowed characters (at most 60), or "sound".</summary>
+    public static string SafeStem(string? name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = (name ?? "").Trim().ToCharArray();
+        for (int i = 0; i < chars.Length; i++)
+            if (Array.IndexOf(invalid, chars[i]) >= 0) chars[i] = '_';
+        var stem = new string(chars).Trim().TrimEnd('.');
+        if (stem.Length > 60) stem = stem[..60].TrimEnd();
+        return stem.Length == 0 ? "sound" : stem;
+    }
+
+    /// <summary>The stem for an edited copy of the sound: its original file's name + " (edited)".</summary>
+    public static string EditedStem(SoundItem item) =>
+        Path.GetFileNameWithoutExtension(item.OriginalFileName ?? item.FileName) + " (edited)";
+
+    /// <summary>
+    /// The sound now plays <paramref name="newFile"/> (an edited copy already in the folder). The file it came from
+    /// is remembered the first time (<see cref="SoundItem.OriginalFileName"/>) and never touched; an earlier edited
+    /// copy is deleted when nothing else uses it.
+    /// </summary>
+    public static void UseEditedFile(AppSettings s, SoundItem item, string newFile, string soundsFolder)
+    {
+        var old = item.FileName;
+        if (string.IsNullOrEmpty(item.OriginalFileName)) item.OriginalFileName = old;
+        item.FileName = newFile;
+        if (!string.Equals(old, item.OriginalFileName, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(old, newFile, StringComparison.OrdinalIgnoreCase))
+            DeleteFileIfUnused(s, old, soundsFolder);
+    }
+
+    /// <summary>"Back to original": the sound plays its original file again; the edited copy goes when nothing uses it. False when it was never edited.</summary>
+    public static bool BackToOriginal(AppSettings s, SoundItem item, string soundsFolder)
+    {
+        if (string.IsNullOrEmpty(item.OriginalFileName)) return false;
+        var edited = item.FileName;
+        item.FileName = item.OriginalFileName;
+        item.OriginalFileName = null;
+        if (!string.Equals(edited, item.FileName, StringComparison.OrdinalIgnoreCase)) DeleteFileIfUnused(s, edited, soundsFolder);
+        return true;
+    }
+
+    /// <summary>
+    /// The two halves of a split as new sounds of the person's own, "<paramref name="name"/> 1" and "… 2", right
+    /// after <paramref name="afterId"/> (or at the end). Same emoji and volume, no hotkey.
+    /// </summary>
+    public static (SoundItem First, SoundItem Second) AddSplitSounds(AppSettings s, string? afterId, string name,
+        string emoji, double volume, string firstFile, string secondFile)
+    {
+        var names = s.Sounds.ConvertAll(x => x.Name);
+        var first = new SoundItem { Id = NewId(), Name = UniqueName(names, name + " 1"), Emoji = emoji, FileName = firstFile, Volume = volume };
+        names.Add(first.Name);
+        var second = new SoundItem { Id = NewId(), Name = UniqueName(names, name + " 2"), Emoji = emoji, FileName = secondFile, Volume = volume };
+        int index = afterId == null ? -1 : s.Sounds.FindIndex(x => x.Id == afterId);
+        if (index < 0) index = s.Sounds.Count - 1;
+        s.Sounds.Insert(index + 1, first);
+        s.Sounds.Insert(index + 2, second);
+        return (first, second);
     }
 }
