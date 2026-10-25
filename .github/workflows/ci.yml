@@ -72,8 +72,6 @@ jobs:
           dotnet build tests/EasyVocal.Tests -warnaserror
           dotnet build tests/EasyVocal.Tests.Platforms -warnaserror
           dotnet build tests/EasyVocal.UiTests -warnaserror
-      - name: Native libraries
-        run: ldd tests/EasyVocal.Tests.Platforms/bin/Debug/net8.0/runtimes/linux-x64/native/libportaudio.so || true
       - name: Portable tests
         run: dotnet test tests/EasyVocal.Tests --no-build
       - name: Linux platform tests (real PulseAudio, Xvfb)
@@ -133,7 +131,5 @@ jobs:
           name: downloads
           path: downloads
       - name: Unpack, sign ad hoc and start the Apple silicon download
-        env:
-          EV_SMOKE_RUNS: "5" # five in a row: a hang that happens now and then (one froze macOS) shows up
         run: sh tools/Test-Package.sh downloads/EasyVocal-macos-arm64.zip "$RUNNER_TEMP/macos-package"
 

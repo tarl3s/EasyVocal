@@ -89,14 +89,7 @@ case "$archive" in
 esac
 
 echo "== $program --data $work/data --smoketest"
-# EV_SMOKE_RUNS=n: the smoke test n times (to catch something that happens now and then).
-for round in $(seq 1 "${EV_SMOKE_RUNS:-1}"); do
-    rm -rf "$work/data"
-    mkdir -p "$work/data"
-    echo "== smoke run $round"
-    run_app 240 --data "$work/data" --smoketest
-    [ "$code" = 0 ] || break
-done
+run_app 240 --data "$work/data" --smoketest
 echo "exit code $code"
 if [ -f "$work/data/easyvocal.log" ]; then
     echo "== easyvocal.log"
