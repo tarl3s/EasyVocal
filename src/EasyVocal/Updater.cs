@@ -274,8 +274,9 @@ public static class UpdatePackage
     /// <summary>
     /// Checks <paramref name="zipPath"/> (a zip; no entry outside its folder; an EasyVocal.exe at its top or in its one
     /// top folder that is a Windows program) and writes that exe to <paramref name="folder"/>. Returns its path.
+    /// A cancellation while it is written stops it and removes what was written.
     /// </summary>
-    public static string ExtractExe(string zipPath, string folder)
+    public static string ExtractExe(string zipPath, string folder, CancellationToken ct = default)
     {
         var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         ZipArchive archive;
@@ -306,7 +307,8 @@ public static class UpdatePackage
 
             Directory.CreateDirectory(root);
             var dest = Path.Combine(root, UpdateRules.ExeName);
-            exe.ExtractToFile(dest, overwrite: true);
+            ct.ThrowIfCancellationRequested();
+            CopyOut(exe, dest, ct);
             if (!LooksLikeProgram(dest))
             {
                 TryDelete(dest);
@@ -314,6 +316,21 @@ public static class UpdatePackage
             }
             return dest;
         }
+    }
+
+    /// <summary>Writes the entry to <paramref name="dest"/> in chunks, so a cancellation stops it quickly (the exe is ~80 MB).</summary>
+    private static void CopyOut(ZipArchiveEntry entry, string dest, CancellationToken ct)
+    {
+        using (var from = entry.Open())
+        using (var to = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            var buffer = new byte[81920];
+            int n;
+            while (!ct.IsCancellationRequested && (n = from.Read(buffer, 0, buffer.Length)) > 0) to.Write(buffer, 0, n);
+        }
+        if (!ct.IsCancellationRequested) return;
+        TryDelete(dest);
+        ct.ThrowIfCancellationRequested();
     }
 
     /// <summary>A Windows program starts with "MZ".</summary>
@@ -594,7 +611,7 @@ public sealed class UpdateService
                 throw new UpdateException(UpdateProblem.Download, ex.GetType().Name + ": " + ex.Message, ex);
             }
             ct.ThrowIfCancellationRequested();
-            var exe = UpdatePackage.ExtractExe(zip, Path.Combine(folder, "new"));
+            var exe = UpdatePackage.ExtractExe(zip, Path.Combine(folder, "new"), ct);
             UpdatePackage.TryDelete(zip);
             log("Update downloaded and checked: " + exe);
             return exe;
@@ -631,7 +648,7 @@ public sealed class UpdateService
     public string StartInstall(string newExe, int waitPid, string logFile, string relaunchArguments, bool relaunch = true)
     {
         if (!CanReplaceExe()) throw new UpdateException(UpdateProblem.FolderNotWritable, "The folder of EasyVocal.exe can't be written.");
-        var staging = Path.GetDirectoryName(Path.GetDirectoryName(newExe)!)!;
+        var staging = StagingOf(newExe);
         var script = Path.Combine(staging, "update.ps1");
         var plan = new HelperPlan(waitPid, ExePath, newExe, staging, logFile, relaunch, relaunchArguments);
         File.WriteAllText(script, HelperScript.Build(plan), HelperScript.FileEncoding);
@@ -643,6 +660,18 @@ public sealed class UpdateService
         log("Update helper started: " + script);
         return script;
     }
+
+    /// <summary>A downloaded exe nobody will install (the window closed while it was checked): its folder goes.</summary>
+    public void Discard(string newExe)
+    {
+        var staging = StagingOf(newExe);
+        var root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (Path.GetFullPath(staging).StartsWith(root, StringComparison.OrdinalIgnoreCase)) TryDeleteFolder(staging);
+        log("Update download discarded: " + newExe);
+    }
+
+    /// <summary>The attempt's own folder under <see cref="WorkRoot"/> (the exe is in its "new" subfolder).</summary>
+    private static string StagingOf(string newExe) => Path.GetDirectoryName(Path.GetDirectoryName(newExe)!)!;
 
     /// <summary>Removes old attempts' folders and the .old copy a finished update could not delete.</summary>
     public void CleanStale()

@@ -508,6 +508,43 @@ public class UpdaterTests : IDisposable
     }
 
     [Fact]
+    public void ExtractExe_Cancelled_StopsAndRemovesWhatItWrote()
+    {
+        var zip = MakeZip("big.zip", ("EasyVocal.exe", FakeExe));
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "cancelled"), cancel.Token));
+        Assert.False(File.Exists(Path.Combine(temp, "cancelled", "EasyVocal.exe")));
+    }
+
+    [Fact]
+    public async Task Download_CancelledWhileTheZipIsChecked_LeavesNothingBehind()
+    {
+        // "Checking the download…" (the progress reached 100 %) and the window closes.
+        var (service, source, _, _) = MakeService();
+        source.ZipPath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe));
+        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
+        using var cancel = new CancellationTokenSource();
+        var progress = new SyncProgress(p => { if (p >= 1) cancel.Cancel(); });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.DownloadAsync(asset, progress, cancel.Token));
+        var work = Path.Combine(temp, "work");
+        Assert.Empty(Directory.Exists(work) ? Directory.GetFileSystemEntries(work) : Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task Discard_RemovesADownloadNobodyInstalls()
+    {
+        var (service, source, _, exe) = MakeService();
+        source.ZipPath = MakeZip("release.zip", ("EasyVocal.exe", FakeExe));
+        var asset = new ReleaseAsset("EasyVocal-win-x64.zip", "https://example.com/e.zip", 1000);
+        var newExe = await service.DownloadAsync(asset, null, CancellationToken.None);
+        service.Discard(newExe);
+        Assert.Empty(Directory.GetFileSystemEntries(Path.Combine(temp, "work")));
+        service.Discard(Path.Combine(Path.GetDirectoryName(exe)!, "new", "EasyVocal.exe")); // not a download: left alone
+        Assert.True(File.Exists(exe));
+    }
+
+    [Fact]
     public void CleanStale_RemovesTheOldCopy()
     {
         var (service, _, _, exe) = MakeService();

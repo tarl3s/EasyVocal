@@ -20,6 +20,7 @@ public partial class UpdateWindow : Window
     private readonly bool canInstall;
     private CancellationTokenSource? download;
     private double progressValue;
+    private bool closed;
 
     /// <param name="canInstall">False in a build run from the source code: the window only tells.</param>
     public UpdateWindow(AppController controller, UpdateService service, ReleaseInfo release, ReleaseAsset asset, bool canInstall)
@@ -40,6 +41,7 @@ public partial class UpdateWindow : Window
             ShowStatus(L.T("This EasyVocal runs from its source code, so it doesn't update itself."), problem: false);
         }
         Closing += (_, _) => download?.Cancel(); // the service removes what it had downloaded
+        Closed += (_, _) => closed = true;
     }
 
     /// <summary>The checked new EasyVocal.exe, once Update now finished downloading; null otherwise.</summary>
@@ -128,7 +130,13 @@ public partial class UpdateWindow : Window
         });
         try
         {
-            PreparedExe = await service.DownloadAsync(asset, progress, cancel.Token);
+            var exe = await service.DownloadAsync(asset, progress, cancel.Token);
+            if (closed)
+            {
+                service.Discard(exe); // closed while it was being checked: nobody will install it
+                return;
+            }
+            PreparedExe = exe;
             SetProgress(1);
             Close();
         }
