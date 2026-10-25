@@ -17,6 +17,9 @@ public partial class SettingsWindow : AppWindow
 {
     private readonly AppController controller;
     private ComboBoxItem? micShown;
+
+    /// <summary>One Settings window at a time.</summary>
+    protected override string? SingleKind => "settings";
     private bool loading;
 
     public SettingsWindow(AppController controller)
@@ -213,7 +216,7 @@ public partial class SettingsWindow : AppWindow
         map.TryGetValue(id, out var current);
         var action = "general:" + id;
         var pick = await HotkeyCaptureDialog.PickAsync(this, controller, action, controller.ActionDisplayName(action), current);
-        if (!pick.Ok) return;
+        if (!pick.Ok || controller.IsDisposed) return; // cancelled, or EasyVocal quit meanwhile
         var chosen = pick.Hotkey;
         SetGeneral(id, chosen);
         controller.RebuildHotkeys(); // unregisters first; refused keys are reported through RefusedActions

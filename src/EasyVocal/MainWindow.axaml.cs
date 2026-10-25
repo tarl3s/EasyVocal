@@ -1,5 +1,6 @@
 using System.Text;
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
@@ -87,8 +88,30 @@ public partial class MainWindow : AppWindow
         if (allowClose || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown) return;
         e.Cancel = true;
         WindowPlacer.Remember(this, "main", controller);
+        if (!CanHideToTray)
+        {
+            // No tray icon to bring it back from: keep it in the taskbar.
+            WindowState = WindowState.Minimized;
+            return;
+        }
         Hide();
         HiddenToTray?.Invoke();
+    }
+
+    /// <summary>
+    /// Closing hides the window in the tray. False when there is no tray icon to come back from (it couldn't be made, or
+    /// the desktop has no tray): closing then minimises instead.
+    /// </summary>
+    public bool CanHideToTray { get; set; } = true;
+
+    /// <summary>Brings the window back (from the tray, minimised, or behind other apps).</summary>
+    public void ShowFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Topmost = true; // the system won't always let a background app take the focus; this at least shows it
+        Topmost = false;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -259,18 +282,12 @@ public partial class MainWindow : AppWindow
     {
         var button = new Button { Theme = Res.Theme("CardButton") };
         ToolTip.SetTip(button, broken ? L.T("This sound file couldn't be opened") : name);
+        AutomationProperties.SetName(button, name);
         var grid = new Panel();
 
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         if (broken) stack.Opacity = 0.55; // dimmed, with a ⚠ below: the file didn't load
-        stack.Children.Add(new TextBlock
-        {
-            Text = emoji,
-            FontFamily = Res.Emoji,
-            FontSize = 30,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Opacity = hidden ? 0.4 : 1,
-        });
+        stack.Children.Add(EmojiPlate(emoji, 30, 42, hidden ? 0.4 : 1));
         stack.Children.Add(new TextBlock
         {
             Text = name,
@@ -333,6 +350,7 @@ public partial class MainWindow : AppWindow
             IsVisible = false,
         };
         ToolTip.SetTip(more, L.T("More"));
+        AutomationProperties.SetName(more, L.T("More"));
         more.Click += (_, e) =>
         {
             e.Handled = true; // don't let the click reach the card (it would pick the voice / play the sound)
@@ -361,6 +379,26 @@ public partial class MainWindow : AppWindow
         return new Card(button, outline);
     }
 
+    /// <summary>An emoji on a faint round plate, so dark emoji (🎵 🦇) still show on the dark card.</summary>
+    internal static Border EmojiPlate(string emoji, double fontSize, double size, double opacity) => new()
+    {
+        Width = size,
+        Height = size,
+        CornerRadius = new CornerRadius(size / 2),
+        Background = Res.Brush("EmojiPlate"),
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Opacity = opacity,
+        Child = new TextBlock
+        {
+            Text = emoji,
+            FontFamily = Res.Emoji,
+            FontWeight = FontWeight.Normal,
+            FontSize = fontSize,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        },
+    };
+
     private Button MakeAddCard(string text, EventHandler<RoutedEventArgs> click)
     {
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
@@ -375,6 +413,7 @@ public partial class MainWindow : AppWindow
         });
         var button = new Button { Theme = Res.Theme("AddCardButton"), Content = stack };
         ToolTip.SetTip(button, text);
+        AutomationProperties.SetName(button, text);
         button.Click += click;
         return button;
     }
@@ -384,7 +423,7 @@ public partial class MainWindow : AppWindow
     {
         var dim = Res.Brush("TextDim");
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        stack.Children.Add(new TextBlock { Text = "🧠", FontFamily = Res.Emoji, FontSize = 26, Opacity = 0.5, HorizontalAlignment = HorizontalAlignment.Center });
+        stack.Children.Add(EmojiPlate("🧠", 26, 38, 0.5));
         stack.Children.Add(new TextBlock { Text = L.T("AI voices"), FontSize = 12.5, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
         stack.Children.Add(new TextBlock { Text = L.T("coming later"), FontSize = 11, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center });
         var card = new Border
@@ -475,7 +514,7 @@ public partial class MainWindow : AppWindow
     private async Task AssignHotkeyAsync(string actionId, string name, string? current, Action<string?> set)
     {
         var pick = await HotkeyCaptureDialog.PickAsync(this, controller, actionId, name, current);
-        if (!pick.Ok) return;
+        if (!pick.Ok || controller.IsDisposed) return; // cancelled, or EasyVocal quit meanwhile
         var chosen = pick.Hotkey;
         set(chosen);
         controller.Save();
@@ -489,12 +528,12 @@ public partial class MainWindow : AppWindow
 
     private async void DeleteVoice(string id)
     {
-        if (VoiceById(id) is { } v && await ConfirmDeleteAsync(AppController.DisplayName(v))) controller.DeleteVoice(id);
+        if (VoiceById(id) is { } v && await ConfirmDeleteAsync(AppController.DisplayName(v)) && !controller.IsDisposed) controller.DeleteVoice(id);
     }
 
     private async void DeleteSound(string id)
     {
-        if (SoundById(id) is { } s && await ConfirmDeleteAsync(AppController.DisplayName(s))) controller.DeleteSound(id);
+        if (SoundById(id) is { } s && await ConfirmDeleteAsync(AppController.DisplayName(s)) && !controller.IsDisposed) controller.DeleteSound(id);
     }
 
     private async Task<bool> ConfirmDeleteAsync(string name) =>

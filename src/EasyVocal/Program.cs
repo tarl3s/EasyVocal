@@ -34,11 +34,7 @@ public static class Program
         if (!parsed.TestMode)
         {
             instance = SingleInstance.TryAcquire();
-            if (instance == null)
-            {
-                SingleInstance.WakeFirst();
-                return 0;
-            }
+            if (instance == null) return 0; // the running EasyVocal was asked to show its window
         }
         try
         {

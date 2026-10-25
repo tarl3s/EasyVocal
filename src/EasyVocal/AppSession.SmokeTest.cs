@@ -46,6 +46,7 @@ internal sealed partial class AppSession
                 AppLog.Error("Smoke test step failed", ex);
                 smokeFailures++;
             }
+            Check(uiErrors == 0, "no exception reached the UI thread (" + uiErrors + " did)");
             AppLog.Info($"Smoke test: language {L.Language}, audio {c.State}, {main.VoiceCount} voices and "
                         + $"{main.SoundCount} sounds on screen");
             if (smokeFailures > 0)

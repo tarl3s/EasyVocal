@@ -43,8 +43,9 @@ internal sealed partial class AppSession
     /// <summary>A click on an enabled button (a disabled one is a failed check: a person couldn't press it).</summary>
     private void Press(Button b)
     {
-        Check(b.IsEffectivelyEnabled, "the button '" + (b.Content as string ?? b.Name) + "' can be pressed");
-        Ui.Click(b);
+        bool can = Ui.CanClick(b);
+        Check(can, "the button '" + (b.Content as string ?? b.Name) + "' can be pressed");
+        if (can) Ui.Click(b);
     }
 
     private async Task SmokeAudioEditor(MainWindow main, AppController c, string dataFolder, Func<string, string> Png)

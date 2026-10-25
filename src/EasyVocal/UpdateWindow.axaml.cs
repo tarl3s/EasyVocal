@@ -21,6 +21,9 @@ public partial class UpdateWindow : AppWindow
     private readonly bool canInstall;
     private CancellationTokenSource? download;
     private double progressValue;
+
+    /// <summary>One update dialog at a time.</summary>
+    protected override string? SingleKind => "update";
     private bool closed;
 
     /// <param name="canInstall">False in a build run from the source code: the window only tells.</param>

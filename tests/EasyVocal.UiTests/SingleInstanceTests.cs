@@ -1,0 +1,93 @@
+namespace EasyVocal.UiTests;
+
+/// <summary>
+/// One EasyVocal at a time, on names of the tests' own (never the person's EasyVocal): the portable lock file + pipe
+/// (macOS/Linux, run here on every OS) and Windows' mutex + event.
+/// </summary>
+public class SingleInstanceTests : IDisposable
+{
+    private readonly string folder = Path.Combine(Path.GetTempPath(), "EV_UiSingle_" + Guid.NewGuid().ToString("N"));
+
+    public SingleInstanceTests() => Directory.CreateDirectory(folder);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(folder, recursive: true); } catch (IOException) { }
+    }
+
+    private SingleInstance.Names Names(bool portable)
+    {
+        var id = Guid.NewGuid().ToString("N")[..10];
+        return new SingleInstance.Names("EasyVocal.Test.Mutex." + id, "EasyVocal.Test.Show." + id,
+            Path.Combine(folder, id + ".lock"), "ev-t" + id, portable);
+    }
+
+    [Fact]
+    public void Portable_SecondLaunchGetsNothing_AndWakesTheFirst_EvenBeforeItListens()
+    {
+        var names = Names(portable: true);
+        using var first = SingleInstance.TryAcquire(names);
+        Assert.NotNull(first);
+        Assert.False(first!.WithoutLock);
+
+        // A second launch before the first set its handler: the wake is kept and handed over later.
+        Assert.Null(SingleInstance.TryAcquire(names));
+        using var shown = new ManualResetEventSlim();
+        first.OnShowRequested(shown.Set);
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)), "the early wake was replayed");
+
+        shown.Reset();
+        Assert.True(SingleInstance.WakeFirst(names));
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)), "a later wake reaches the handler");
+        Assert.True(SingleInstance.IsRunning(names));
+    }
+
+    [Fact]
+    public void Portable_FreedLock_CanBeTakenAgain()
+    {
+        var names = Names(portable: true);
+        SingleInstance.TryAcquire(names)!.Dispose();
+        using var again = SingleInstance.TryAcquire(names);
+        Assert.NotNull(again);
+        Assert.False(again!.WithoutLock);
+    }
+
+    [Fact]
+    public void Portable_ALockNobodyAnswersFor_IsNotARunningEasyVocal()
+    {
+        var names = Names(portable: true);
+        // Something else holds the file (a stale lock, another program) and no EasyVocal listens on the pipe.
+        using var stranger = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var mine = SingleInstance.TryAcquire(names);
+        Assert.NotNull(mine);
+        Assert.True(mine!.WithoutLock);
+        // It still answers a later launch.
+        using var shown = new ManualResetEventSlim();
+        mine.OnShowRequested(shown.Set);
+        Assert.True(SingleInstance.WakeFirst(names));
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public void Windows_MutexAndEvent()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var names = Names(portable: false);
+        using var first = SingleInstance.TryAcquire(names);
+        Assert.NotNull(first);
+        using var shown = new ManualResetEventSlim();
+        first!.OnShowRequested(shown.Set);
+        Assert.Null(SingleInstance.TryAcquire(names));
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)), "the second launch woke the first");
+        Assert.True(SingleInstance.IsRunning(names));
+    }
+
+    [Fact]
+    public void PipeName_IsShortAndPerUser()
+    {
+        var a = SingleInstance.ShortPipeName("alice");
+        Assert.Matches("^ev-[0-9a-f]{12}$", a);
+        Assert.NotEqual(a, SingleInstance.ShortPipeName("bob"));
+        Assert.Equal(a, SingleInstance.ShortPipeName("alice"));
+    }
+}

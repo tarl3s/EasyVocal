@@ -35,6 +35,10 @@ public partial class SetupWindow : AppWindow
     private string micFingerprint = "";
     private double meterShown, progressValue;
     private bool loadingMics, installing, waiting, cableWasReady, closed;
+    private static bool installingAnywhere;
+
+    /// <summary>One setup at a time (a second one brings the open one to the front).</summary>
+    protected override string? SingleKind => "setup";
 
     /// <param name="cableProbe">Tells whether the virtual microphone is installed; null = look at the system's devices (tests pass their own).</param>
     public SetupWindow(AppController controller, Func<bool>? cableProbe = null)
@@ -57,9 +61,14 @@ public partial class SetupWindow : AppWindow
 
         cableWasReady = this.cableProbe(); // already there when the window opened: no audio restart needed
         RefreshCable();
-        FillMics();
-        controller.Devices.Changed += OnDevicesChanged;
-        meterTimer.Start();
+        // What listens (the level bar opens the mic, device changes, timers) starts only once the window is on screen: a
+        // setup that is never shown (one is open already) leaves nothing running.
+        Opened += (_, _) =>
+        {
+            FillMics();
+            controller.Devices.Changed += OnDevicesChanged;
+            meterTimer.Start();
+        };
     }
 
     /// <summary>Shows the window and waits for it. True when the person pressed Done.</summary>
@@ -104,8 +113,8 @@ public partial class SetupWindow : AppWindow
 
     private async void InstallButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (installing) return;
-        installing = true;
+        if (installing || installingAnywhere) return; // never two installers at once
+        installing = installingAnywhere = true;
         waiting = false;
         waitTimer.Stop();
         InstallButton.IsEnabled = false;
@@ -123,8 +132,9 @@ public partial class SetupWindow : AppWindow
         }
         finally
         {
-            installing = false;
+            installing = installingAnywhere = false;
         }
+        if (controller.IsDisposed) return; // EasyVocal quit while the installer ran
         // Cancelled = the window was closed: an installer already running may still add the cable (the controller watches).
         if (result.Status is InstallStatus.DeclinedPermission or InstallStatus.NotVerified or InstallStatus.Failed)
             controller.ForgetDefaultsBeforeCable();

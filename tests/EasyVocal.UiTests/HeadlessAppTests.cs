@@ -74,11 +74,17 @@ public class HeadlessAppTests
         return await Run(options);
     }
 
-    private static Task<int> Run(SessionOptions options)
+    private static async Task<int> Run(SessionOptions options)
     {
         var done = new TaskCompletionSource<int>();
-        new AppSession(options, code => done.TrySetResult(code)).Start();
-        return done.Task.WaitAsync(Limit);
+        var session = new AppSession(options, code => done.TrySetResult(code));
+        session.Start();
+        try { return await done.Task.WaitAsync(Limit); }
+        catch (TimeoutException)
+        {
+            session.Abort(); // closes its windows and stops its audio, so the next test starts clean
+            throw;
+        }
     }
 
     /// <summary>The test devices, in-memory hotkeys and startup entry, a pretend VB-CABLE; Windows' decoders and updater on Windows.</summary>

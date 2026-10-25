@@ -45,6 +45,10 @@ internal sealed partial class AppSession
     private MainWindow? window;
     private Tray? tray;
     private bool asking, quitting, cleaned;
+    private int uiErrors;
+
+    /// <summary>Exceptions that reached the UI thread (or an unwatched task) during this session: the tests fail on any.</summary>
+    internal int UiErrors => uiErrors;
 
     /// <param name="shutdown">Ends the app (or, in a test host, the session) with this exit code.</param>
     public AppSession(SessionOptions options, Action<int> shutdown)
@@ -92,7 +96,10 @@ internal sealed partial class AppSession
             try { tray = new Tray(controller, ShowMainWindow, () => _ = QuitAsync(ask: true)); }
             catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
         }
+        // No tray icon to come back from: closing the window minimises it instead of hiding it.
+        window.CanHideToTray = tray != null;
         window.HiddenToTray += () => tray?.ShowStillRunningTip();
+        AppWindow.MainWindowSource = () => window;
         options.Instance?.OnShowRequested(() => Dispatcher.UIThread.Post(() =>
         {
             AppLog.Info("Launched again: showing the window");
@@ -143,12 +150,14 @@ internal sealed partial class AppSession
         Dispatcher.UIThread.UnhandledException += (_, e) =>
         {
             AppLog.Error("UI", e.Exception);
+            if (Current != null) Current.uiErrors++;
             e.Handled = true; // keep running: the voice in the call matters more than one failed click
         };
         AppDomain.CurrentDomain.UnhandledException += (_, ev) => AppLog.Error("Unhandled", ev.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, ev) =>
         {
             AppLog.Error("Background task", ev.Exception);
+            if (Current != null) Current.uiErrors++;
             ev.SetObserved();
         };
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
@@ -182,6 +191,7 @@ internal sealed partial class AppSession
             var answer = await AskDialog.AskAsync(owner,
                 L.T("Add EasyVocal to the Start menu, so you can open it from there?"),
                 L.T("Add to Start menu"), L.T("No, thanks"), null);
+            if (controller.IsDisposed) return; // quit while the question was up
             settings.StartMenuShortcut = answer.Yes;
             settings.StartMenuAsked = true;
             controller.Save();
@@ -193,11 +203,7 @@ internal sealed partial class AppSession
     private void ShowMainWindow()
     {
         if (window == null || quitting) return;
-        window.Show();
-        if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
-        window.Activate();
-        window.Topmost = true; // the system won't always let a background app take the focus; this at least shows it
-        window.Topmost = false;
+        window.ShowFromTray();
     }
 
     /// <summary>
@@ -253,6 +259,16 @@ internal sealed partial class AppSession
             window.Close();
         }
         if (ReferenceEquals(Current, this)) Current = null;
+    }
+
+    /// <summary>A test host gave up waiting: closes everything and ends the session with exit code 1.</summary>
+    internal void Abort()
+    {
+        if (cleaned) return;
+        quitting = true;
+        AppLog.Info("Stopped by the test host");
+        CleanUp();
+        shutdown(1);
     }
 
     /// <summary>The system is ending the session (signing out): no questions.</summary>
