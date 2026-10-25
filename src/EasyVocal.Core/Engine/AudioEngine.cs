@@ -66,6 +66,7 @@ public sealed class AudioEngine : IDisposable
     private float voiceGain, meGain, soundsGain;
     private float throughGain;                   // 0 = the sounds as they are, 1 = through the voice (crossfades)
     private int soundsQuietFor;                  // samples since the mixer last gave anything
+    private bool soundsChainStale = true;        // the sounds' chain stopped mid-way: reset it before it plays again
     private bool monitorWasSilent = true;
 
     /// <summary>The devices of one start, with the buffers and limiters their audio needs.</summary>
@@ -337,6 +338,7 @@ public sealed class AudioEngine : IDisposable
         soundsGain = hearSounds ? 1f : 0f;
         throughGain = soundsUseVoice ? 1f : 0f;
         soundsQuietFor = 0;
+        soundsChainStale = true;
         monitorWasSilent = true;
         Volatile.Write(ref inputLevel, 0f);
 
@@ -566,11 +568,21 @@ public sealed class AudioEngine : IDisposable
     /// <summary>
     /// With <see cref="SoundsUseVoice"/>, replaces the sounds by the sounds through the voice (crossfading when the
     /// switch changes). The sounds' chain rests once nothing has played for a while: its tails are over by then.
+    /// Switched off, it stops wherever it was; it is reset before it plays again, so a frozen tail is never replayed.
     /// </summary>
     private void ThroughTheVoice(Session s, Span<float> sounds)
     {
         float target = soundsUseVoice ? 1f : 0f;
-        if (target == 0f && throughGain == 0f) return;
+        if (target == 0f && throughGain == 0f)
+        {
+            soundsChainStale = true;
+            return;
+        }
+        if (soundsChainStale)
+        {
+            soundsChain.Reset();
+            soundsChainStale = false;
+        }
 
         bool quiet = true;
         for (int i = 0; i < sounds.Length; i++)

@@ -707,6 +707,25 @@ public class EngineTests
     }
 
     [Fact]
+    public void SoundsUseVoice_TurnedOffMidTail_DoesNotReplayTheTailWhenTurnedBackOn()
+    {
+        using var rig = new Rig();
+        rig.Mixer.Set("beep", Signals.Sine(300, 0.3, 0.3f));
+        rig.Chain.Apply(new VoiceSliders { Echo = 1, Room = 1 }); // long tails
+        rig.Engine.SoundsUseVoice = true;
+        rig.Engine.MicMuted = true;
+        rig.Engine.Start();
+        rig.Mixer.Toggle("beep", 1f);
+        rig.Mic.Feed(Signals.Silence(0.3)); // the sound ends; its echo and room still ring
+        rig.Engine.SoundsUseVoice = false;  // the tail is cut (after the 5 ms crossfade)
+        rig.Mic.Feed(Signals.Silence(0.3));
+        rig.Engine.SoundsUseVoice = true;   // nothing plays now: nothing may come back
+        rig.Mic.Feed(Signals.Silence(0.5));
+        double after = Signals.Rms(Signals.Slice(rig.Call.Written, 0.62, 1.1));
+        Assert.True(after < 1e-4, "an old tail was replayed: rms " + after);
+    }
+
+    [Fact]
     public void SoundsUseVoiceOn_AudioThreadDoesNotAllocate()
     {
         using var rig = new Rig { WithMonitor = false, CallFactory = () => new FakeOutput { Record = false } };

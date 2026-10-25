@@ -291,6 +291,24 @@ public sealed class VoiceChain
         }
     }
 
+    /// <summary>
+    /// Audio thread: forgets everything the chain heard (every tail, delay line and crossfade); the next
+    /// <see cref="Process"/> starts from silence with the current voice, at once.
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(history);
+        historyCount = 0;
+        outgoing = null;
+        fading = false;
+        active = null;
+        var owner = Owner;
+        var t = Volatile.Read(ref owner.pending);
+        if (owner.bypass || t.Neutral) return;
+        active = paths[0];
+        active.Begin(t);
+    }
+
     /// <summary>Audio thread: processes one block of mono audio in place (any length).</summary>
     public void Process(Span<float> mono)
     {
