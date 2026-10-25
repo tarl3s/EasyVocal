@@ -18,9 +18,9 @@ done: the UI is Avalonia 11 (one UI for every OS, WPF and WinForms are gone) and
 headless. Phase 3 is done: `EasyVocal.Platform.MacOS` and `EasyVocal.Platform.Linux` (sharing `EasyVocal.Platform.Unix`),
 wired in `PlatformFactory.cs`. Phase 4 is done: `tools/Publish-Release.ps1` builds all four downloads from Windows
 (`tools/EasyVocal.Packager` makes the .app zips and the tar.gz) and the READMEs have a button per OS.
-**CI is NOT active**: the workflow is parked in `ci/github-actions-ci.yml` (the GitHub token here lacks the `workflow`
-scope; `ci/README.md` says how to enable it). **Nothing has run on a real Mac or Linux desktop yet**: the macOS and Linux
-code is built and unit-tested on Windows only (real-system tests skip there), so the READMEs call those builds "Preview".
+**CI** (`.github/workflows/ci.yml`) builds and tests on Windows, macOS and Linux runners on every push and
+every pull request. **Nobody has used the app on a real Mac or Linux desktop yet** (CI runs the tests, not a person),
+so the READMEs call those builds "Preview".
 
 ## Project layout
 
@@ -36,7 +36,7 @@ code is built and unit-tested on Windows only (real-system tests skip there), so
 | `tests/EasyVocal.FfmpegStandIn` | `net8.0` exe | a tiny program the decoder tests run in place of ffmpeg (what it does is written in the "sound file" it gets) |
 | `tests/EasyVocal.Tests.Windows` | `net8.0-windows` | registry, `.lnk`, VB-CABLE/Authenticode, Media Foundation / ACM, hotkeys, the PowerShell helper, the e2e run; links the portable tests' `Helpers/` |
 | `tests/EasyVocal.UiTests` | `net8.0` (portable) | Avalonia.Headless (drawn with Skia): the app's own smoke and e2e steps in-process on pretend devices/hotkeys/startup/virtual mic (`E2E/TestPlatform.cs`), the e2e relaunch as a second session; `AppController` on a hand-pumped `IUiDispatcher`; `KeyMap`. `EV_UI_SNAPSHOTS=<folder>` keeps the PNGs |
-| `tests/EasyVocal.Tests.Platforms` | `net8.0` (portable, CA1416 off) | the macOS/Linux projects on any OS with a fake `ICommandRunner` (`FakeRunner.cs`): key maps, plist and .desktop files, pactl's arguments and output, BlackHole's install, the sh helper's text, the updater's names and unpacking; PortAudio for real (its win-x64 native is referenced too). Real-system tests check the OS: CoreAudio/Carbon on macOS, Xvfb grabs on Linux, the sh helper run with `/bin/sh`, and the virtual mic carrying a tone through a real PulseAudio server only with `EV_PULSE_TESTS=1` (the parked CI workflow sets it); `ReleasePackagingTests` runs `tools/EasyVocal.Packager` on pretend publish folders (Info.plist, .icns, zip/tar modes, `easyvocal-files.txt`, no links, the updaters unpack them, install.sh run with `/bin/sh` off Windows) |
+| `tests/EasyVocal.Tests.Platforms` | `net8.0` (portable, CA1416 off) | the macOS/Linux projects on any OS with a fake `ICommandRunner` (`FakeRunner.cs`): key maps, plist and .desktop files, pactl's arguments and output, BlackHole's install, the sh helper's text, the updater's names and unpacking; PortAudio for real (its win-x64 native is referenced too). Real-system tests check the OS: CoreAudio/Carbon on macOS, Xvfb grabs on Linux, the sh helper run with `/bin/sh`, and the virtual mic carrying a tone through a real PulseAudio server only with `EV_PULSE_TESTS=1` (CI sets it); `ReleasePackagingTests` runs `tools/EasyVocal.Packager` on pretend publish folders (Info.plist, .icns, zip/tar modes, `easyvocal-files.txt`, no links, the updaters unpack them, install.sh run with `/bin/sh` off Windows) |
 
 Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (the tests swap pieces with `with { … }`):
 - `IAudioBackend`: list/open devices, defaults (one default = both roles off Windows), set default where supported,
@@ -72,7 +72,7 @@ dotnet build                       # 0 errors, 0 warnings expected
 dotnet test                        # every test project (xUnit), including the E2E tests below (builds the app first)
 dotnet test --filter Category!=E2E # everything but the real-window E2E test
 dotnet test tests/EasyVocal.Tests  # only the portable tests (on macOS/Linux run these, tests/EasyVocal.Tests.Platforms and tests/EasyVocal.UiTests)
-EV_PULSE_TESTS=1 xvfb-run -a dotnet test tests/EasyVocal.Tests.Platforms   # Linux: also the real PulseAudio virtual mic and X11 grabs (what the parked CI workflow does)
+EV_PULSE_TESTS=1 xvfb-run -a dotnet test tests/EasyVocal.Tests.Platforms   # Linux: also the real PulseAudio virtual mic and X11 grabs (what CI does)
 EV_UI_SNAPSHOTS=<folder> dotnet test tests/EasyVocal.UiTests   # headless smoke + e2e; keeps the smoke PNGs in <folder>
 dotnet run --project src/EasyVocal
 dotnet run --project src/EasyVocal -- --data <folder> --smoketest   # opens every window, renders PNGs, exits 0
