@@ -13,6 +13,9 @@ public class PortAudioCloseTests
 {
     private const int Continue = 0, Complete = 1;
 
+    /// <summary>For the waits a test answers itself: a slow machine never makes its stream look dead.</summary>
+    private static readonly TimeSpan Patient = TimeSpan.FromSeconds(30);
+
     /// <summary>The PortAudio calls, recorded; "stopped" only after a stop call, as macOS's PortAudio after paComplete.</summary>
     private sealed class PretendCalls : IPaStreamCalls
     {
@@ -85,7 +88,7 @@ public class PortAudioCloseTests
     {
         using var backend = new PortAudioBackend();
         var calls = new PretendCalls();
-        var s = new PretendStream(backend, calls);
+        var s = new PretendStream(backend, calls) { AnswerWait = Patient, StopWait = Patient };
         s.Start();
         var block = Ones(480);
         Assert.Equal(Continue, s.CallbackForTests(block, 480));
@@ -151,7 +154,7 @@ public class PortAudioCloseTests
     {
         using var backend = new PortAudioBackend();
         var calls = new PretendCalls();
-        var s = new PretendStream(backend, calls) { StopWait = TimeSpan.FromMilliseconds(200) };
+        var s = new PretendStream(backend, calls) { AnswerWait = Patient, StopWait = TimeSpan.FromMilliseconds(200) };
         s.Start();
         s.Dispose();
         Assert.Equal(Complete, s.CallbackForTests(Ones(480), 480));
@@ -166,7 +169,7 @@ public class PortAudioCloseTests
     {
         using var backend = new PortAudioBackend();
         var calls = new PretendCalls { Active = 0 }; // its callback completed and it went quiet, but no word from PortAudio
-        var s = new PretendStream(backend, calls) { StopWait = TimeSpan.FromMilliseconds(200) };
+        var s = new PretendStream(backend, calls) { AnswerWait = Patient, StopWait = TimeSpan.FromMilliseconds(200) };
         s.Start();
         s.Dispose();
         Assert.Equal(Complete, s.CallbackForTests(Ones(480), 480));
@@ -180,7 +183,7 @@ public class PortAudioCloseTests
     {
         using var backend = new PortAudioBackend();
         var calls = new PretendCalls();
-        var s = new PretendStream(backend, calls);
+        var s = new PretendStream(backend, calls) { AnswerWait = Patient };
         s.Dispose();
         await s.Closed.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("never started", s.CloseRoute);

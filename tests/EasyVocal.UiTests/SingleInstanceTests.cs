@@ -152,19 +152,20 @@ public class SingleInstanceTests : IDisposable
     [Fact]
     public async Task UnixSocket_ThatIsNoLongerOurs_IsNeverDeleted()
     {
-        // macOS/Linux only, where the listener runs: Windows deletes a socket file only once its last handle closes.
+        // macOS/Linux only: the listener runs there (Windows uses a mutex and an event).
         if (OperatingSystem.IsWindows()) return;
         // Short: a Unix socket path is at most 104 characters on macOS.
         var path = Path.Combine(Path.GetTempPath(), "evs" + Guid.NewGuid().ToString("N")[..8]);
         using var cts = new CancellationTokenSource();
         var a = new SingleInstance.UnixListener(path);
         var b = new SingleInstance.UnixListener(path);
+        Task<Stream>? acceptA = null, acceptB = null;
         try
         {
-            var acceptA = a.AcceptAsync(cts.Token);
+            acceptA = a.AcceptAsync(cts.Token);
             Assert.True(a.OwnsPath());
             // A later EasyVocal took that socket for a stale one and made its own at the same path.
-            var acceptB = b.AcceptAsync(cts.Token);
+            acceptB = b.AcceptAsync(cts.Token);
             Assert.False(a.OwnsPath());
             Assert.True(b.OwnsPath());
 
@@ -185,6 +186,9 @@ public class SingleInstanceTests : IDisposable
         {
             a.Dispose();
             b.Dispose();
+            // The accepts end with the sockets: their failures are seen here (an unseen one fails the app-session tests).
+            foreach (var t in new[] { acceptA, acceptB })
+                if (t != null) try { await t.WaitAsync(TimeSpan.FromSeconds(5)); } catch (Exception) { /* expected */ }
             try { File.Delete(path); } catch (Exception) { /* gone */ }
             try { File.Delete(path + ".owner"); } catch (Exception) { /* gone */ }
         }

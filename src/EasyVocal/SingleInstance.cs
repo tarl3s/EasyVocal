@@ -378,11 +378,16 @@ public sealed class SingleInstance : IDisposable
                     var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
                     try
                     {
-                        // We hold the lock and nobody answered on it (TryAcquire): a socket file there is a stale one.
-                        if (File.Exists(path)) File.Delete(path);
-                        s.Bind(new UnixDomainSocketEndPoint(path));
+                        // Bound under a name of its own, then renamed to the shared path: .NET deletes the file a socket
+                        // was bound to when it is disposed, which would remove a later EasyVocal's socket at that path.
+                        // The rename replaces a socket file that is there: we hold the lock and nobody answered on it
+                        // (TryAcquire), so it is a stale one.
+                        string own = path + "." + token[..8];
+                        if (File.Exists(own)) File.Delete(own);
+                        s.Bind(new UnixDomainSocketEndPoint(own));
                         s.Listen(16);
                         File.WriteAllText(OwnerFile, token);
+                        File.Move(own, path, overwrite: true);
                     }
                     catch
                     {
