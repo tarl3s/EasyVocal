@@ -89,10 +89,11 @@ public partial class App
             "a sound card's menu has 'Edit audio…'");
         main.Tabs.SelectedIndex = 0;
 
-        Dialog(new SoundEditorWindow(c, item, null) { Owner = main }, w =>
+        DialogAsync(new SoundEditorWindow(c, item, null) { Owner = main }, async w =>
         {
+            await w.IdleAsync();
             Check(w.EditAudioButton.IsEnabled && w.EditAudioButton.IsVisible, "the sound editor offers 'Edit audio…'");
-        }, wait: 1000);
+        }, wait: 100);
 
         SmokeEditedCopyFails(main, c, dataFolder);
 
@@ -281,10 +282,11 @@ public partial class App
         SoundWriter.WriteWav(source, SpeechLike());
         DialogAsync(new SoundEditorWindow(c, null, source) { Owner = main }, async w =>
         {
+            await w.IdleAsync();
             await ShrinkAsync(w);
             Check(OnScreen(w, w.SaveButton) && Reachable(w, w.FormScroll, w.HotkeyButton), "the sound editor at its smallest keeps Save on screen and scrolls to every field");
             SnapshotWindow(w, Png("small_sound_editor"));
-        }, wait: 1000);
+        }, wait: 100);
 
         DialogAsync(new SettingsWindow(c) { Owner = main }, async w =>
         {

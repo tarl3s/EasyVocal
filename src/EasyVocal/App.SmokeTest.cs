@@ -125,14 +125,15 @@ public partial class App
         var source = Path.Combine(dataFolder, "smoke source.wav");
         File.Copy(ding, source, overwrite: true);
         int sounds = c.Settings.Sounds.Count;
-        Dialog(new SoundEditorWindow(c, null, source) { Owner = main }, w =>
+        DialogAsync(new SoundEditorWindow(c, null, source) { Owner = main }, async w =>
         {
+            await w.IdleAsync(); // the file is decoded in the background
             Check(w.NameBox.Text == "smoke source", "the sound's name starts as the file name");
             Check(w.SaveButton.IsEnabled && w.PreviewButton.IsEnabled, "a loaded sound can be saved and previewed");
             SnapshotWindow(w, Png("sound_editor_new"));
             w.NameBox.Text = "Smoke sound";
             w.SaveButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        }, wait: 1200);
+        }, wait: 100);
         var added = c.Settings.Sounds.FirstOrDefault(s => s.Name == "Smoke sound");
         Check(c.Settings.Sounds.Count == sounds + 1 && added != null && File.Exists(Path.Combine(c.SoundsFolder, added.FileName)),
             "the sound is added and its file copied into the Sounds folder");
@@ -140,7 +141,11 @@ public partial class App
         {
             var again = c.DuplicateSound(added.Id);
             Check(again.FileName == added.FileName && !again.BuiltIn, "a copy of a sound shares the file");
-            Dialog(new SoundEditorWindow(c, added, null) { Owner = main }, w => SnapshotWindow(w, Png("sound_editor_edit")), wait: 1000);
+            DialogAsync(new SoundEditorWindow(c, added, null) { Owner = main }, async w =>
+            {
+                await w.IdleAsync();
+                SnapshotWindow(w, Png("sound_editor_edit"));
+            }, wait: 100);
             c.DeleteSound(again.Id);
             Check(File.Exists(Path.Combine(c.SoundsFolder, added.FileName)), "deleting the copy keeps the shared file");
             c.DeleteSound(added.Id);
@@ -151,13 +156,14 @@ public partial class App
         // ---- a file that isn't a sound: friendly error, nothing added ----
         var fake = Path.Combine(dataFolder, "smoke fake.mp3");
         File.WriteAllText(fake, "this is not an mp3");
-        Dialog(new SoundEditorWindow(c, null, fake) { Owner = main }, w =>
+        DialogAsync(new SoundEditorWindow(c, null, fake) { Owner = main }, async w =>
         {
+            await w.IdleAsync();
             Check(w.StatusText.Visibility == Visibility.Visible && w.StatusText.Text == L.T("We couldn't read that sound file. It may be damaged."),
                 "a fake .mp3 shows a friendly error");
             Check(!w.SaveButton.IsEnabled, "nothing can be saved from a fake .mp3");
             SnapshotWindow(w, Png("sound_editor_error"));
-        }, wait: 1200);
+        }, wait: 100);
         Check(c.Settings.Sounds.Count == sounds, "a fake .mp3 adds nothing");
 
         // ---- a sound whose file won't open is marked on its card ----
