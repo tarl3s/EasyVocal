@@ -302,8 +302,9 @@ public partial class AudioEditorWindow : Window
     // ---------- edits ----------
 
     /// <summary>
-    /// Runs one edit off the UI thread and shows the result as a new undo step. <paramref name="edit"/> returns the
-    /// new sound and the part to select afterwards (count 0 = place the cursor there).
+    /// Runs one edit off the UI thread and shows the result as a new undo step (none when the sound came back the
+    /// same, or empty). <paramref name="edit"/> returns the new sound and the part to select afterwards (count 0 =
+    /// place the cursor there).
     /// </summary>
     private async Task Edit(Func<float[], (float[] Samples, int SelStart, int SelCount)> edit)
     {
