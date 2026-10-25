@@ -459,6 +459,51 @@ internal sealed partial class AppSession
             Expect(main.SoundCard(tone.Id) == null, "its card is gone");
         });
 
+        await Step("8b audio editor: 0.5× then 3 up stays 0.5× (and the list says so), 1× keeps the pitch, Undo brings both back", async () =>
+        {
+            var sound = await AddSoundFromFile(c, main, "e2e edit.wav", 220, "E2E edit");
+            await WaitUntil(() => c.SoundSamples(sound.Id) != null, 5000, "the sound to load");
+            int len = c.SoundSamples(sound.Id)!.Length;
+            double up3 = 220 * Math.Pow(2, 3 / 12.0);
+            static double PitchOf(float[] x) => E2ESignal.Pitch(Core.Sounds.AudioEdit.Slice(x, x.Length / 2 - Sr / 6, Sr / 3));
+            await Modal(w => w is AudioEditorWindow, () => ClickMenu(main.SoundCard(sound.Id), "✂  " + L.T("Edit audio…")), async w =>
+            {
+                var ed = (AudioEditorWindow)w;
+                async Task Speed(double s)
+                {
+                    ed.SpeedBox.SelectedIndex = Array.IndexOf(Core.Sounds.AudioEdit.Speeds, s);
+                    Click(ed.SpeedButton);
+                    await ed.IdleAsync();
+                }
+                await Speed(0.5);
+                ed.PitchBox.SelectedIndex = Array.IndexOf(Core.Sounds.AudioEdit.PitchSteps, 3);
+                Click(ed.HigherButton);
+                await ed.IdleAsync();
+                double hz = PitchOf(ed.Current);
+                Note(Inv($"0.5× then 3 up: {ed.Current.Length / (double)len:0.00}× as long, {hz:0} Hz (want {up3:0})"));
+                Expect(Picked(ed.SpeedBox) == 0.5 && Math.Abs(ed.Current.Length - 2 * len) < 8, "after the pitch change the sound and the speed list are both still 0.5×");
+                Expect(Math.Abs(hz / up3 - 1) < 0.03, "the pitch is 3 steps up, once");
+                await Speed(1);
+                hz = PitchOf(ed.Current);
+                Note(Inv($"then 1×: {ed.Current.Length / (double)len:0.00}× as long, {hz:0} Hz"));
+                Expect(ed.Current.Length == len && Math.Abs(hz / up3 - 1) < 0.03, "1× gives the original length and keeps 3 up");
+                Click(ed.UndoButton);
+                Expect(Picked(ed.SpeedBox) == 0.5 && Math.Abs(ed.Current.Length - 2 * len) < 8, "Undo brings back the 0.5× sound and the list's 0.5×");
+                Click(ed.RedoButton);
+                Expect(Picked(ed.SpeedBox) == 1.0 && ed.Current.Length == len, "Redo: 1× again");
+                Click(ed.SaveButton);
+            }, "the audio editor");
+            await WaitUntil(() => c.SoundSamples(sound.Id) is { } s && Math.Abs(s.Length - len) < 8
+                                  && !string.IsNullOrEmpty(c.Settings.Sounds.FirstOrDefault(x => x.Id == sound.Id)?.OriginalFileName), 5000, "the edited sound to be saved");
+            Expect(Math.Abs(PitchOf(c.SoundSamples(sound.Id)!) / up3 - 1) < 0.03, "the saved sound plays 3 steps up at its own speed");
+            await Modal(w => w is AskDialog && ReferenceEquals(w.Owner, main), () => ClickMenu(main.SoundCard(sound.Id), L.T("Delete…")), w =>
+            {
+                Click(FindButton(w, L.T("Delete")));
+                return Task.CompletedTask;
+            }, "the delete question");
+            await WaitUntil(() => c.Settings.Sounds.All(s => s.Id != sound.Id), 2000, "the sound to be removed");
+        });
+
         await Step("10 microphone unplugged: banner, sounds stopped; plugged back: running again", async () =>
         {
             await Baseline(c, main);

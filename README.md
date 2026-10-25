@@ -95,8 +95,8 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   pitch or not), higher or lower, louder, quieter or as loud as possible; fade in or out, play it backwards, add an
   echo, run it through any of your voices, or cut the silence at the start and end. Undo and redo as much as you
   like. Your original file is never changed: **Back to original** is always one click away, and **Save a copy as...**
-  exports WAV or MP3. Changing the speed, the pitch or the voice of a part again starts from how it was before,
-  so 0.75× then 2× is simply 2×, and **1×** or **Normal** give the part back as it was.
+  exports WAV or MP3. The speed, the pitch and the voice of a part are three settings made together from how it was before:
+  0.5× then 3 steps up stays 0.5×, 0.75× then 2× is simply 2×, and **1×** or **Normal** undo just that one.
 - **Global hotkeys** for every voice and every sound, plus turning the voice on/off, stopping all sounds and muting
   the mic. They work while a game is fullscreen. (A plain key without Ctrl or Alt stops typing that character
   elsewhere while EasyVocal runs, so the app warns you.)

@@ -97,8 +97,9 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   (mantendo o tom ou não), mais agudo ou mais grave, mais alto, mais baixo ou o mais alto possível; faça aparecer ou
   sumir aos poucos, toque de trás para frente, coloque eco, passe por qualquer uma das suas vozes ou corte o silêncio
   do começo e do fim. Desfaça e refaça quanto quiser. O seu arquivo original nunca é alterado: **Voltar ao original**
-  está sempre a um clique, e **Salvar uma cópia como...** exporta em WAV ou MP3. Mudar de novo a velocidade, o tom ou a voz de um
-  trecho parte de como ele era antes: 0,75× e depois 2× é simplesmente 2×, e **1×** ou **Normal** devolvem o trecho como era.
+  está sempre a um clique, e **Salvar uma cópia como...** exporta em WAV ou MP3. A velocidade, o tom e a voz de um
+  trecho são três ajustes feitos juntos a partir de como ele era: 0,5× e depois 3 notas acima continua 0,5×, 0,75× e depois
+  2× é simplesmente 2×, e **1×** ou **Normal** desfazem só aquele ajuste.
 - **Atalhos globais** para cada voz e cada som, além de ligar/desligar a voz, parar todos os sons e silenciar o
   microfone. Funcionam com o jogo em tela cheia. (Uma tecla sozinha, sem Ctrl ou Alt, deixa de digitar aquele
   caractere nos outros programas enquanto o EasyVocal roda, e o app avisa.)

@@ -157,7 +157,7 @@ public partial class AudioEditorWindow : AppWindow
         int step = Picked(PitchBox, 3);
         HigherButton.IsEnabled = PitchNow + step <= AudioEdit.MaxPitchShift;
         LowerButton.IsEnabled = PitchNow - step >= -AudioEdit.MaxPitchShift;
-        if (!busy) SyncSpeedBox();
+        if (!busy) SyncTuneBoxes();
         OriginalButton.IsEnabled = free && !history.Current.IsOriginal && (originalSamples != null || originalPath != null);
         ExportButton.IsEnabled = free && any;
         SaveButton.IsEnabled = free && history.Changed && any;
@@ -247,14 +247,32 @@ public partial class AudioEditorWindow : AppWindow
 
     private void UndoButton_Click(object? sender, RoutedEventArgs e)
     {
+        var left = history.Current;
         if (busy || !history.Undo()) return;
-        Show(history.Current);
+        ShowStep(left);
     }
 
     private void RedoButton_Click(object? sender, RoutedEventArgs e)
     {
+        var left = history.Current;
         if (busy || !history.Redo()) return;
-        Show(history.Current);
+        ShowStep(left);
+    }
+
+    /// <summary>
+    /// Shows the version Undo / Redo moved to. One made by a speed / pitch / voice change gets its part picked again
+    /// (so the lists show its settings), and so does the part a run of them started from when Undo goes back past the first.
+    /// </summary>
+    private void ShowStep(AudioState left)
+    {
+        var now = history.Current;
+        TuneBase? place = null;
+        int start = 0, count = 0;
+        if (tunes.TryGetValue(now, out var t)) (place, start, count) = (t.Base, t.AfterStart, t.AfterCount);
+        else if (tunes.TryGetValue(left, out var l) && ReferenceEquals(l.Base.State, now)) (place, start, count) = (l.Base, l.Base.Start, l.Base.Count);
+        if (place == null) Show(now);
+        else if (place.Picked) Show(now, start, count);
+        else Show(now, Math.Min(Wave.CursorPosition, now.Samples.Length), 0);
     }
 
     private void ZoomInButton_Click(object? sender, RoutedEventArgs e) => ZoomAroundSelection(2);
@@ -325,10 +343,12 @@ public partial class AudioEditorWindow : AppWindow
     /// same, or empty). <paramref name="edit"/> returns the new sound and the part to select afterwards (count 0 =
     /// place the cursor there).
     /// </summary>
-    /// <param name="from">The sound to edit when it isn't the one shown (a speed or pitch change redone from the sound
-    /// before the first one).</param>
+    /// <param name="from">The sound to edit when it isn't the one shown (a speed, pitch or voice change made again from
+    /// the sound before the first one).</param>
+    /// <param name="made">Called with the new version once it is shown (before the lists are synced).</param>
     /// <returns>True when a new undo step was made.</returns>
-    private async Task<bool> Edit(Func<float[], (float[] Samples, int SelStart, int SelCount)> edit, float[]? from = null)
+    private async Task<bool> Edit(Func<float[], (float[] Samples, int SelStart, int SelCount)> edit, float[]? from = null,
+        Action<AudioState>? made = null)
     {
         if (busy) return false;
         StopPlaying();
@@ -357,6 +377,7 @@ public partial class AudioEditorWindow : AppWindow
             }
             history.Push(new AudioState(result, false));
             Show(history.Current, selStart, selCount);
+            made?.Invoke(history.Current);
             Status("");
             return true;
         }
@@ -454,89 +475,91 @@ public partial class AudioEditorWindow : AppWindow
     internal bool SplitDone { get; private set; }
 
     /// <summary>
-    /// A speed, pitch or voice change and what it was made from: the sound and the part before the first of a run of
-    /// such changes, and what they gave. While the sound shown is still that result (with the same part picked), the
-    /// next change of the same kind is made again from the sound before — 0.75× then 0.5× then 2× is 2× of the
-    /// original (never 0.75 × 0.5 × 2), 1× or the Normal voice give the part back as it was, and nothing is processed twice.
+    /// The sound and the part a run of speed / pitch / voice changes started from: what was shown when the first of
+    /// them was applied.
     /// </summary>
-    private sealed record Retune(float[] Before, int Start, int Count, bool Picked, AudioState After, int AfterStart, int AfterCount);
-
-    private Retune? speedRun, pitchRun, voiceRun;
-    private int pitchTotal;
-    private double runSpeed = 1; // the speed run's: its speed and whether it keeps the pitch
-    private bool runKeepsPitch, speedBoxShowsRun;
-
-    /// <summary>The run still applies: the sound shown is its result and the same part (or nothing) is picked.</summary>
-    private bool Continues(Retune? run) =>
-        run != null && ReferenceEquals(run.After, history.Current) && run.Picked == Wave.HasSelection &&
-        (!run.Picked || (Wave.SelectionStart == run.AfterStart && Wave.SelectionLength == run.AfterCount));
+    private sealed record TuneBase(AudioState State, int Start, int Count, bool Picked);
 
     /// <summary>
-    /// <paramref name="op"/> (the whole sound, the part's start and length → the new sound and the part's new length)
-    /// on the sound before the run (a new run starts from what is shown); returns the run when an undo step was made.
+    /// The part's three settings — speed (and its mode), pitch in semitones, voice (its index in the list) — and where
+    /// the part is in the sound they gave. Every change of one of them makes the part again from <see cref="TuneBase"/>
+    /// with all three (<see cref="AudioEdit.Retune"/>): 0.5× then 3 up keeps 0.5×, 0.75× then 2× is 2× of the
+    /// original, and 1× / 0 / Normal give each back. Kept per version of the sound, so Undo / Redo show their values.
     /// </summary>
-    private async Task<Retune?> RetuneRun(Retune? run, Func<float[], int, int, (float[] Sound, int Count)> op)
+    private sealed record Tune(TuneBase Base, double Speed, bool KeepPitch, int Pitch, int VoiceIndex, int AfterStart, int AfterCount);
+
+    /// <summary>The settings each version made by a speed / pitch / voice change has (versions Undo forgot drop out).</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<AudioState, Tune> tunes = new();
+
+    /// <summary>What the speed, mode and voice lists were last set to (null = 1× / Normal, nothing applied).</summary>
+    private Tune? shownTune;
+
+    /// <summary>
+    /// The settings that apply now: the sound shown was made by them and the same part (or nothing) is picked. Any other
+    /// edit, an undo past the first change or another part "bakes" them: the next change starts from what is shown.
+    /// </summary>
+    private Tune? ActiveTune() =>
+        tunes.TryGetValue(history.Current, out var t) && t.Base.Picked == Wave.HasSelection &&
+        (!t.Base.Picked || (Wave.SelectionStart == t.AfterStart && Wave.SelectionLength == t.AfterCount))
+            ? t
+            : null;
+
+    /// <summary>
+    /// <paramref name="change"/> of the settings that apply now (or of 1× / 0 / Normal on what is shown), made from the
+    /// part before the first change; one undo step.
+    /// </summary>
+    private async Task<bool> Retune(Func<Tune, Tune> change)
     {
-        if (!Continues(run))
+        if (busy) return false;
+        var now = ActiveTune();
+        if (now == null)
         {
             var (s, c) = Target();
-            run = new Retune(Current, s, c, Wave.HasSelection, history.Current, s, c);
+            now = new Tune(new TuneBase(history.Current, s, c, Wave.HasSelection), 1, Picked(SpeedModeBox, true), 0, 0, s, c);
         }
-        var r = run!;
-        bool made = await Edit(x =>
+        var next = change(now);
+        var b = next.Base;
+        var voice = VoiceAt(next.VoiceIndex);
+        return await Edit(x =>
         {
-            var (y, count) = op(x, r.Start, r.Count);
-            return r.Picked ? (y, r.Start, count) : (y, 0, 0);
-        }, r.Before);
-        return made ? r with { After = history.Current, AfterStart = Wave.SelectionStart, AfterCount = Wave.SelectionLength } : null;
+            var (y, count) = AudioEdit.Retune(x, b.Start, b.Count, next.Speed, next.KeepPitch, next.Pitch, voice);
+            return b.Picked ? (y, b.Start, count) : (y, 0, 0);
+        }, b.State.Samples, made => tunes.AddOrUpdate(made, next with { AfterStart = Wave.SelectionStart, AfterCount = Wave.SelectionLength }));
     }
 
-    /// <summary><see cref="RetuneRun"/> with an edit of the part alone (its length may change).</summary>
-    private Task<Retune?> RetuneRange(Retune? run, Func<float[], float[]> op) => RetuneRun(run, (x, start, count) =>
-    {
-        var part = op(AudioEdit.Slice(x, start, count));
-        return (AudioEdit.Splice(x, start, count, part), part.Length);
-    });
+    private VoiceSliders? VoiceAt(int index) =>
+        index >= 0 && index < VoiceBox.Items.Count && VoiceBox.Items[index] is ComboBoxItem { Tag: VoiceSliders s } ? s : null;
 
-    /// <summary>
-    /// The speed the box shows is the speed the part has now (of the sound before the run). The other way of changing it
-    /// (keep the pitch or not) starts a new run from what is shown.
-    /// </summary>
+    /// <summary>The speed and the voice lists show the part's settings (1× / Normal once they are baked), after any change, undo or redo.</summary>
+    private void SyncTuneBoxes()
+    {
+        var t = ActiveTune();
+        PitchNowText.Text = L.F("Now: {0}", (t?.Pitch ?? 0).ToString("+0;-0;0", L.Culture));
+        if (ReferenceEquals(t, shownTune)) return; // the person's own pick in a list stays until something changes
+        shownTune = t;
+        SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, t?.Speed ?? 1.0);
+        if (t != null) SpeedModeBox.SelectedIndex = t.KeepPitch ? 0 : 1;
+        VoiceBox.SelectedIndex = t?.VoiceIndex ?? 0;
+    }
+
+    /// <summary>The speed (and its mode) of the part, with its pitch and voice kept.</summary>
     private async void SpeedButton_Click(object? sender, RoutedEventArgs e)
     {
         double speed = Picked(SpeedBox, 1.0);
         bool keep = Picked(SpeedModeBox, true);
-        var run = await RetuneRange(runKeepsPitch == keep ? speedRun : null, p => AudioEdit.ChangeSpeed(p, speed, keep));
-        if (run == null) return;
-        speedRun = run;
-        runSpeed = speed;
-        runKeepsPitch = keep;
-        speedBoxShowsRun = false; // shown again below
-        UpdateAll();
+        await Retune(t => t with { Speed = speed, KeepPitch = keep });
     }
 
-    /// <summary>
-    /// The speed box tells what the next speed is measured from: the run's speed while it goes on (also after a redo back
-    /// to it), 1× once the sound or the part changed some other way (an undo, another tool, another part).
-    /// </summary>
-    private void SyncSpeedBox()
-    {
-        bool on = Continues(speedRun);
-        if (on == speedBoxShowsRun) return;
-        speedBoxShowsRun = on;
-        SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, on ? runSpeed : 1.0);
-    }
-
-    /// <summary>How far the pitch is moved now (in this run), in semitones.</summary>
-    private int PitchNow => Continues(pitchRun) ? pitchTotal : 0;
+    /// <summary>How far the pitch of the part is moved now, in semitones.</summary>
+    private int PitchNow => ActiveTune()?.Pitch ?? 0;
 
     private async void HigherButton_Click(object? sender, RoutedEventArgs e) => await Pitch(+1);
 
     private async void LowerButton_Click(object? sender, RoutedEventArgs e) => await Pitch(-1);
 
     /// <summary>
-    /// Higher / lower add up (3 up then 5 down = 2 down), always made in one go from the sound before the run, two
-    /// octaves either way at most (the buttons turn off before that).
+    /// Higher / lower add up (3 up then 5 down = 2 down), with the part's speed and voice kept, two octaves either way
+    /// at most (the buttons turn off before that).
     /// </summary>
     private async Task Pitch(int sign)
     {
@@ -546,11 +569,7 @@ public partial class AudioEditorWindow : AppWindow
             Status(L.T("The pitch goes two octaves up or down at most."));
             return;
         }
-        var run = await RetuneRange(pitchRun, p => total == 0 ? p : AudioEdit.ShiftPitch(p, total));
-        if (run == null) return;
-        pitchRun = run;
-        pitchTotal = total;
-        UpdateAll();
+        if (!await Retune(t => t with { Pitch = total })) return;
         if (!HigherButton.IsEnabled || !LowerButton.IsEnabled) Status(L.T("The pitch goes two octaves up or down at most."));
     }
 
@@ -578,10 +597,10 @@ public partial class AudioEditorWindow : AppWindow
 
     private async void VoiceButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
-        // Normal (neutral sliders) = the part without any voice applied in this run.
-        var run = await RetuneRun(voiceRun, (x, s, c) => (sliders.IsNeutral ? (float[])x.Clone() : AudioEdit.ApplyVoiceRange(x, s, c, sliders), c));
-        if (run != null) voiceRun = run;
+        // Normal (first, neutral) = the part without a voice, its speed and pitch kept.
+        int index = VoiceBox.SelectedIndex;
+        if (VoiceAt(index) == null) return;
+        await Retune(t => t with { VoiceIndex = index });
     }
 
     /// <summary>

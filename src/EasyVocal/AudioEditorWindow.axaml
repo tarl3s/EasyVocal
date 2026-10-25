@@ -107,6 +107,8 @@
                                     ToolTip.Tip="{loc:T 'Higher voice, same speed'}" />
                             <Button x:Name="LowerButton" Click="LowerButton_Click" Content="{loc:T '▼ Lower'}"
                                     ToolTip.Tip="{loc:T 'Deeper voice, same speed'}" />
+                            <TextBlock x:Name="PitchNowText" VerticalAlignment="Center" Margin="6,0,0,0"
+                                       ToolTip.Tip="{loc:T 'How far the pitch is moved now, in steps'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>

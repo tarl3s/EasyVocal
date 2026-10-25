@@ -236,6 +236,8 @@
   "▼ Lower": "▼ Mais grave",
   "Higher voice, same speed": "Voz mais aguda, mesma velocidade",
   "Deeper voice, same speed": "Voz mais grave, mesma velocidade",
+  "Now: {0}": "Agora: {0}",
+  "How far the pitch is moved now, in steps": "Quanto o tom está mudado agora, em notas",
   "Louder": "Mais alto",
   "Quieter": "Mais baixo",
   "As loud as possible": "O mais alto possível",

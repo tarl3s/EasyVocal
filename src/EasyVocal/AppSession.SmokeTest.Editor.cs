@@ -120,6 +120,7 @@ internal sealed partial class AppSession
             })
             {
                 int steps = w.History.UndoCount;
+                if (button == w.VoiceButton) w.VoiceBox.SelectedIndex = 1; // the edits before baked the list back to Normal
                 Press(button);
                 await w.IdleAsync();
                 bool nothingToDo = name == "Remove silence" && w.BusyText.Text == L.T("There is no silence to remove at the start or the end.");
@@ -274,14 +275,16 @@ internal sealed partial class AppSession
         w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 0.5);
         Press(w.SpeedButton); // keeping the pitch
         await w.IdleAsync();
-        w.SpeedModeBox.SelectedIndex = 1; // "Change the pitch too": another kind of change, measured from what is shown
-        w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.0);
+        w.SpeedModeBox.SelectedIndex = 1; // "Change the pitch too" at the same speed: the part made again that way
         Press(w.SpeedButton);
         await w.IdleAsync();
-        Check(Math.Abs(w.Current.Length - (len + Sr)) < 4, "after switching how the speed changes, 1× leaves the part as it is now");
+        Check(w.Current.AsSpan().SequenceEqual(AudioEdit.Retune(original, Sr / 2, Sr, 0.5, false, 0, null).Sound),
+            "switching how the speed changes makes the part again from the original, the other way");
         Press(w.UndoButton);
-        w.SpeedModeBox.SelectedIndex = 0;
-        Check(w.Current.AsSpan().SequenceEqual(original), "undone");
+        Check(Picked(w.SpeedBox) == 0.5 && w.SpeedModeBox.SelectedIndex == 0 && Math.Abs(w.Current.Length - (len + Sr)) < 4,
+            "Undo shows that step's speed and mode again");
+        Press(w.UndoButton);
+        Check(w.Current.AsSpan().SequenceEqual(original) && Picked(w.SpeedBox) == 1.0, "undone");
         w.SelectForTest(Sr / 2, Sr);
 
         w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 3);
@@ -317,8 +320,73 @@ internal sealed partial class AppSession
         Check(changed && w.Current.AsSpan().SequenceEqual(beforeVoice) && w.Wave.SelectionLength == Sr,
             "a voice, another voice, then Normal gives the part back without any voice");
         while (w.History.UndoCount > steps) Press(w.UndoButton);
+        await SmokeEditorTuneTogether(w, original, len, steps);
         w.PlaceCursorForTest(0);
     }
+
+    /// <summary>
+    /// Speed, pitch and voice are three settings of the part, made together from the part before the first of them:
+    /// one never undoes another, the lists show them (also after Undo / Redo), and any other edit bakes them.
+    /// </summary>
+    private async Task SmokeEditorTuneTogether(AudioEditorWindow w, float[] original, int len, int steps)
+    {
+        bool Is(double speed, int pitch, int voice = 0) =>
+            w.Current.AsSpan().SequenceEqual(AudioEdit.Retune(original, Sr / 2, Sr, speed, true, pitch, Voice(w, voice)).Sound);
+        bool Shows(double speed, int pitch, int voice = 0) =>
+            Picked(w.SpeedBox) == speed && w.PitchNowText.Text == L.F("Now: {0}", pitch.ToString("+0;-0;0", L.Culture)) && w.VoiceBox.SelectedIndex == voice;
+        async Task Speed(double s)
+        {
+            w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, s);
+            Press(w.SpeedButton);
+            await w.IdleAsync();
+        }
+        async Task Apply(Button b)
+        {
+            Press(b);
+            await w.IdleAsync();
+        }
+
+        w.SelectForTest(Sr / 2, Sr);
+        w.SpeedModeBox.SelectedIndex = 0;
+        w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 3);
+        await Speed(0.5);
+        await Apply(w.HigherButton);
+        Check(Is(0.5, 3) && Shows(0.5, 3) && Math.Abs(w.Wave.SelectionLength - 2 * Sr) < 4,
+            "0.5× then 3 up: still 0.5× (and the list says so), 3 up made once from the original part");
+        await Speed(1);
+        Check(Is(1, 3) && Shows(1, 3) && w.Current.Length == len && w.Wave.SelectionLength == Sr, "then 1×: the part's own length, still 3 up");
+        Press(w.UndoButton);
+        Check(Is(0.5, 3) && Shows(0.5, 3), "Undo brings back the sound and the lists: 0.5×, 3 up");
+        Press(w.UndoButton);
+        Check(Is(0.5, 0) && Shows(0.5, 0), "Undo again: 0.5×, no pitch");
+        Press(w.RedoButton);
+        Press(w.RedoButton);
+        Check(Is(1, 3) && Shows(1, 3), "Redo twice: 1× and 3 up again");
+
+        await Speed(0.75);
+        await Apply(w.HigherButton);
+        await Speed(2);
+        Check(Is(2, 6) && Shows(2, 6) && Math.Abs(w.Wave.SelectionLength - Sr / 2) < 4, "0.75×, 3 more up, then 2×: 2× of the original part, 6 up");
+
+        w.VoiceBox.SelectedIndex = 1;
+        await Apply(w.VoiceButton);
+        Check(Is(2, 6, 1) && Shows(2, 6, 1), "a voice on top keeps 2× and 6 up");
+        w.VoiceBox.SelectedIndex = 0;
+        await Apply(w.VoiceButton);
+        Check(Is(2, 6) && Shows(2, 6), "Normal after it takes the voice off and keeps the speed and the pitch");
+
+        await Apply(w.LouderButton); // another edit bakes the three settings
+        Check(Shows(1, 0) && w.HigherButton.IsEnabled, "another edit bakes them: the lists are 1× / Normal and the pitch 0 again");
+        Press(w.UndoButton);
+        Check(Is(2, 6) && Shows(2, 6), "Undo of that edit shows 2× and 6 up again");
+        w.SelectForTest(0, Sr);
+        Check(Shows(1, 0), "another part starts from 1× / 0 / Normal");
+        while (w.History.UndoCount > steps) Press(w.UndoButton);
+        Check(w.Current.AsSpan().SequenceEqual(original) && Picked(w.SpeedBox) == 1.0, "all undone");
+    }
+
+    private static VoiceSliders? Voice(AudioEditorWindow w, int index) =>
+        index > 0 && w.VoiceBox.Items[index] is ComboBoxItem { Tag: VoiceSliders s } ? s : null;
 
     private static double Picked(ComboBox box) => box.SelectedItem is ComboBoxItem { Tag: double v } ? v : double.NaN;
 

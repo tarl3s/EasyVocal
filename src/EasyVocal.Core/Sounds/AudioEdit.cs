@@ -397,6 +397,27 @@ public static class AudioEdit
         return RingOver(x, start, count, ApplyVoice(Slice(x, start, count), sliders));
     }
 
+    // ---------- speed + pitch + voice together ----------
+
+    /// <summary>
+    /// The editor's three settings of a part, made together from the part as it was before any of them: the speed
+    /// (<paramref name="keepPitch"/> = its mode), then <paramref name="semitones"/> of pitch, then a voice (null or
+    /// neutral = none; its tail rings on over what follows). Changing one of them makes the part again from
+    /// <paramref name="x"/>, so nothing is ever processed twice and 1× / 0 / Normal give it back. Returns the whole
+    /// sound and the part's new length.
+    /// </summary>
+    public static (float[] Sound, int Count) Retune(float[] x, int start, int count, double speed, bool keepPitch,
+        int semitones, VoiceSliders? voice)
+    {
+        (start, count) = Clamp(x.Length, start, count);
+        var part = Slice(x, start, count);
+        if (speed != 1) part = ChangeSpeed(part, speed, keepPitch);
+        if (semitones != 0) part = ShiftPitch(part, semitones);
+        var y = Splice(x, start, count, part);
+        if (voice is { IsNeutral: false }) y = ApplyVoiceRange(y, start, part.Length, voice);
+        return (y, part.Length);
+    }
+
     // ---------- silence ----------
 
     /// <summary>Where the sound really starts and ends (first and last sample louder than the threshold, plus a 10 ms margin); (0, 0) when it is all silence.</summary>

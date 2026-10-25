@@ -301,6 +301,50 @@ public class AudioEditTests
         Assert.Equal(x, AudioEdit.ApplyVoice(x, new VoiceSliders()));
     }
 
+    // ---------- speed + pitch + voice together ----------
+
+    [Fact]
+    public void Retune_SpeedThenPitch_KeepsTheSpeed_AndShiftsOnceFromTheOriginal()
+    {
+        var x = Signals.PulseVowel(160, new[] { 700.0, 1200 }, 1.5);
+        int start = Sr / 4, count = Sr;
+        var slow = AudioEdit.Retune(x, start, count, 0.5, true, 0, null);
+        Assert.InRange(slow.Count, 2 * count - 2, 2 * count + 2);
+        var both = AudioEdit.Retune(x, start, count, 0.5, true, 3, null);
+        Assert.Equal(slow.Count, both.Count); // the pitch change kept 0.5×
+        Assert.Equal(x.Length - count + both.Count, both.Sound.Length);
+        var once = AudioEdit.ShiftPitch(AudioEdit.ChangeSpeed(AudioEdit.Slice(x, start, count), 0.5, true), 3);
+        Assert.Equal(AudioEdit.Splice(x, start, count, once), both.Sound); // made once from the original part
+        Assert.InRange(Signals.EstimatePitch(AudioEdit.Slice(both.Sound, start, both.Count)), 160 * Math.Pow(2, 3 / 12.0) * 0.97, 160 * Math.Pow(2, 3 / 12.0) * 1.03);
+
+        var back = AudioEdit.Retune(x, start, count, 1, true, 3, null); // then 1×: the original length, pitch still +3
+        Assert.Equal(count, back.Count);
+        Assert.Equal(x.Length, back.Sound.Length);
+        Assert.Equal(AudioEdit.Splice(x, start, count, AudioEdit.ShiftPitch(AudioEdit.Slice(x, start, count), 3)), back.Sound);
+    }
+
+    [Fact]
+    public void Retune_AnySpeedIsOfTheOriginal_AndNeutralGivesItBack()
+    {
+        var x = Signals.PulseVowel(150, new[] { 700.0, 1200 }, 1.0);
+        var twice = AudioEdit.Retune(x, 0, x.Length, 2, true, 2, null); // 0.75× → pitch → 2× is 2× of the original
+        Assert.Equal(AudioEdit.ShiftPitch(AudioEdit.ChangeSpeed(x, 2, true), 2), twice.Sound);
+        Assert.Equal(x, AudioEdit.Retune(x, 0, x.Length, 1, false, 0, new VoiceSliders()).Sound);
+        Assert.Equal(x, AudioEdit.Retune(x, Sr / 4, Sr / 2, 1, true, 0, null).Sound);
+    }
+
+    [Fact]
+    public void Retune_VoiceBackToNormal_KeepsTheSpeed()
+    {
+        var x = Signals.PulseVowel(150, new[] { 700.0, 1200 }, 1.0);
+        var robot = BuiltInVoices.All().First(v => v.Id == "movie-robot").Sliders;
+        var withRobot = AudioEdit.Retune(x, Sr / 4, Sr / 2, 0.75, true, 0, robot);
+        var normal = AudioEdit.Retune(x, Sr / 4, Sr / 2, 0.75, true, 0, new VoiceSliders());
+        Assert.NotEqual(withRobot.Sound, normal.Sound);
+        Assert.Equal(withRobot.Count, normal.Count);
+        Assert.Equal(AudioEdit.Splice(x, Sr / 4, Sr / 2, AudioEdit.ChangeSpeed(AudioEdit.Slice(x, Sr / 4, Sr / 2), 0.75, true)), normal.Sound);
+    }
+
     // ---------- silence ----------
 
     [Fact]
