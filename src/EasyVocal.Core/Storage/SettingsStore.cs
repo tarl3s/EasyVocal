@@ -50,8 +50,18 @@ public static class SettingsStore
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    public static string DefaultFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "EasyVocal");
+    /// <summary>
+    /// Windows: %APPDATA%\EasyVocal; macOS: ~/Library/Application Support/EasyVocal; Linux: ~/.config/EasyVocal
+    /// ($XDG_CONFIG_HOME when set).
+    /// </summary>
+    public static string DefaultFolder => DefaultFolderFor(
+        OperatingSystem.IsMacOS(), Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+
+    /// <summary>The data folder for a system (testable on any OS).</summary>
+    public static string DefaultFolderFor(bool macOS, string home, string applicationData) => macOS
+        ? Path.Combine(home, "Library", "Application Support", "EasyVocal")
+        : Path.Combine(applicationData, "EasyVocal");
 
     public static AppSettings Load(string folder) => Load(folder, out _);
 

@@ -3,7 +3,11 @@ using System.Collections.Generic;
 
 namespace EasyVocal.Core.Engine;
 
-/// <summary>Windows' default device of one kind (playback or recording) for everything else and for calls (endpoint ids; null = none).</summary>
+/// <summary>
+/// The system's default device of one kind (playback or recording), as device ids (null = none). Windows has two roles:
+/// <see cref="Console"/> for everything else and <see cref="Communications"/> for calls. A system with a single default
+/// (macOS, Linux) reports it in both, so the rules below work the same there.
+/// </summary>
 public sealed record DefaultIds(string? Console, string? Communications);
 
 /// <summary>

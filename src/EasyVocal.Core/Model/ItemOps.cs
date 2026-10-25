@@ -154,7 +154,7 @@ public static class ItemOps
         var source = Path.GetFullPath(sourcePath);
         var name = Path.GetFileName(source);
         var folder = Path.GetFullPath(soundsFolder);
-        if (string.Equals(Path.GetDirectoryName(source), folder.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
+        if (PathCompare.Same(Path.GetDirectoryName(source), folder.TrimEnd(Path.DirectorySeparatorChar)))
             return name;
 
         return FirstFreeName(Path.GetFileNameWithoutExtension(name), Path.GetExtension(name), candidate =>
