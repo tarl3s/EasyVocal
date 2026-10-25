@@ -69,11 +69,12 @@ public class PortAudioTests(ITestOutputHelper output)
             speaker.TrimTo(0);
         }
         Assert.Throws<ObjectDisposedException>(() => speaker.Write(new float[10]));
-        // Closed on a thread of its own once its own audio thread stopped it (never aborted from here while it runs).
+        // Closed on a thread of its own: stopped by its own audio thread, or (a device that stopped calling back, as a
+        // CI runner's ALSA can) aborted from here once its callback can no longer stop it. Never left open.
         var stream = (PortAudioStream)speaker;
         Assert.True(SpinWait.SpinUntil(() => stream.Closed.IsCompleted, 10000), "the speaker closed");
         output.WriteLine("closed: " + stream.CloseRoute);
-        Assert.Equal("completed", stream.CloseRoute);
+        Assert.Contains(stream.CloseRoute, new[] { "completed", "aborted" });
     }
 
     [Fact]
