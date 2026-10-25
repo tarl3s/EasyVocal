@@ -140,9 +140,6 @@ public partial class AudioEditorWindow : Window
         PlayButton.IsEnabled = any;
         PlayPartButton.IsEnabled = sel;
         StopButton.IsEnabled = playOffset >= 0;
-        ZoomInButton.IsEnabled = any && Wave.CanZoomIn;
-        ZoomOutButton.IsEnabled = Wave.CanZoomOut;
-        FitButton.IsEnabled = Wave.CanZoomOut;
         CutButton.IsEnabled = sel && Wave.SelectionLength < x.Length;
         TrimButton.IsEnabled = sel && Wave.SelectionLength < x.Length;
         SplitButton.IsEnabled = !sel && Wave.CursorPosition > 0 && Wave.CursorPosition < x.Length;
@@ -153,6 +150,7 @@ public partial class AudioEditorWindow : Window
         UpdateScroll();
     }
 
+    /// <summary>The scroll bar and the zoom buttons follow the view (also on their own, while the wave is dragged or zoomed).</summary>
     private void UpdateScroll()
     {
         double max = Math.Max(0, Current.Length - Wave.VisibleSamples);

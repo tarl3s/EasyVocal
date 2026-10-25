@@ -33,15 +33,16 @@ public static class SoundLoader
     public static readonly string[] VideoExtensions = { ".mp4", ".m4v", ".mov", ".wmv" };
 
     /// <summary>True when the file is a video (by its extension).</summary>
-    public static bool IsVideo(string? path) =>
-        !string.IsNullOrEmpty(path) && Array.IndexOf(VideoExtensions, Path.GetExtension(path).ToLowerInvariant()) >= 0;
+    public static bool IsVideo(string? path) => HasExtension(path, VideoExtensions);
 
     /// <summary>The extensions as a file-dialog pattern: "*.wav;*.mp3;…".</summary>
     public static string DialogPattern => "*" + string.Join(";*", Extensions);
 
     /// <summary>True when the file's extension is one <see cref="Load"/> reads.</summary>
-    public static bool IsSupported(string? path) =>
-        !string.IsNullOrEmpty(path) && Array.IndexOf(Extensions, Path.GetExtension(path).ToLowerInvariant()) >= 0;
+    public static bool IsSupported(string? path) => HasExtension(path, Extensions);
+
+    private static bool HasExtension(string? path, string[] extensions) =>
+        !string.IsNullOrEmpty(path) && Array.IndexOf(extensions, Path.GetExtension(path).ToLowerInvariant()) >= 0;
 
     /// <summary>Files Windows decodes (Media Foundation): everything but WAV, AIFF, MP3 and OGG.</summary>
     private static bool UsesMediaFoundation(string ext) => ext is not (".wav" or ".mp3" or ".ogg" or ".aiff" or ".aif");
@@ -50,9 +51,9 @@ public static class SoundLoader
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             throw new SoundLoadException("We couldn't find that sound file.");
-        string ext = Path.GetExtension(path).ToLowerInvariant();
-        if (Array.IndexOf(Extensions, ext) < 0)
+        if (!IsSupported(path))
             throw new SoundLoadException("That kind of file isn't supported. Please pick a sound or video file (WAV, MP3, OGG, FLAC, M4A, WMA, MP4…).");
+        string ext = Path.GetExtension(path).ToLowerInvariant();
 
         try
         {
