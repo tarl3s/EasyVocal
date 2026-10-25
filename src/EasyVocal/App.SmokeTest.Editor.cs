@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
@@ -92,6 +93,8 @@ public partial class App
         {
             Check(w.EditAudioButton.IsEnabled && w.EditAudioButton.IsVisible, "the sound editor offers 'Edit audio…'");
         }, wait: 1000);
+
+        SmokeEditedCopyFails(main, c, dataFolder);
 
         int soundsBefore = c.Settings.Sounds.Count;
         AudioEditorWindow? editor = null;
@@ -208,6 +211,48 @@ public partial class App
 
         c.DeleteSound(item.Id);
         Check(!File.Exists(Path.Combine(c.SoundsFolder, fileName)), "deleting the sound removes its file");
+    }
+
+    /// <summary>
+    /// A new sound saved with edited audio whose copy can't be written (a folder is in the way): the person is told,
+    /// and the sound is added playing its own file, not the edited audio.
+    /// </summary>
+    private void SmokeEditedCopyFails(MainWindow main, AppController c, string dataFolder)
+    {
+        var source = Path.Combine(dataFolder, "smoke unsaved.wav");
+        var original = SpeechLike();
+        SoundWriter.WriteWav(source, original);
+        var blocker = Path.Combine(c.SoundsFolder, "smoke unsaved (edited).wav");
+        Directory.CreateDirectory(blocker);
+        int told = 0;
+        DialogAsync(new SoundEditorWindow(c, null, source) { Owner = main }, async w =>
+        {
+            await w.IdleAsync();
+            // Closes the "couldn't save" message as soon as it shows.
+            var closer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            closer.Tick += (_, _) =>
+            {
+                foreach (var open in Application.Current.Windows.OfType<Window>().Where(x => x.Owner == w).ToList())
+                {
+                    told++;
+                    open.Close();
+                }
+            };
+            closer.Start();
+            w.NameBox.Text = "Smoke unsaved";
+            w.UseEditedAudioForTest(AudioEdit.Gain(original, 8)); // far over full scale: clamped only when saved
+            Press(w.SaveButton);
+            await w.IdleAsync();
+            closer.Stop();
+        }, wait: 100);
+        var added = c.Settings.Sounds.FirstOrDefault(s => s.Name == "Smoke unsaved");
+        var plays = added != null ? c.SoundSamples(added.Id) : null;
+        Check(told == 1 && added is { OriginalFileName: null } && added.FileName == "smoke unsaved.wav"
+              && plays != null && plays.Length == original.Length && plays.Max(v => Math.Abs(v)) <= 1f,
+            "an edited copy that can't be written: the person is told and the sound plays its own file");
+        if (added != null) c.DeleteSound(added.Id);
+        Directory.Delete(blocker);
+        File.Delete(source);
     }
 
     // ---------- small screens ----------

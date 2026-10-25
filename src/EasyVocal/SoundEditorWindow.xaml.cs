@@ -20,7 +20,8 @@ public partial class SoundEditorWindow : Window
     private readonly SoundItem? editing;
     private readonly string itemId;
     private readonly EmojiGrid emojiGrid;
-    private float[]? samples;          // the decoded file, for the preview and to hand to the mixer
+    private float[]? samples;          // the sound as the person hears it now (edited or not), for the preview
+    private float[]? fileSamples;      // the decoded file, what the mixer gets until an edited copy is saved
     private string? newFilePath;       // a file the person picked (to copy into the Sounds folder on Save)
     private string? pendingHotkey;
     private bool nameTouched, settingName, loadingFile, previewing, saving;
@@ -117,7 +118,7 @@ public partial class SoundEditorWindow : Window
             if (path == null) throw new SoundLoadException("We couldn't find that sound file.");
             var data = await Task.Run(() => SoundLoader.Load(path));
             if (ticket != loadTicket) return;
-            samples = data;
+            samples = fileSamples = data;
             if (!existing)
             {
                 audioChange = AudioChange.None;
@@ -298,7 +299,7 @@ public partial class SoundEditorWindow : Window
                     FileName = fileName!,
                     Volume = VolumeSlider.Value,
                     Hotkey = pendingHotkey,
-                }, samples!);
+                }, fileSamples!);
             }
             else
             {
@@ -315,12 +316,13 @@ public partial class SoundEditorWindow : Window
                     editing.FileName = fileName;
                     editing.OriginalFileName = null;
                 }
-                controller.SoundEdited(editing.Id, fileName != null ? samples : null,
+                controller.SoundEdited(editing.Id, fileName != null ? fileSamples : null,
                     editing.BuiltIn ? null : oldFile, editing.BuiltIn ? null : oldOriginal);
                 if (audioChange == AudioChange.Restored) controller.RestoreOriginalAudio(editing.Id, samples);
             }
             // The edited audio is written as a copy next to the file it came from (that one is kept as the original).
-            // If that fails the person is told and the sound keeps its unedited audio.
+            // The mixer only gets the edited audio once that copy is written: if it fails the person is told and
+            // the sound keeps playing its (unedited) file.
             if (audioChange == AudioChange.Edited && samples != null) await SaveEditedAudio(samples);
 
             // Windows could still refuse the key (an app grabbed it since we checked): don't keep it.
@@ -340,5 +342,22 @@ public partial class SoundEditorWindow : Window
             saving = false;
             UpdateSave();
         }
+    }
+
+    // ---------- for the smoke test ----------
+
+    /// <summary>As if the audio editor had given back <paramref name="edited"/> (saved on Save, like a real edit).</summary>
+    internal void UseEditedAudioForTest(float[] edited)
+    {
+        samples = edited;
+        audioChange = AudioChange.Edited;
+        UpdateFileText();
+        UpdateSave();
+    }
+
+    /// <summary>Waits until the file is decoded and no Save is running (at most ~12 s).</summary>
+    internal async Task IdleAsync()
+    {
+        for (int i = 0; i < 600 && (loadingFile || saving); i++) await Task.Delay(20);
     }
 }
