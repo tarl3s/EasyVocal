@@ -71,15 +71,13 @@ internal abstract unsafe class PortAudioStream : IDisposable
     {
         try
         {
-            // Never paComplete: on macOS PortAudio then stops the AudioUnit from inside this IO callback, which deadlocks
-            // with a thread that is opening or checking another stream (CoreAudio's lock) — EasyVocal froze while the
-            // setup's level meter closed. A closing stream gives silence until Pa_AbortStream stops it from outside.
             if (GCHandle.FromIntPtr((IntPtr)userData).Target is not PortAudioStream s) return PortAudioNative.Continue;
             Volatile.Write(ref s.lastCallback, Stopwatch.GetTimestamp());
             if (s.Disposed)
             {
+                // Closing: silence, and PortAudio stops the stream from this thread (see Dispose).
                 if (output != null) new Span<float>(output, (int)frames.Value * s.outputChannels).Clear();
-                return PortAudioNative.Continue;
+                return PortAudioNative.Complete;
             }
             s.OnAudio((float*)input, (float*)output, (int)frames.Value);
             return PortAudioNative.Continue;
@@ -144,7 +142,7 @@ internal abstract unsafe class PortAudioStream : IDisposable
         {
             if (stream != IntPtr.Zero)
             {
-                if (started) PortAudioNative.Pa_AbortStream(stream); // stop now; waits for a callback that is running
+                if (started) StopFromItsOwnThread();
                 PortAudioNative.Pa_CloseStream(stream);
                 stream = IntPtr.Zero;
             }
@@ -152,6 +150,21 @@ internal abstract unsafe class PortAudioStream : IDisposable
         }
         Backend.Closed(this);
         OnDisposed();
+    }
+
+    /// <summary>
+    /// Under the backend's lock, with <see cref="Disposed"/> set: the callback has answered paComplete, so PortAudio stops
+    /// the stream from its own audio thread; this waits for that (1 s at most). Stopping it from here as well
+    /// (Pa_AbortStream) while the audio thread does deadlocks on macOS: both end in AudioOutputUnitStop and wait on
+    /// each other (EasyVocal froze for good, e.g. when the setup's level meter closed). Only a stream whose callback
+    /// doesn't run any more (a device gone) is aborted from here.
+    /// </summary>
+    private void StopFromItsOwnThread()
+    {
+        long until = Stopwatch.GetTimestamp() + Stopwatch.Frequency;
+        while (PortAudioNative.Pa_IsStreamActive(stream) == 1 && Stopwatch.GetTimestamp() < until) Thread.Sleep(5);
+        if (PortAudioNative.Pa_IsStreamActive(stream) == 1) PortAudioNative.Pa_AbortStream(stream);
+        else Thread.Sleep(30); // the audio thread finishes stopping itself before the stream is closed
     }
 
     protected virtual void OnDisposed() { }
