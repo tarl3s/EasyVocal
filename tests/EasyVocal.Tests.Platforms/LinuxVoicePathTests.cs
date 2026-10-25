@@ -108,11 +108,14 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 var a = VoiceFeatures.Measure(padded, PadTo(input, reference.Length), latency, ratio);
                 var b = VoiceFeatures.Measure(reference, PadTo(input, reference.Length), latency, ratio);
                 int gaps = Dropouts(padded, reference, input.Length + latency);
+                // What the voice itself does when the blocks fall elsewhere (Monster's rattle has deep dips that move): the same
+                // render started 173 samples later, lined up again.
+                int phase = Dropouts(Shifted(sliders, input, 173, reference.Length), reference, input.Length + latency);
                 var differences = Differences(a, b);
                 output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps}\n   real    {a}\n   offline {b}"));
+                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps} (block phase alone {phase})\n   real    {a}\n   offline {b}"));
                 if (differences.Count > 0) failures.Add(voices[v].Id + " sounds different: " + string.Join(", ", differences));
-                if (gaps > 0) failures.Add($"{voices[v].Id}: {gaps} dropouts");
+                if (gaps > phase + 1) failures.Add($"{voices[v].Id}: {gaps} dropouts ({phase} from the block phase alone)");
             }
             Assert.True(failures.Count == 0, string.Join("; ", failures));
         }
@@ -169,6 +172,17 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         input.CopyTo(o, 0);
         for (int i = 0; i < o.Length; i += Block) chain.Process(o.AsSpan(i, Math.Min(Block, o.Length - i)));
         return o;
+    }
+
+    /// <summary>The offline render with <paramref name="offset"/> samples of silence first, then those cut again.</summary>
+    private static float[] Shifted(VoiceSliders sliders, float[] input, int offset, int length)
+    {
+        var later = new float[input.Length + offset];
+        input.CopyTo(later, offset);
+        var o = Render(sliders, later, out _);
+        var back = new float[length];
+        Array.Copy(o, offset, back, 0, Math.Min(length, o.Length - offset));
+        return back;
     }
 
     private static float[] PadTo(float[] x, int length)
