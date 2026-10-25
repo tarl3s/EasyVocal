@@ -19,6 +19,11 @@ public sealed class MicPicker
 {
     public static readonly TimeSpan FallbackAfter = TimeSpan.FromSeconds(10);
 
+    private readonly CableNames cable;
+
+    /// <param name="cable">The virtual cable's names: none of its devices is ever picked as the microphone.</param>
+    public MicPicker(CableNames cable) => this.cable = cable;
+
     private string? missingId;
     private DateTime missingSince;
 
@@ -32,7 +37,7 @@ public sealed class MicPicker
             if (saved != null)
             {
                 missingId = null;
-                if (!DeviceRules.IsVirtualCable(saved.Name)) return new MicPick(saved.Id, false, saved.Name);
+                if (!cable.IsCable(saved.Name)) return new MicPick(saved.Id, false, saved.Name);
             }
             else
             {
@@ -41,13 +46,13 @@ public sealed class MicPicker
                     missingId = savedId;
                     missingSince = now;
                 }
-                var stand = DeviceRules.DefaultMic(inputs);
+                var stand = DeviceRules.DefaultMic(cable, inputs);
                 if (stand == null || now - missingSince < FallbackAfter)
                     return new MicPick(savedId, false, null); // keep trying the chosen one for now
                 return new MicPick(stand.Id, true, stand.Name);
             }
         }
-        var auto = DeviceRules.DefaultMic(inputs);
+        var auto = DeviceRules.DefaultMic(cable, inputs);
         return new MicPick(auto?.Id, false, auto?.Name);
     }
 }

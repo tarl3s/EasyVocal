@@ -343,12 +343,14 @@ public class AuthenticodeTests : IDisposable
 
 public class DeviceListFilterTests
 {
+    private static readonly CableNames Vb = CableNames.VbCable;
+
     private static DeviceInfo D(string name) => new(name.ToLowerInvariant(), name, false);
 
     [Fact]
     public void ExcludeVirtualCable_DropsBothEnds_KeepsTheRestInOrder()
     {
-        var kept = DeviceRules.ExcludeVirtualCable(new[]
+        var kept = DeviceRules.ExcludeVirtualCable(Vb, new[]
         {
             D("Microphone (Realtek)"), D("CABLE Output (VB-Audio Virtual Cable)"), D("Headset (USB)"), D("CABLE Input (VB-Audio Virtual Cable)"),
         });

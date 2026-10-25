@@ -144,6 +144,7 @@ public class ControllerTests
         public string CallAppDeviceName => "Test mic";
         public VirtualMicTexts Texts { get; } = new("", "", "", "", "", "", "");
         public string PageUrl => "https://example.com";
+        public CableNames Cable => CableNames.EasyVocalLinux;
         public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => null;
         public bool CanInstall => false;
         public bool TakesDefaultsOnInstall => false;

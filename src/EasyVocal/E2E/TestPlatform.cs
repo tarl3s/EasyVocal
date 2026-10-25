@@ -104,7 +104,9 @@ internal sealed class TestVirtualMic : IVirtualMicProvider
 
     public string PageUrl => "https://vb-audio.com/Cable/";
 
-    public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(outputs);
+    public CableNames Cable => CableNames.VbCable;
+
+    public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(Cable, outputs);
 
     public bool CanInstall => true;
 

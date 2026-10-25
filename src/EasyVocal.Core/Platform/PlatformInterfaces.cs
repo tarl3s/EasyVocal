@@ -202,6 +202,9 @@ public interface IVirtualMicProvider
     /// <summary>The official page about it (opened by "Learn more").</summary>
     string PageUrl { get; }
 
+    /// <summary>How its devices are named: where the voice goes, and which devices are never a mic or headphones.</summary>
+    CableNames Cable { get; }
+
     /// <summary>The virtual mic's playback side among <paramref name="outputs"/>, or null when it isn't there.</summary>
     DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs);
 

@@ -49,7 +49,7 @@ public partial class SettingsWindow : AppWindow
 
             OutputHint.Text = L.T(controller.Platform.VirtualMic.Texts.OutputHint);
             DeviceBox.Fill(OutputBox, L.T(controller.Platform.VirtualMic.Texts.AutomaticOutput), outputs, s.OutputDeviceId);
-            DeviceBox.Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(outputs), s.MonitorDeviceId);
+            DeviceBox.Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(controller.Platform.VirtualMic.Cable, outputs), s.MonitorDeviceId);
 
             LanguageBox.Items.Clear();
             var languages = new (string Code, string Name)[]
@@ -82,7 +82,7 @@ public partial class SettingsWindow : AppWindow
     private void MicBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (loading || MicBox.SelectedItem is not ComboBoxItem item) return;
-        if ((item.Tag as DeviceInfo) is { } device && DeviceRules.IsVirtualCable(device.Name))
+        if ((item.Tag as DeviceInfo) is { } device && DeviceRules.IsVirtualCable(controller.Platform.VirtualMic.Cable, device.Name))
         {
             // The cable's output is the virtual microphone EasyVocal itself feeds: listening to it would loop the voice.
             MicProblem.Text = L.T("That is EasyVocal's own output — using it as the microphone would loop your voice.");

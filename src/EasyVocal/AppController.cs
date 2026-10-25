@@ -50,7 +50,7 @@ public sealed class AppController : IDisposable
     private readonly LoadTickets soundLoads = new();
     private SoundPreview? preview;
     private string deviceFingerprint = "";
-    private readonly MicPicker micPicker = new();
+    private readonly MicPicker micPicker;
     private MicPick? micInUse;
     private string? usedMic, usedCall, usedMonitor; // what the current session opened
     private int changePosted;
@@ -67,6 +67,7 @@ public sealed class AppController : IDisposable
         devices = platform.Audio;
         Startup = platform.Startup;
         CableInstaller = platform.VirtualMic.InstallAsync;
+        micPicker = new MicPicker(platform.VirtualMic.Cable);
         DataFolder = dataFolder;
         SoundsFolder = Path.Combine(dataFolder, "Sounds");
         FirstRun = !File.Exists(Path.Combine(dataFolder, "settings.json"));
@@ -928,8 +929,8 @@ public sealed class AppController : IDisposable
     private AudioRoutes PickRoutes(IReadOnlyList<DeviceInfo> inputs, IReadOnlyList<DeviceInfo> outputs)
     {
         var mic = micPicker.Pick(Settings.MicDeviceId, inputs, DateTime.UtcNow);
-        var call = DeviceRules.PickCall(Settings.OutputDeviceId, outputs);
-        return new AudioRoutes(mic.Id, call, DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, call));
+        var call = DeviceRules.PickCall(Cable, Settings.OutputDeviceId, outputs);
+        return new AudioRoutes(mic.Id, call, DeviceRules.PickMonitor(Cable, Settings.MonitorDeviceId, outputs, call));
     }
 
     // The three factories run on the UI thread, inside engine.Start / TryRecover; each notes what it opened.
@@ -964,7 +965,7 @@ public sealed class AppController : IDisposable
     private IAudioOutput MakeCallOutput()
     {
         usedCall = null;
-        var id = DeviceRules.PickCall(Settings.OutputDeviceId, devices.Outputs()) ?? throw new NoVirtualCableException();
+        var id = DeviceRules.PickCall(Cable, Settings.OutputDeviceId, devices.Outputs()) ?? throw new NoVirtualCableException();
         var output = devices.OpenSpeaker(id);
         usedCall = id;
         return output;
@@ -982,7 +983,7 @@ public sealed class AppController : IDisposable
 
     /// <summary>The headphones to open now (see <see cref="DeviceRules.PickMonitor"/>), or null for none.</summary>
     private string? MonitorId(IReadOnlyList<DeviceInfo> outputs) =>
-        DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
+        DeviceRules.PickMonitor(Cable, Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Cable, Settings.OutputDeviceId, outputs));
 
     /// <summary>The updater (Settings' "Check now"); null in the tests unless the smoke test sets a fake one.</summary>
     public UpdateCoordinator? Updates { get; set; }
@@ -1002,6 +1003,9 @@ public sealed class AppController : IDisposable
 
     /// <summary>The virtual mic's install may take the system's default devices (VB-CABLE): the remember / put back / Fix logic runs.</summary>
     private bool TakesDefaults => Platform.VirtualMic.TakesDefaultsOnInstall;
+
+    /// <summary>The names of this platform's virtual cable (never used as a mic or headphones).</summary>
+    private CableNames Cable => Platform.VirtualMic.Cable;
 
     // ---------- the virtual mic EasyVocal makes itself (Linux) ----------
 
@@ -1085,8 +1089,8 @@ public sealed class AppController : IDisposable
     public void RememberDefaultsBeforeCable()
     {
         if (!TakesDefaults) return;
-        Settings.PreCableOutputId = DefaultDeviceRules.Remember(devices.Defaults(playback: true), devices.Outputs());
-        Settings.PreCableInputId = DefaultDeviceRules.Remember(devices.Defaults(playback: false), devices.Inputs());
+        Settings.PreCableOutputId = DefaultDeviceRules.Remember(Cable, devices.Defaults(playback: true), devices.Outputs());
+        Settings.PreCableInputId = DefaultDeviceRules.Remember(Cable, devices.Defaults(playback: false), devices.Inputs());
         restoreUntil = null;
         AppLog.Info("Before installing VB-CABLE: default output " + (Settings.PreCableOutputId ?? "none") + ", default input " + (Settings.PreCableInputId ?? "none"));
         Save();
@@ -1122,14 +1126,14 @@ public sealed class AppController : IDisposable
             else if (restoreUntil != null)
             {
                 bool changed = false;
-                if (DefaultDeviceRules.RestoreTo(outDefaults, outputs, Settings.PreCableOutputId) is { } o)
+                if (DefaultDeviceRules.RestoreTo(Cable, outDefaults, outputs, Settings.PreCableOutputId) is { } o)
                     changed |= SetDefault(o, "VB-CABLE took the default output: putting back");
-                if (DefaultDeviceRules.RestoreTo(devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId) is { } i)
+                if (DefaultDeviceRules.RestoreTo(Cable, devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId) is { } i)
                     changed |= SetDefault(i, "VB-CABLE took the default input: putting back");
                 if (changed) outDefaults = devices.Defaults(playback: true);
             }
         }
-        bool taken = DefaultDeviceRules.TakenByCable(outDefaults, outputs);
+        bool taken = DefaultDeviceRules.TakenByCable(Cable, outDefaults, outputs);
         if (taken == SoundGoesToCable) return;
         SoundGoesToCable = taken;
         AppLog.Info(taken ? "Windows' default playback device is the virtual cable" : "Windows' default playback device is a real one again");
@@ -1146,11 +1150,11 @@ public sealed class AppController : IDisposable
         bool ok = true;
         var outputs = devices.Outputs();
         var outDefaults = devices.Defaults(playback: true);
-        if (DefaultDeviceRules.FixTo(outDefaults, outputs, Settings.PreCableOutputId, playback: true) is { } o)
+        if (DefaultDeviceRules.FixTo(Cable, outDefaults, outputs, Settings.PreCableOutputId, playback: true) is { } o)
             ok &= SetDefault(o, "Fix: default output");
-        else if (DefaultDeviceRules.TakenByCable(outDefaults, outputs))
+        else if (DefaultDeviceRules.TakenByCable(Cable, outDefaults, outputs))
             ok = false; // no real playback device to switch to
-        if (DefaultDeviceRules.FixTo(devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId, playback: false) is { } i)
+        if (DefaultDeviceRules.FixTo(Cable, devices.Defaults(playback: false), devices.Inputs(), Settings.PreCableInputId, playback: false) is { } i)
             ok &= SetDefault(i, "Fix: default input");
         if (ok) ForgetDefaultsBeforeCable();
         CheckDefaults();

@@ -4,67 +4,69 @@ namespace EasyVocal.Tests;
 
 public class DeviceRulesTests
 {
+    private static readonly CableNames Vb = CableNames.VbCable;
+
     private static DeviceInfo D(string name, bool isDefault = false) => new(name.ToLowerInvariant(), name, isDefault);
 
     [Fact]
     public void FindVirtualCable_FindsCableInput()
     {
-        var found = DeviceRules.FindVirtualCable(new[] { D("Speakers (Realtek)"), D("CABLE Input (VB-Audio Virtual Cable)") });
+        var found = DeviceRules.FindVirtualCable(Vb, new[] { D("Speakers (Realtek)"), D("CABLE Input (VB-Audio Virtual Cable)") });
         Assert.Equal("CABLE Input (VB-Audio Virtual Cable)", found?.Name);
     }
 
     [Fact]
     public void FindVirtualCable_NoneInstalled_ReturnsNull()
     {
-        Assert.Null(DeviceRules.FindVirtualCable(new[] { D("Speakers (Realtek)"), D("Headphones (USB)") }));
-        Assert.Null(DeviceRules.FindVirtualCable(new DeviceInfo[0]));
+        Assert.Null(DeviceRules.FindVirtualCable(Vb, new[] { D("Speakers (Realtek)"), D("Headphones (USB)") }));
+        Assert.Null(DeviceRules.FindVirtualCable(Vb, new DeviceInfo[0]));
     }
 
     [Fact]
     public void FindVirtualCable_PrefersVbAudio_AndIgnoresCase()
     {
-        var found = DeviceRules.FindVirtualCable(new[] { D("cable input (Some Other Cable)"), D("cable input (vb-audio virtual cable)") });
+        var found = DeviceRules.FindVirtualCable(Vb, new[] { D("cable input (Some Other Cable)"), D("cable input (vb-audio virtual cable)") });
         Assert.Equal("cable input (vb-audio virtual cable)", found?.Name);
         Assert.Equal("cable input (Some Other Cable)",
-            DeviceRules.FindVirtualCable(new[] { D("Speakers"), D("cable input (Some Other Cable)") })?.Name);
+            DeviceRules.FindVirtualCable(Vb, new[] { D("Speakers"), D("cable input (Some Other Cable)") })?.Name);
     }
 
     [Fact]
     public void FindVirtualCable_IgnoresTheCaptureEnd()
     {
-        Assert.Null(DeviceRules.FindVirtualCable(new[] { D("CABLE Output (VB-Audio Virtual Cable)") }));
+        Assert.Null(DeviceRules.FindVirtualCable(Vb, new[] { D("CABLE Output (VB-Audio Virtual Cable)") }));
     }
 
     [Fact]
     public void DefaultMic_SkipsVirtualCable()
     {
-        var mic = DeviceRules.DefaultMic(new[] { D("CABLE Output (VB-Audio Virtual Cable)", isDefault: true), D("Microphone (Realtek)") });
+        var mic = DeviceRules.DefaultMic(Vb, new[] { D("CABLE Output (VB-Audio Virtual Cable)", isDefault: true), D("Microphone (Realtek)") });
         Assert.Equal("Microphone (Realtek)", mic?.Name);
     }
 
     [Fact]
     public void DefaultMic_PrefersTheWindowsDefault()
     {
-        var mic = DeviceRules.DefaultMic(new[] { D("Microphone (Realtek)"), D("Headset (USB)", isDefault: true) });
+        var mic = DeviceRules.DefaultMic(Vb, new[] { D("Microphone (Realtek)"), D("Headset (USB)", isDefault: true) });
         Assert.Equal("Headset (USB)", mic?.Name);
     }
 
     [Fact]
     public void DefaultMic_OnlyCable_ReturnsNull()
     {
-        Assert.Null(DeviceRules.DefaultMic(new[] { D("CABLE Output (VB-Audio Virtual Cable)", isDefault: true) }));
-        Assert.Null(DeviceRules.DefaultMic(new DeviceInfo[0]));
+        Assert.Null(DeviceRules.DefaultMic(Vb, new[] { D("CABLE Output (VB-Audio Virtual Cable)", isDefault: true) }));
+        Assert.Null(DeviceRules.DefaultMic(Vb, new DeviceInfo[0]));
     }
 
     [Fact]
     public void IsVirtualCable_RecognisesBothEnds()
     {
-        Assert.True(DeviceRules.IsVirtualCable("CABLE Input (VB-Audio Virtual Cable)"));
-        Assert.True(DeviceRules.IsVirtualCable("CABLE Output (VB-Audio Virtual Cable)"));
-        Assert.True(DeviceRules.IsVirtualCable("cable output (vb-audio virtual cable)"));
-        Assert.False(DeviceRules.IsVirtualCable("Speakers"));
-        Assert.False(DeviceRules.IsVirtualCable(""));
-        Assert.False(DeviceRules.IsVirtualCable(null!));
+        Assert.True(DeviceRules.IsVirtualCable(Vb, "CABLE Input (VB-Audio Virtual Cable)"));
+        Assert.True(DeviceRules.IsVirtualCable(Vb, "CABLE Output (VB-Audio Virtual Cable)"));
+        Assert.True(DeviceRules.IsVirtualCable(Vb, "cable output (vb-audio virtual cable)"));
+        Assert.False(DeviceRules.IsVirtualCable(Vb, "Speakers"));
+        Assert.False(DeviceRules.IsVirtualCable(Vb, ""));
+        Assert.False(DeviceRules.IsVirtualCable(Vb, null!));
     }
 
     // ---------- picking devices ----------
@@ -75,7 +77,7 @@ public class DeviceRulesTests
     public void MicPicker_SavedMicConnected_IsUsed()
     {
         var inputs = new[] { D("Mic A", isDefault: true), D("Mic B") };
-        var pick = new MicPicker().Pick("mic b", inputs, T0);
+        var pick = new MicPicker(Vb).Pick("mic b", inputs, T0);
         Assert.Equal(new MicPick("mic b", false, "Mic B"), pick);
     }
 
@@ -83,15 +85,15 @@ public class DeviceRulesTests
     public void MicPicker_NoChoice_UsesTheDefaultRealMic()
     {
         var inputs = new[] { D("CABLE Output (VB-Audio Virtual Cable)", isDefault: true), D("Mic B") };
-        Assert.Equal("mic b", new MicPicker().Pick(null, inputs, T0).Id);
-        Assert.Null(new MicPicker().Pick(null, new DeviceInfo[0], T0).Id);
+        Assert.Equal("mic b", new MicPicker(Vb).Pick(null, inputs, T0).Id);
+        Assert.Null(new MicPicker(Vb).Pick(null, new DeviceInfo[0], T0).Id);
     }
 
     [Fact]
     public void MicPicker_SavedCableEnd_IsIgnored()
     {
         var inputs = new[] { D("CABLE Output (VB-Audio Virtual Cable)"), D("Mic B", isDefault: true) };
-        var pick = new MicPicker().Pick("cable output (vb-audio virtual cable)", inputs, T0);
+        var pick = new MicPicker(Vb).Pick("cable output (vb-audio virtual cable)", inputs, T0);
         Assert.Equal("mic b", pick.Id);
         Assert.False(pick.Fallback);
     }
@@ -99,7 +101,7 @@ public class DeviceRulesTests
     [Fact]
     public void MicPicker_SavedMicGone_KeepsTryingThenFallsBackAfterTenSeconds()
     {
-        var picker = new MicPicker();
+        var picker = new MicPicker(Vb);
         var inputs = new[] { D("Laptop mic", isDefault: true) };
         Assert.Equal(new MicPick("usb mic", false, null), picker.Pick("usb mic", inputs, T0));
         Assert.Equal("usb mic", picker.Pick("usb mic", inputs, T0.AddSeconds(9)).Id);
@@ -118,7 +120,7 @@ public class DeviceRulesTests
     [Fact]
     public void MicPicker_SavedMicGone_NoOtherMic_KeepsTheChoice()
     {
-        var pick = new MicPicker().Pick("usb mic", new[] { D("CABLE Output (VB-Audio Virtual Cable)") }, T0.AddMinutes(5));
+        var pick = new MicPicker(Vb).Pick("usb mic", new[] { D("CABLE Output (VB-Audio Virtual Cable)") }, T0.AddMinutes(5));
         Assert.Equal("usb mic", pick.Id);
         Assert.False(pick.Fallback);
     }
@@ -127,20 +129,20 @@ public class DeviceRulesTests
     public void PickMonitor_DefaultRealOutput_NeverTheCallOrTheCable()
     {
         var outputs = new[] { D("CABLE Input (VB-Audio Virtual Cable)", isDefault: true), D("Speakers"), D("Headphones") };
-        Assert.Equal("speakers", DeviceRules.PickMonitor(null, outputs, "cable input (vb-audio virtual cable)"));
-        Assert.Equal("headphones", DeviceRules.PickMonitor("headphones", outputs, null));
-        Assert.Null(DeviceRules.PickMonitor("speakers", outputs, "speakers")); // never into the call
-        Assert.Null(DeviceRules.PickMonitor("unplugged", outputs, null));
-        Assert.Null(DeviceRules.PickMonitor(null, new[] { D("CABLE Input (VB-Audio Virtual Cable)") }, null));
+        Assert.Equal("speakers", DeviceRules.PickMonitor(Vb, null, outputs, "cable input (vb-audio virtual cable)"));
+        Assert.Equal("headphones", DeviceRules.PickMonitor(Vb, "headphones", outputs, null));
+        Assert.Null(DeviceRules.PickMonitor(Vb, "speakers", outputs, "speakers")); // never into the call
+        Assert.Null(DeviceRules.PickMonitor(Vb, "unplugged", outputs, null));
+        Assert.Null(DeviceRules.PickMonitor(Vb, null, new[] { D("CABLE Input (VB-Audio Virtual Cable)") }, null));
     }
 
     [Fact]
     public void PickCall_SavedOrTheCable()
     {
         var outputs = new[] { D("Speakers"), D("CABLE Input (VB-Audio Virtual Cable)") };
-        Assert.Equal("cable input (vb-audio virtual cable)", DeviceRules.PickCall(null, outputs));
-        Assert.Equal("mine", DeviceRules.PickCall("mine", outputs));
-        Assert.Null(DeviceRules.PickCall(null, new[] { D("Speakers") }));
+        Assert.Equal("cable input (vb-audio virtual cable)", DeviceRules.PickCall(Vb, null, outputs));
+        Assert.Equal("mine", DeviceRules.PickCall(Vb, "mine", outputs));
+        Assert.Null(DeviceRules.PickCall(Vb, null, new[] { D("Speakers") }));
     }
 
     [Fact]
@@ -166,7 +168,7 @@ public class DeviceRulesTests
     [Fact]
     public void ShouldSwitchMic_StandInSession_SwitchesBackWhenTheChosenMicReturns()
     {
-        var picker = new MicPicker();
+        var picker = new MicPicker(Vb);
         var standInOnly = new[] { D("Laptop mic", isDefault: true) };
         picker.Pick("usb mic", standInOnly, T0);
         var standIn = picker.Pick("usb mic", standInOnly, T0.AddSeconds(10));
@@ -175,5 +177,50 @@ public class DeviceRulesTests
 
         var back = new[] { D("Laptop mic", isDefault: true), D("USB mic") };
         Assert.True(AudioRoutes.ShouldSwitchMic(standIn.Id, picker.Pick("usb mic", back, T0.AddSeconds(40))));
+    }
+
+    // ---------- other platforms' cables ----------
+
+    [Fact]
+    public void BlackHole_IsTheCallDevice_AndNeverAMicOrHeadphones()
+    {
+        var bh = CableNames.BlackHole;
+        var outputs = new[]
+        {
+            new DeviceInfo("bh2", "BlackHole 2ch", true), // the system default may be the cable
+            new DeviceInfo("mbp", "MacBook Pro Speakers", false),
+            new DeviceInfo("bh16", "BlackHole 16ch", false),
+        };
+        Assert.Equal("bh2", DeviceRules.FindVirtualCable(bh, outputs)?.Id);
+        Assert.Equal("mbp", DeviceRules.PickMonitor(bh, null, outputs, "bh2"));
+        Assert.Equal(new[] { "mbp" }, DeviceRules.ExcludeVirtualCable(bh, outputs).Select(d => d.Id));
+        var inputs = new[] { new DeviceInfo("bh2", "BlackHole 2ch", true), new DeviceInfo("mic", "MacBook Pro Microphone", false) };
+        Assert.Equal("mic", DeviceRules.DefaultMic(bh, inputs)?.Id);
+        Assert.Equal("mic", new MicPicker(bh).Pick("bh2", inputs, T0).Id); // a saved pick of the cable is ignored
+        // VB-CABLE's names mean nothing on a Mac, and BlackHole's nothing on Windows.
+        Assert.Null(DeviceRules.FindVirtualCable(bh, new[] { new DeviceInfo("vb", "CABLE Input (VB-Audio Virtual Cable)", false) }));
+        Assert.Null(DeviceRules.FindVirtualCable(Vb, outputs));
+    }
+
+    [Fact]
+    public void LinuxDevices_TheSinkTakesTheVoice_ItsMonitorAndTheMicAreNeverPicked()
+    {
+        var ev = CableNames.EasyVocalLinux;
+        var outputs = new[]
+        {
+            new DeviceInfo("alsa_output.pci.analog-stereo", "Built-in Audio Analog Stereo", true),
+            new DeviceInfo("easyvocal_out", "EasyVocal-Output", false),
+        };
+        var inputs = new[]
+        {
+            new DeviceInfo("easyvocal_mic", "EasyVocal-Microphone", true),
+            new DeviceInfo("easyvocal_out.monitor", "Monitor of EasyVocal-Output", false),
+            new DeviceInfo("alsa_input.usb-mic", "USB Microphone", false),
+        };
+        Assert.Equal("easyvocal_out", DeviceRules.FindVirtualCable(ev, outputs)?.Id);
+        Assert.Equal("alsa_output.pci.analog-stereo", DeviceRules.PickMonitor(ev, null, outputs, "easyvocal_out"));
+        Assert.Equal("alsa_input.usb-mic", DeviceRules.DefaultMic(ev, inputs)?.Id);
+        Assert.Equal(new[] { "alsa_input.usb-mic" }, DeviceRules.ExcludeVirtualCable(ev, inputs).Select(d => d.Id));
+        Assert.True(DefaultDeviceRules.TakenByCable(ev, new DefaultIds("easyvocal_out", "easyvocal_out"), outputs));
     }
 }

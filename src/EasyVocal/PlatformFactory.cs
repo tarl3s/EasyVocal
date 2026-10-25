@@ -79,7 +79,9 @@ internal static class PlatformFactory
             UiText.Mark("EasyVocal sends your voice to calls through a virtual microphone."),
             "", "", "", "", UiText.Mark("Automatic"), "");
         public string PageUrl => "https://github.com/tarl3s/EasyVocal";
-        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(outputs);
+        public CableNames Cable => CableNames.VbCable;
+
+        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(Cable, outputs);
         public bool CanInstall => false;
         public bool TakesDefaultsOnInstall => false;
         public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) =>

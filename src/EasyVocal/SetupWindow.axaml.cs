@@ -229,7 +229,7 @@ public partial class SetupWindow : AppWindow
     private void FillMics()
     {
         var inputs = controller.Devices.Inputs();
-        var mics = DeviceRules.ExcludeVirtualCable(inputs);
+        var mics = DeviceRules.ExcludeVirtualCable(controller.Platform.VirtualMic.Cable, inputs);
         var fingerprint = string.Join("|", mics.Select(m => m.Id)) + "#" + controller.Settings.MicDeviceId;
         if (fingerprint == micFingerprint) return;
         micFingerprint = fingerprint;
@@ -252,7 +252,7 @@ public partial class SetupWindow : AppWindow
     {
         meter?.Dispose();
         meter = null;
-        var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(inputs)?.Id;
+        var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(controller.Platform.VirtualMic.Cable, inputs)?.Id;
         if (id != null) meter = new MicMeter(controller.Devices, id); // an unplugged choice can't be opened: the bar just stays empty
     }
 

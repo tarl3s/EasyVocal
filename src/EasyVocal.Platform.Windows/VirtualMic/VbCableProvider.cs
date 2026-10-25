@@ -24,7 +24,9 @@ public sealed class VbCableProvider : IVirtualMicProvider
 
     public string PageUrl => VbCableInstaller.PageUrl;
 
-    public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(outputs);
+    public CableNames Cable => CableNames.VbCable;
+
+    public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(Cable, outputs);
 
     public bool CanInstall => true;
 
