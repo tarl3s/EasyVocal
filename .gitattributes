@@ -1,0 +1,5 @@
+# Test fixtures are audio: never touch their bytes.
+*.mp3 binary
+*.ogg binary
+*.flac binary
+*.wav binary
