@@ -94,24 +94,24 @@ public class SingleInstanceTests : IDisposable
     }
 
     [Fact]
-    public async Task Portable_AHeldLock_WaitsForTheRunningEasyVocalsPipeToAppear()
+    public void Portable_AHeldLock_WaitsForTheRunningEasyVocalsPipeToAppear()
     {
         var names = WithPipeFile(out var pipeFile);
         using var held = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         int got = -1;
-        // The first EasyVocal took the lock a moment ago and is only now starting its listener.
-        var listener = Task.Run(async () =>
+        // The first EasyVocal took the lock a moment ago and is only now starting its listener (a thread of its own:
+        // the thread pool is busy while the test projects start).
+        var listener = new Thread(() =>
         {
-            await Task.Delay(200);
-            using var server = new System.IO.Pipes.NamedPipeServerStream(names.PipeName, System.IO.Pipes.PipeDirection.In, 1,
-                System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+            Thread.Sleep(200);
+            using var server = new System.IO.Pipes.NamedPipeServerStream(names.PipeName, System.IO.Pipes.PipeDirection.In, 1);
             File.WriteAllText(pipeFile, "");
-            using var patience = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await server.WaitForConnectionAsync(patience.Token);
+            server.WaitForConnection();
             got = server.ReadByte();
-        });
+        }) { IsBackground = true };
+        listener.Start();
         Assert.Null(SingleInstance.TryAcquire(names)); // a quick double launch: the second one leaves
-        await listener.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(listener.Join(TimeSpan.FromSeconds(10)), "the pretend first EasyVocal got the knock");
         Assert.Equal(1, got); // and asked the first to show its window
     }
 
