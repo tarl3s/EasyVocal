@@ -18,9 +18,16 @@ public static class L
 
     private static Dictionary<string, string> table = new(StringComparer.Ordinal);
     private static string language = "en";
+    private static CultureInfo culture = CultureInfo.InvariantCulture;
 
     /// <summary>"en" or the code of the loaded table (e.g. "pt-BR").</summary>
     public static string Language => Volatile.Read(ref language);
+
+    /// <summary>
+    /// How numbers are written in the UI's language rather than Windows' (an English UI shows "1.5" on a Brazilian
+    /// PC): the loaded language's culture, the invariant one for English.
+    /// </summary>
+    public static CultureInfo Culture => Volatile.Read(ref culture);
 
     /// <summary>
     /// Loads a translation table (a JSON object "English": "translation"; keys starting with "_" are notes).
@@ -29,8 +36,17 @@ public static class L
     public static void Load(string? json, string language = "en")
     {
         var t = Parse(json);
+        var code = json == null ? "en" : language;
         Volatile.Write(ref table, t);
-        Volatile.Write(ref L.language, json == null ? "en" : language);
+        Volatile.Write(ref L.language, code);
+        Volatile.Write(ref culture, CultureFor(code));
+    }
+
+    private static CultureInfo CultureFor(string code)
+    {
+        if (code == "en") return CultureInfo.InvariantCulture;
+        try { return CultureInfo.GetCultureInfo(code); }
+        catch (CultureNotFoundException) { return CultureInfo.InvariantCulture; }
     }
 
     /// <summary>The language to use for a setting: "pt-BR" or "en" as chosen, "auto" follows Windows' display language.</summary>
@@ -49,18 +65,21 @@ public static class L
         return Volatile.Read(ref table).TryGetValue(english, out var t) ? t : english;
     }
 
-    /// <summary><see cref="T"/> of the pattern, formatted; a translation that can't be formatted falls back to English.</summary>
+    /// <summary>
+    /// <see cref="T"/> of the pattern, formatted with <see cref="Culture"/>; a translation that can't be formatted
+    /// falls back to English.
+    /// </summary>
     public static string F(string englishFormat, params object[] args)
     {
         if (englishFormat == null) return "";
         var pattern = T(englishFormat);
         try
         {
-            return string.Format(CultureInfo.CurrentCulture, pattern, args);
+            return string.Format(Culture, pattern, args);
         }
         catch (FormatException)
         {
-            try { return string.Format(CultureInfo.CurrentCulture, englishFormat, args); }
+            try { return string.Format(Culture, englishFormat, args); }
             catch (FormatException) { return englishFormat; }
         }
     }

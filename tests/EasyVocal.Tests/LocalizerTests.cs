@@ -33,6 +33,27 @@ public class LocalizerTests
     }
 
     [Fact]
+    public void Numbers_FollowTheUiLanguage_NotWindows()
+    {
+        var windows = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("pt-BR"); // a Brazilian PC…
+            L.Load(null);                                          // …with the UI in English
+            Assert.Equal("1.5×", 1.5.ToString("0.##", L.Culture) + "×");
+            Assert.Equal("2.5 s", L.F("{0} s", 2.5));
+            L.Load("{ \"Voices\": \"Vozes\" }", "pt-BR");
+            Assert.Equal("1,5", 1.5.ToString("0.##", L.Culture));
+            Assert.Equal("2,5 s", L.F("{0} s", 2.5));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = windows;
+            L.Load(null);
+        }
+    }
+
+    [Fact]
     public void F_FormatsTranslatedPattern()
     {
         try

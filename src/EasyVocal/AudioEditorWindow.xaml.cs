@@ -95,7 +95,7 @@ public partial class AudioEditorWindow : Window
     private void FillChoices()
     {
         foreach (var s in AudioEdit.Speeds)
-            SpeedBox.Items.Add(new ComboBoxItem { Content = s.ToString("0.##", System.Globalization.CultureInfo.CurrentCulture) + "×", Tag = s });
+            SpeedBox.Items.Add(new ComboBoxItem { Content = s.ToString("0.##", L.Culture) + "×", Tag = s });
         SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.5);
         SpeedModeBox.Items.Add(new ComboBoxItem { Content = L.T("Keep the pitch"), Tag = true });
         SpeedModeBox.Items.Add(new ComboBoxItem { Content = L.T("Change the pitch too"), Tag = false });
@@ -128,7 +128,7 @@ public partial class AudioEditorWindow : Window
         if (sel)
             info += "   ·   " + L.F("Picked {0} – {1} ({2} s)", WaveformView.Time(Wave.SelectionStart),
                 WaveformView.Time(Wave.SelectionStart + Wave.SelectionLength),
-                (Wave.SelectionLength / (double)Sr).ToString("0.0", System.Globalization.CultureInfo.CurrentCulture));
+                (Wave.SelectionLength / (double)Sr).ToString("0.0", L.Culture));
         else if (any) info += "   ·   " + L.F("Cursor at {0}", WaveformView.Time(Wave.CursorPosition));
         InfoText.Text = info;
 
