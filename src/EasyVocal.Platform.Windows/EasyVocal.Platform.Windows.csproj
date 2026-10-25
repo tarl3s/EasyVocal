@@ -2,12 +2,15 @@
 
   <!-- Everything EasyVocal needs from Windows, behind EasyVocal.Core.Platform's interfaces: WASAPI devices and Windows'
        default devices, Media Foundation decoding / MP3 export, RegisterHotKey, the Run key, the Start menu shortcut,
-       VB-CABLE's installer (with its Authenticode check) and the updater's PowerShell helper. No WPF. -->
+       VB-CABLE's installer (with its Authenticode check) and the updater's PowerShell helper. No UI framework.
+       Plain net8.0 marked Windows-only (SupportedOSPlatform below): the portable app references it on every OS and only
+       uses it when OperatingSystem.IsWindows() (the CA1416 analyzer checks every call is guarded). -->
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- NAudio (its net6.0 build, no WinForms): WASAPI, Media Foundation, ACM. -->
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
@@ -18,6 +21,9 @@
   <ItemGroup>
     <Using Include="EasyVocal.Core.Logging" />
     <InternalsVisibleTo Include="EasyVocal.Tests.Windows" />
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>windows</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>
