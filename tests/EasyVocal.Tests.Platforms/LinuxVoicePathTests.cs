@@ -107,12 +107,12 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 double ratio = Math.Pow(2, sliders.Clamp().Pitch);
                 var a = VoiceFeatures.Measure(padded, PadTo(input, reference.Length), latency, ratio);
                 var b = VoiceFeatures.Measure(reference, PadTo(input, reference.Length), latency, ratio);
-                int gaps = Dropouts(real, input.Length + latency), gapsOffline = Dropouts(reference, input.Length + latency);
+                int gaps = Dropouts(padded, reference, input.Length + latency);
                 var differences = Differences(a, b);
                 output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps} (offline {gapsOffline})\n   real    {a}\n   offline {b}"));
+                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps}\n   real    {a}\n   offline {b}"));
                 if (differences.Count > 0) failures.Add(voices[v].Id + " sounds different: " + string.Join(", ", differences));
-                if (gaps > gapsOffline) failures.Add($"{voices[v].Id}: {gaps - gapsOffline} dropouts");
+                if (gaps > 0) failures.Add($"{voices[v].Id}: {gaps} dropouts");
             }
             Assert.True(failures.Count == 0, string.Join("; ", failures));
         }
@@ -226,16 +226,22 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         return fine;
     }
 
-    /// <summary>Stretches of exact silence (5 ms or more) inside sound: what a queue that ran dry leaves.</summary>
-    private static int Dropouts(float[] x, int length)
+    /// <summary>
+    /// Holes in the real path: 5 ms stretches where the offline render has sound and the recording (lined up with it)
+    /// has next to none, as a queue that ran dry leaves. Neighbouring stretches count once.
+    /// </summary>
+    private static int Dropouts(float[] real, float[] reference, int length)
     {
-        int gaps = 0, run = 0;
-        bool sound = false;
-        for (int i = 0; i < Math.Min(length, x.Length); i++)
+        const int W = Sr / 200;
+        int gaps = 0;
+        bool inGap = false;
+        for (int at = 0; at + W <= Math.Min(length, Math.Min(real.Length, reference.Length)); at += W)
         {
-            if (Math.Abs(x[i]) > 1e-3f) { if (sound && run >= Sr / 200 && run < Sr / 10) gaps++; sound = true; run = 0; }
-            else if (x[i] == 0) run++;
-            else run = 0;
+            double r = 0, o = 0;
+            for (int i = at; i < at + W; i++) { r += real[i] * real[i]; o += reference[i] * reference[i]; }
+            bool hole = o / W > 1e-4 && r < 0.01 * o;
+            if (hole && !inGap) gaps++;
+            inGap = hole;
         }
         return gaps;
     }

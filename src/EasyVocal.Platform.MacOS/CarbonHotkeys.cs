@@ -153,7 +153,11 @@ public sealed unsafe class CarbonHotkeys : IGlobalHotkeys, IHotkeyTestHooks
         if (disposed || MacKeys.KeyCode(key.VirtualKey) is not { } code) return false;
         uint id = nextId++;
         int status = RegisterEventHotKey(code, MacKeys.Modifiers(key.Mods), new EventHotKeyId { Signature = Signature, Id = id }, target, Exclusive, out var hotKey);
-        if (status != 0) return false;
+        if (status != 0)
+        {
+            AppLog.Info("RegisterEventHotKey(" + key + ") refused: " + status + (status == HotKeyExists ? " (another app has it)" : ""));
+            return false;
+        }
         registered[id] = (actionId, hotKey);
         return true;
     }
