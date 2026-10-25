@@ -42,3 +42,48 @@ internal static class Ui
         return null;
     }
 }
+
+/// <summary>
+/// A mouse the tests move: presses, moves and releases raised on a control the way the platform raises them (with
+/// pointer capture), at points in that control's own coordinates (off it too).
+/// </summary>
+internal sealed class TestMouse
+{
+    private readonly Avalonia.Input.Pointer pointer = new(Avalonia.Input.Pointer.GetNextFreeId(), Avalonia.Input.PointerType.Mouse, true);
+    private ulong time = 1;
+
+    public Avalonia.Input.IInputElement? Captured => pointer.Captured;
+
+    private (Avalonia.Visual Root, Avalonia.Point At) Where(Control target, Avalonia.Point local)
+    {
+        var root = (Avalonia.Visual)(target.GetVisualRoot() ?? throw new InvalidOperationException("not on screen"));
+        return (root, Avalonia.VisualExtensions.TranslatePoint(target, local, root) ?? local);
+    }
+
+    private static Avalonia.Input.PointerPointProperties Props(bool left, Avalonia.Input.PointerUpdateKind kind) =>
+        new(left ? Avalonia.Input.RawInputModifiers.LeftMouseButton : Avalonia.Input.RawInputModifiers.None, kind);
+
+    public void Press(Control target, Avalonia.Point local)
+    {
+        var (root, at) = Where(target, local);
+        target.RaiseEvent(new Avalonia.Input.PointerPressedEventArgs(target, pointer, root, at, time++,
+            Props(true, Avalonia.Input.PointerUpdateKind.LeftButtonPressed), Avalonia.Input.KeyModifiers.None));
+    }
+
+    /// <summary>A move over <paramref name="target"/> (the captured control gets it while there is one, as on screen).</summary>
+    public void Move(Control target, Avalonia.Point local, bool leftDown)
+    {
+        var to = pointer.Captured as Control ?? target;
+        var (root, at) = Where(target, local);
+        to.RaiseEvent(new Avalonia.Input.PointerEventArgs(Avalonia.Input.InputElement.PointerMovedEvent, to, pointer, root, at, time++,
+            Props(leftDown, Avalonia.Input.PointerUpdateKind.Other), Avalonia.Input.KeyModifiers.None));
+    }
+
+    public void Release(Control target, Avalonia.Point local)
+    {
+        var to = pointer.Captured as Control ?? target;
+        var (root, at) = Where(target, local);
+        to.RaiseEvent(new Avalonia.Input.PointerReleasedEventArgs(to, pointer, root, at, time++,
+            Props(false, Avalonia.Input.PointerUpdateKind.LeftButtonReleased), Avalonia.Input.KeyModifiers.None, Avalonia.Input.MouseButton.Left));
+    }
+}

@@ -100,8 +100,13 @@ internal sealed partial class AppSession
             Check(w.Current.Length == Sr, "'Keep only this' keeps the picked part");
             Press(w.UndoButton);
 
+            await SmokeEditorMouse(w);
+            await SmokeEditorRetunes(w, len);
+
             // Every other edit, on the whole sound.
             w.PlaceCursorForTest(0);
+            w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.5);
+            w.VoiceBox.SelectedIndex = 1; // a real voice (Normal is first)
             Press(w.SpeedButton); // 1.5×, keeping the pitch
             await w.IdleAsync();
             Check(Math.Abs(w.Current.Length - len / 1.5) < 4, "Speed 1.5× makes it 1.5 times shorter");
@@ -195,6 +200,103 @@ internal sealed partial class AppSession
     /// A new sound saved with edited audio whose copy can't be written (a folder is in the way): the person is told,
     /// and the sound is added playing its own file, not the edited audio.
     /// </summary>
+    /// <summary>
+    /// The mouse on the wave: a dragged part stays picked when the mouse goes off the wave (on to a tool), whether the
+    /// release comes off the wave or never comes (X11); a tool works on it; Esc drops it.
+    /// </summary>
+    private async Task SmokeEditorMouse(AudioEditorWindow w)
+    {
+        await Settle(w);
+        var mouse = new TestMouse();
+        double ww = w.Wave.Bounds.Width, wh = w.Wave.Bounds.Height;
+        w.PlaceCursorForTest(0);
+        mouse.Press(w.Wave, new Point(ww * 0.2, wh / 2));
+        mouse.Move(w.Wave, new Point(ww * 0.4, wh / 2), leftDown: true);
+        mouse.Move(w.Wave, new Point(ww * 0.45, wh + 40), leftDown: true); // down off the wave, still holding the button
+        mouse.Release(w.Wave, new Point(ww * 0.45, wh + 40));
+        int start = w.Wave.SelectionStart, count = w.Wave.SelectionLength;
+        Check(count > Sr / 10 && mouse.Captured == null, "a drag on the wave picks a part (released off the wave)");
+        mouse.Move(w.Wave, new Point(ww * 0.8, wh / 2), leftDown: false); // on its way to the tools, over the wave
+        mouse.Move(w.Wave, new Point(ww * 0.9, wh + 80), leftDown: false);
+        Check(w.Wave.SelectionStart == start && w.Wave.SelectionLength == count, "moving the mouse off the wave keeps the picked part");
+
+        // A release that never arrived: the next move with the button up ends the drag where it was.
+        mouse.Press(w.Wave, new Point(ww * 0.1, wh / 2));
+        mouse.Move(w.Wave, new Point(ww * 0.3, wh / 2), leftDown: true);
+        start = w.Wave.SelectionStart;
+        count = w.Wave.SelectionLength;
+        mouse.Move(w.Wave, new Point(ww * 0.7, wh / 2), leftDown: false);
+        mouse.Move(w.Wave, new Point(ww * 0.7, wh + 80), leftDown: false);
+        Check(count > 0 && w.Wave.SelectionStart == start && w.Wave.SelectionLength == count && mouse.Captured == null,
+            "a drag whose release was lost keeps the part it had");
+
+        var before = w.Current;
+        int steps = w.History.UndoCount;
+        Press(w.ReverseButton);
+        await w.IdleAsync();
+        var part = AudioEdit.Slice(w.Current, start, count);
+        Check(w.History.UndoCount == steps + 1 && w.Wave.SelectionStart == start && w.Wave.SelectionLength == count
+              && part.AsSpan().SequenceEqual(AudioEdit.Reverse(AudioEdit.Slice(before, start, count))),
+            "a tool works on the picked part, which stays picked");
+        Press(w.UndoButton);
+
+        w.RaiseEvent(new Avalonia.Input.KeyEventArgs { RoutedEvent = Avalonia.Input.InputElement.KeyDownEvent, Key = Avalonia.Input.Key.Escape, Source = w });
+        Check(!w.Wave.HasSelection && w.IsVisible, "Esc drops the picked part (and leaves the editor open)");
+    }
+
+    /// <summary>Speed, pitch and voice changes in a row on one part are made from the part before the first one.</summary>
+    private async Task SmokeEditorRetunes(AudioEditorWindow w, int len)
+    {
+        var original = w.Current;
+        int steps = w.History.UndoCount;
+        w.SelectForTest(Sr / 2, Sr);
+        Check(Picked(w.SpeedBox) == 1.0, "the speed list starts at 1×");
+        foreach (double speed in new[] { 0.75, 0.5, 2 })
+        {
+            w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, speed);
+            Press(w.SpeedButton);
+            await w.IdleAsync();
+        }
+        Check(w.History.UndoCount == steps + 3 && Math.Abs(w.Wave.SelectionLength - Sr / 2) < 4 && Math.Abs(w.Current.Length - (len - Sr / 2)) < 4
+              && Picked(w.SpeedBox) == 2.0,
+            "0.75× then 0.5× then 2× makes the part 2× of the original (and the list shows 2×)");
+        w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.0);
+        Press(w.SpeedButton);
+        await w.IdleAsync();
+        Check(w.Current.AsSpan().SequenceEqual(original) && w.Wave.SelectionLength == Sr, "1× gives the part its own speed back");
+
+        w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 3);
+        Press(w.HigherButton);
+        await w.IdleAsync();
+        Press(w.HigherButton);
+        await w.IdleAsync();
+        w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 5);
+        Press(w.LowerButton);
+        await w.IdleAsync();
+        Check(w.Current.AsSpan().SequenceEqual(AudioEdit.Splice(original, Sr / 2, Sr, AudioEdit.ShiftPitch(AudioEdit.Slice(original, Sr / 2, Sr), 1))),
+            "higher 3, higher 3, lower 5 is one step higher, made once from the part before");
+
+        w.SelectForTest(Sr / 2, Sr);
+        Check(w.VoiceBox.SelectedIndex == 0 && w.VoiceBox.Items.Count > 2, "the voice list starts with Normal");
+        var beforeVoice = w.Current;
+        w.VoiceBox.SelectedIndex = 1;
+        Press(w.VoiceButton);
+        await w.IdleAsync();
+        bool changed = !w.Current.AsSpan().SequenceEqual(beforeVoice);
+        w.VoiceBox.SelectedIndex = 2;
+        Press(w.VoiceButton);
+        await w.IdleAsync();
+        w.VoiceBox.SelectedIndex = 0;
+        Press(w.VoiceButton);
+        await w.IdleAsync();
+        Check(changed && w.Current.AsSpan().SequenceEqual(beforeVoice) && w.Wave.SelectionLength == Sr,
+            "a voice, another voice, then Normal gives the part back without any voice");
+        while (w.History.UndoCount > steps) Press(w.UndoButton);
+        w.PlaceCursorForTest(0);
+    }
+
+    private static double Picked(ComboBox box) => box.SelectedItem is ComboBoxItem { Tag: double v } ? v : double.NaN;
+
     private async Task SmokeEditedCopyFails(MainWindow main, AppController c, string dataFolder)
     {
         var source = Path.Combine(dataFolder, "smoke unsaved.wav");

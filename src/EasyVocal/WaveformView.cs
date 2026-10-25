@@ -233,7 +233,14 @@ public sealed class WaveformView : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (dragAnchor < 0 || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        if (dragAnchor < 0) return;
+        // Only a drag that started on the wave and still holds it changes the picked part. A release that never came
+        // (on X11 it can go elsewhere) or a lost capture ends the drag where it was: moving on to a tool keeps the part.
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed || !ReferenceEquals(e.Pointer.Captured, this))
+        {
+            EndDrag(e.Pointer);
+            return;
+        }
         var p = e.GetPosition(this);
         if (!dragging && Math.Abs(p.X - dragFrom.X) < 3) return;
         dragging = true;
@@ -258,11 +265,19 @@ public sealed class WaveformView : Control
     {
         base.OnPointerReleased(e);
         if (dragAnchor < 0) return;
-        e.Pointer.Capture(null);
-        if (!dragging) PlaceCursor(dragAnchor);
+        // A click (no drag) on the wave places the cursor; a release off the wave changes nothing.
+        var p = e.GetPosition(this);
+        bool onWave = p.X >= 0 && p.Y >= 0 && p.X <= Bounds.Width && p.Y <= Bounds.Height;
+        if (!dragging && onWave) PlaceCursor(dragAnchor);
+        EndDrag(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void EndDrag(IPointer pointer)
+    {
         dragAnchor = -1;
         dragging = false;
-        e.Handled = true;
+        if (ReferenceEquals(pointer.Captured, this)) pointer.Capture(null);
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)

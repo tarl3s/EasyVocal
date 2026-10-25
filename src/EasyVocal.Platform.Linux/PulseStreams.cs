@@ -58,6 +58,15 @@ internal static unsafe class PulseSimple
         return s;
     }
 
+    /// <summary>One blocking read that fills <paramref name="buffer"/>: 0, or below 0 on failure (<paramref name="error"/>).</summary>
+    public static int Read(IntPtr s, float[] buffer, out int error)
+    {
+        int e = 0, r;
+        fixed (float* p = buffer) r = pa_simple_read(s, p, (nuint)(buffer.Length * sizeof(float)), &e);
+        error = e;
+        return r;
+    }
+
     public static string ErrorText(int error)
     {
         try { return Marshal.PtrToStringUTF8(pa_strerror(error)) ?? ("PulseAudio error " + error); }

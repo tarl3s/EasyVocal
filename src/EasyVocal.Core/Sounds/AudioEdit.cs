@@ -15,8 +15,8 @@ public static class AudioEdit
 {
     private const int Sr = AudioFormat.SampleRate;
 
-    /// <summary>The speeds the editor offers (1 = as it is; 2 = twice as fast, half as long).</summary>
-    public static readonly double[] Speeds = { 0.5, 0.75, 1.25, 1.5, 2 };
+    /// <summary>The speeds the editor offers (1 = as it is, also to undo a speed change; 2 = twice as fast, half as long).</summary>
+    public static readonly double[] Speeds = { 0.5, 0.75, 1, 1.25, 1.5, 2 };
 
     /// <summary>The pitch steps the editor offers, in semitones.</summary>
     public static readonly int[] PitchSteps = { 1, 2, 3, 5, 7, 12 };

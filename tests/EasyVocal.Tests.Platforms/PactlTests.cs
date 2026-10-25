@@ -484,7 +484,14 @@ public class PactlTests(ITestOutputHelper output)
             lock (output)
             {
                 output.WriteLine($"{blocks} blocks from the virtual microphone, loudest mean square {energy:0.0000}");
-                if (blocks <= 20) output.WriteLine("monitor blocks: " + Volatile.Read(ref monitorBlocks) + "\n" + PulseState());
+                if (blocks <= 20)
+                {
+                    output.WriteLine("monitor blocks: " + Volatile.Read(ref monitorBlocks));
+                    foreach (var priority in new[] { ThreadPriority.Normal, ThreadPriority.Highest })
+                        foreach (int bytes in new[] { 1920, 0 })
+                            output.WriteLine($"probe ({priority}, fragsize {bytes}): " + ProbeRead(PactlVirtualMic.SinkName + ".monitor", priority, bytes));
+                    output.WriteLine(PulseState());
+                }
                 Assert.True(blocks > 20, "the virtual microphone delivered audio");
                 Assert.True(energy > 0.01, "the tone played into EasyVocal-Output came out of EasyVocal-Microphone");
             }
@@ -495,6 +502,28 @@ public class PactlTests(ITestOutputHelper output)
         }
         Assert.DoesNotContain(backend.Outputs(), d => d.Id == PactlVirtualMic.SinkName);
         Assert.DoesNotContain(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName);
+    }
+
+    /// <summary>A failure's clue: one read of 10 ms on a new stream of its own thread.</summary>
+    private static string ProbeRead(string device, ThreadPriority priority, int blockBytes)
+    {
+        string result = "blocked";
+        var t = new Thread(() =>
+        {
+            try
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var s = PulseSimple.Open(PulseSimple.Record, device, "Probe", blockBytes == 0 ? 1920 : blockBytes);
+                var buffer = new float[blockBytes == 0 ? 4800 : 480];
+                int r = PulseSimple.Read(s, buffer, out int error);
+                result = $"read {r} error {error} after {watch.ElapsedMilliseconds} ms";
+                PulseSimple.pa_simple_free(s);
+            }
+            catch (Exception ex) { result = ex.GetType().Name + ": " + ex.Message; }
+        }) { IsBackground = true, Priority = priority };
+        t.Start();
+        t.Join(3000);
+        return result;
     }
 
     /// <summary>What the server has (for a failure's output): its devices, streams and modules.</summary>

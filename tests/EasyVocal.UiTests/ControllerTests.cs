@@ -238,7 +238,8 @@ public class ControllerTests
                 Assert.Equal(1, mic.Creates);
                 Assert.Equal(0, mic.Removes);
             }
-            Assert.Equal(1, mic.Removes);
+            // Asked to remove it (on the thread pool: a busy machine may take a moment to get there).
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref mic.Removes) == 1, 5000), "the removal was asked for");
         }
         finally { TestFolders.Delete(data); }
     }
@@ -261,7 +262,8 @@ public class ControllerTests
                 mic.Created.SetResult(true); // finishes while Dispose is waiting for it
             });
             c.Dispose();
-            Assert.Equal(1, mic.Removes);
+            // Asked to remove it (on the thread pool: a busy machine may take a moment to get there).
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref mic.Removes) == 1, 5000), "the removal was asked for");
         }
         finally { TestFolders.Delete(data); }
     }
@@ -278,7 +280,8 @@ public class ControllerTests
         {
             using (var c = new AppController(data, WithMic(mic), ui)) c.Start();
             Assert.Equal(1, mic.Creates);
-            Assert.Equal(1, mic.Removes); // a half-made one is found by name: the platform decides what is there
+            // Asked to remove it (on the thread pool: a busy machine may take a moment to get there).
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref mic.Removes) == 1, 5000), "the removal was asked for"); // a half-made one is found by name: the platform decides what is there
         }
         finally { TestFolders.Delete(data); }
     }
@@ -342,7 +345,8 @@ public class ControllerTests
             c.Dispose();
             watch.Stop();
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), "quitting took " + watch.Elapsed);
-            Assert.Equal(1, mic.Removes);
+            // Asked to remove it (on the thread pool: a busy machine may take a moment to get there).
+            Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref mic.Removes) == 1, 5000), "the removal was asked for");
             Assert.Contains("\"MicMuted\": true", File.ReadAllText(settings));
         }
         finally

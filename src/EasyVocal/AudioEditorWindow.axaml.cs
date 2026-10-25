@@ -98,7 +98,7 @@ public partial class AudioEditorWindow : AppWindow
     {
         foreach (var s in AudioEdit.Speeds)
             SpeedBox.Items.Add(new ComboBoxItem { Content = s.ToString("0.##", L.Culture) + "×", Tag = s });
-        SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.5);
+        SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.0);
         SpeedModeBox.Items.Add(new ComboBoxItem { Content = L.T("Keep the pitch"), Tag = true });
         SpeedModeBox.Items.Add(new ComboBoxItem { Content = L.T("Change the pitch too"), Tag = false });
         SpeedModeBox.SelectedIndex = 0;
@@ -108,6 +108,13 @@ public partial class AudioEditorWindow : AppWindow
             PitchBox.Items.Add(new ComboBoxItem { Content = text, Tag = n });
         }
         PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 3);
+        // Normal first: it gives the part back without the voice applied before (see Retune).
+        var normal = controller.Settings.Voices.FirstOrDefault(v => v.Id == AppController.NormalVoiceId);
+        VoiceBox.Items.Add(new ComboBoxItem
+        {
+            Content = (normal?.Emoji ?? "🙂") + "  " + (normal != null ? AppController.DisplayName(normal) : L.T("Normal")),
+            Tag = new VoiceSliders(),
+        });
         foreach (var v in controller.Settings.Voices)
         {
             if (v.Hidden || v.Kind != VoiceKind.Classic || v.Sliders.IsNeutral) continue;
@@ -289,6 +296,10 @@ public partial class AudioEditorWindow : AppWindow
                 Wave.Select(0, Current.Length);
                 e.Handled = true;
                 break;
+            case Key.Escape when Wave.HasSelection: // drops the picked part (a second Esc does what Esc does in a window)
+                Wave.PlaceCursor(Wave.SelectionStart);
+                e.Handled = true;
+                break;
             case Key.Space when focused is not Button:
                 if (playOffset >= 0) StopPlaying();
                 else if (Wave.HasSelection) PlayPartButton_Click(this, e);
@@ -309,11 +320,15 @@ public partial class AudioEditorWindow : AppWindow
     /// same, or empty). <paramref name="edit"/> returns the new sound and the part to select afterwards (count 0 =
     /// place the cursor there).
     /// </summary>
-    private async Task Edit(Func<float[], (float[] Samples, int SelStart, int SelCount)> edit)
+    /// <param name="from">The sound to edit when it isn't the one shown (a speed or pitch change redone from the sound
+    /// before the first one).</param>
+    /// <returns>True when a new undo step was made.</returns>
+    private async Task<bool> Edit(Func<float[], (float[] Samples, int SelStart, int SelCount)> edit, float[]? from = null)
     {
-        if (busy) return;
+        if (busy) return false;
         StopPlaying();
-        var input = Current;
+        var shown = Current;
+        var input = from ?? shown;
         busy = true;
         Status(L.T("Working…"));
         UpdateAll();
@@ -323,26 +338,28 @@ public partial class AudioEditorWindow : AppWindow
             var (result, selStart, selCount, same) = await Task.Run(() =>
             {
                 var (y, s, c) = edit(input);
-                return (y, s, c, y.AsSpan().SequenceEqual(input));
+                return (y, s, c, y.AsSpan().SequenceEqual(shown));
             });
             if (result.Length == 0)
             {
                 Status(L.T("That would leave the sound empty."));
-                return;
+                return false;
             }
             if (same)
             {
                 Status(L.T("That didn't change the sound."));
-                return; // no undo step for nothing
+                return false; // no undo step for nothing
             }
             history.Push(new AudioState(result, false));
             Show(history.Current, selStart, selCount);
             Status("");
+            return true;
         }
         catch (Exception ex)
         {
             AppLog.Error("A sound edit failed", ex);
             Status(L.T("Something went wrong with that change. Nothing was changed."));
+            return false;
         }
         finally
         {
@@ -431,21 +448,70 @@ public partial class AudioEditorWindow : AppWindow
     /// <summary>A split added two sounds (for the tests).</summary>
     internal bool SplitDone { get; private set; }
 
+    /// <summary>
+    /// A speed, pitch or voice change and what it was made from: the sound and the part before the first of a run of
+    /// such changes, and what they gave. While the sound shown is still that result (with the same part picked), the
+    /// next change of the same kind is made again from the sound before — 0.75× then 0.5× then 2× is 2× of the
+    /// original (never 0.75 × 0.5 × 2), 1× or the Normal voice give the part back as it was, and nothing is processed twice.
+    /// </summary>
+    private sealed record Retune(float[] Before, int Start, int Count, bool Picked, AudioState After, int AfterStart, int AfterCount);
+
+    private Retune? speedRun, pitchRun, voiceRun;
+    private int pitchTotal;
+
+    /// <summary>The run still applies: the sound shown is its result and the same part (or nothing) is picked.</summary>
+    private bool Continues(Retune? run) =>
+        run != null && ReferenceEquals(run.After, history.Current) && run.Picked == Wave.HasSelection &&
+        (!run.Picked || (Wave.SelectionStart == run.AfterStart && Wave.SelectionLength == run.AfterCount));
+
+    /// <summary>
+    /// <paramref name="op"/> (the whole sound, the part's start and length → the new sound and the part's new length)
+    /// on the sound before the run (a new run starts from what is shown); returns the run when an undo step was made.
+    /// </summary>
+    private async Task<Retune?> RetuneRun(Retune? run, Func<float[], int, int, (float[] Sound, int Count)> op)
+    {
+        if (!Continues(run))
+        {
+            var (s, c) = Target();
+            run = new Retune(Current, s, c, Wave.HasSelection, history.Current, s, c);
+        }
+        var r = run!;
+        bool made = await Edit(x =>
+        {
+            var (y, count) = op(x, r.Start, r.Count);
+            return r.Picked ? (y, r.Start, count) : (y, 0, 0);
+        }, r.Before);
+        return made ? r with { After = history.Current, AfterStart = Wave.SelectionStart, AfterCount = Wave.SelectionLength } : null;
+    }
+
+    /// <summary><see cref="RetuneRun"/> with an edit of the part alone (its length may change).</summary>
+    private Task<Retune?> RetuneRange(Retune? run, Func<float[], float[]> op) => RetuneRun(run, (x, start, count) =>
+    {
+        var part = op(AudioEdit.Slice(x, start, count));
+        return (AudioEdit.Splice(x, start, count, part), part.Length);
+    });
+
+    /// <summary>The speed the box shows is the speed the part has now (of the sound before the run).</summary>
     private async void SpeedButton_Click(object? sender, RoutedEventArgs e)
     {
-        double speed = Picked(SpeedBox, 1.5);
+        double speed = Picked(SpeedBox, 1.0);
         bool keep = Picked(SpeedModeBox, true);
-        await EditRange(p => AudioEdit.ChangeSpeed(p, speed, keep));
+        var run = await RetuneRange(speedRun, p => AudioEdit.ChangeSpeed(p, speed, keep));
+        if (run != null) speedRun = run;
     }
 
     private async void HigherButton_Click(object? sender, RoutedEventArgs e) => await Pitch(+1);
 
     private async void LowerButton_Click(object? sender, RoutedEventArgs e) => await Pitch(-1);
 
-    private Task Pitch(int sign)
+    /// <summary>Higher / lower add up (3 up then 5 down = 2 down), always made in one go from the sound before the run.</summary>
+    private async Task Pitch(int sign)
     {
-        int steps = Picked(PitchBox, 3);
-        return EditRange(p => AudioEdit.ShiftPitch(p, sign * steps));
+        int total = (Continues(pitchRun) ? pitchTotal : 0) + sign * Picked(PitchBox, 3);
+        var run = await RetuneRange(pitchRun, p => total == 0 ? p : AudioEdit.ShiftPitch(p, total));
+        if (run == null) return;
+        pitchRun = run;
+        pitchTotal = total;
     }
 
     private async void LouderButton_Click(object? sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, AudioEdit.LouderFactor));
@@ -473,7 +539,9 @@ public partial class AudioEditorWindow : AppWindow
     private async void VoiceButton_Click(object? sender, RoutedEventArgs e)
     {
         if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
-        await EditPart((x, s, c) => AudioEdit.ApplyVoiceRange(x, s, c, sliders));
+        // Normal (neutral sliders) = the part without any voice applied in this run.
+        var run = await RetuneRun(voiceRun, (x, s, c) => (sliders.IsNeutral ? (float[])x.Clone() : AudioEdit.ApplyVoiceRange(x, s, c, sliders), c));
+        if (run != null) voiceRun = run;
     }
 
     /// <summary>
