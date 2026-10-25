@@ -134,6 +134,6 @@ jobs:
           path: downloads
       - name: Unpack, sign ad hoc and start the Apple silicon download
         env:
-          EV_SMOKE_RUNS: "3" # three in a row: a hang that happens now and then (one froze macOS) shows up
+          EV_SMOKE_RUNS: "5" # five in a row: a hang that happens now and then (one froze macOS) shows up
         run: sh tools/Test-Package.sh downloads/EasyVocal-macos-arm64.zip "$RUNNER_TEMP/macos-package"
 

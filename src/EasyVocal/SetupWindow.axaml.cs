@@ -30,6 +30,7 @@ public partial class SetupWindow : AppWindow
     private readonly Func<bool> cableProbe;
     private readonly DispatcherTimer meterTimer, waitTimer;
     private MicMeter? meter;
+    private bool meterFromEngine;
     private CancellationTokenSource? cancelInstall;
     private DateTime waitUntil;
     private string micFingerprint = "";
@@ -254,6 +255,10 @@ public partial class SetupWindow : AppWindow
         meter?.Dispose();
         meter = null;
         var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(controller.Platform.VirtualMic.Cable, inputs)?.Id;
+        // The running audio already listens to that microphone: its level, not a second stream of the same device
+        // (opening and closing one beside the voice's stream is what could freeze CoreAudio on a Mac).
+        meterFromEngine = id != null && id == controller.MicInUseId;
+        if (meterFromEngine) return;
         if (id != null) meter = new MicMeter(controller.Devices, id); // an unplugged choice can't be opened: the bar just stays empty
     }
 
@@ -271,7 +276,8 @@ public partial class SetupWindow : AppWindow
 
     private void UpdateMeter()
     {
-        meterShown = meter == null ? 0 : MicMeter.NextFill(meterShown, meter.TakeLevel());
+        float level = meterFromEngine ? controller.InputLevel : meter?.TakeLevel() ?? 0;
+        meterShown = !meterFromEngine && meter == null ? 0 : MicMeter.NextFill(meterShown, level);
         MeterBar.Width = Math.Max(0, MeterTrack.Bounds.Width * meterShown);
     }
 
