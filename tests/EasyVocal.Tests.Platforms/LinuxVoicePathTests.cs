@@ -108,14 +108,18 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 var a = VoiceFeatures.Measure(padded, PadTo(input, reference.Length), latency, ratio);
                 var b = VoiceFeatures.Measure(reference, PadTo(input, reference.Length), latency, ratio);
                 int gaps = Dropouts(padded, reference, input.Length + latency);
-                // What the voice itself does when the blocks fall elsewhere (Monster's rattle has deep dips that move): the same
-                // render started a few samples later (the real path's blocks fall anywhere), lined up again: the most of those.
-                int phase = new[] { 61, 173, 240, 397 }.Max(offset => Dropouts(Shifted(sliders, input, offset, reference.Length), reference, input.Length + latency));
+                if (v == 0)
+                {
+                    // The detector itself: 10 ms of silence in the middle of the first syllable is one dropout.
+                    var holed = (float[])reference.Clone();
+                    Array.Clear(holed, Sr / 10, Sr / 100);
+                    Assert.Equal(1, Dropouts(holed, reference, input.Length));
+                }
                 var differences = Differences(a, b);
                 output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps} (block phase alone {phase})\n   real    {a}\n   offline {b}"));
+                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps}\n   real    {a}\n   offline {b}"));
                 if (differences.Count > 0) failures.Add(voices[v].Id + " sounds different: " + string.Join(", ", differences));
-                if (gaps > phase + 1) failures.Add($"{voices[v].Id}: {gaps} dropouts ({phase} from the block phase alone)");
+                if (gaps > 0) failures.Add($"{voices[v].Id}: {gaps} dropouts");
             }
             Assert.True(failures.Count == 0, string.Join("; ", failures));
         }
@@ -174,17 +178,6 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         return o;
     }
 
-    /// <summary>The offline render with <paramref name="offset"/> samples of silence first, then those cut again.</summary>
-    private static float[] Shifted(VoiceSliders sliders, float[] input, int offset, int length)
-    {
-        var later = new float[input.Length + offset];
-        input.CopyTo(later, offset);
-        var o = Render(sliders, later, out _);
-        var back = new float[length];
-        Array.Copy(o, offset, back, 0, Math.Min(length, o.Length - offset));
-        return back;
-    }
-
     private static float[] PadTo(float[] x, int length)
     {
         var o = new float[length];
@@ -241,8 +234,9 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// Holes in the real path: 5 ms stretches where the offline render has sound and the recording (lined up with it)
-    /// has next to none, as a queue that ran dry leaves. Neighbouring stretches count once.
+    /// Holes in the real path: 5 ms stretches inside a syllable where the offline render has sound and the recording
+    /// (lined up with it) is silent, as a queue that ran dry leaves. Neighbouring stretches count once. (A voice's own dips,
+    /// which move with where the blocks fall, are far from silent.)
     /// </summary>
     private static int Dropouts(float[] real, float[] reference, int length)
     {
@@ -255,7 +249,7 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
             for (int i = at; i < at + W; i++) { r += real[i] * real[i]; o += reference[i] * reference[i]; }
             // Only inside a syllable (its edges move by a grain with where the blocks fall): sound 20 ms before and after.
             bool inside = Loud(reference, at - 4 * W, W) && Loud(reference, at + 4 * W, W);
-            bool hole = inside && o / W > 1e-4 && r < 0.01 * o;
+            bool hole = inside && o / W > 1e-4 && r / W < 1e-7; // sound offline, next to nothing (below -70 dB) here
             if (hole && !inGap) gaps++;
             inGap = hole;
         }
