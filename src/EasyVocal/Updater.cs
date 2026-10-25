@@ -377,7 +377,30 @@ public static class HelperScript
 
     /// <summary>The command line EasyVocal gets when the helper opens it again (e.g. <c>--data "C:\x y"</c>).</summary>
     public static string RelaunchArguments(string? dataFolder) =>
-        dataFolder == null ? "" : "--data \"" + Path.TrimEndingDirectorySeparator(dataFolder) + "\"";
+        dataFolder == null ? "" : "--data " + QuoteArgument(Path.TrimEndingDirectorySeparator(dataFolder));
+
+    /// <summary>
+    /// One argument in double quotes, read back exactly by Windows' command-line rules: backslashes right before a
+    /// quote (the closing one included, as in <c>"D:\\"</c>) are doubled and a quote inside is escaped.
+    /// </summary>
+    public static string QuoteArgument(string value)
+    {
+        var sb = new StringBuilder(value.Length + 4).Append('"');
+        int slashes = 0;
+        foreach (char c in value)
+        {
+            if (c == '\\')
+            {
+                slashes++;
+                continue;
+            }
+            if (c == '"') sb.Append('\\', 2 * slashes + 1);
+            else sb.Append('\\', slashes);
+            sb.Append(c);
+            slashes = 0;
+        }
+        return sb.Append('\\', 2 * slashes).Append('"').ToString();
+    }
 
     public static string Build(HelperPlan plan)
     {

@@ -296,6 +296,46 @@ public class UpdaterTests : IDisposable
         Assert.Equal("", HelperScript.RelaunchArguments(null));
     }
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string cmdLine, out int count);
+
+    /// <summary>The arguments a program gets from <paramref name="arguments"/> (Windows' own parser).</summary>
+    private static string[] ParsedByWindows(string arguments)
+    {
+        var argv = CommandLineToArgvW("EasyVocal.exe " + arguments, out int count);
+        try
+        {
+            var result = new string[count - 1];
+            for (int i = 1; i < count; i++) result[i - 1] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(argv, i * IntPtr.Size))!;
+            return result;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(argv); // LocalAlloc'ed: LocalFree and FreeHGlobal are the same
+        }
+    }
+
+    [Theory]
+    [InlineData("D:\\", "D:\\")]
+    [InlineData("C:\\data\\", "C:\\data")]
+    [InlineData("C:\\Área de Trabalho\\my data", "C:\\Área de Trabalho\\my data")]
+    [InlineData("\\\\server\\share\\x y\\", "\\\\server\\share\\x y")]
+    public void RelaunchArguments_GiveTheDataFolderBack(string folder, string expected)
+    {
+        Assert.Equal(new[] { "--data", expected }, ParsedByWindows(HelperScript.RelaunchArguments(folder)));
+    }
+
+    [Theory]
+    [InlineData("a\\")]
+    [InlineData("a\\\\")]
+    [InlineData("say \"hi\"")]
+    [InlineData("x\\\"y")]
+    [InlineData("")]
+    public void QuoteArgument_IsReadBackExactly(string value)
+    {
+        Assert.Equal(new[] { value }, ParsedByWindows(HelperScript.QuoteArgument(value)));
+    }
+
     [Fact]
     public void Build_PutsThePathsInAsLiterals()
     {
