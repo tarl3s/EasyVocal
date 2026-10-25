@@ -1,3 +1,5 @@
+using EasyVocal.Tests.Helpers;
+
 namespace EasyVocal.UiTests;
 
 /// <summary>
@@ -12,7 +14,7 @@ public class SingleInstanceTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(folder, recursive: true); } catch (IOException) { }
+        TestFolders.Delete(folder);
     }
 
     private SingleInstance.Names Names(bool portable)

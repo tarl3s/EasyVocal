@@ -23,8 +23,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- A pretend updater platform for computers without a real one yet (macOS, Linux). -->
+    <!-- A pretend updater platform (the headless tests off Windows), and the throwaway folders. -->
     <Compile Include="..\EasyVocal.Tests\Helpers\FakeUpdate.cs" Link="Helpers\FakeUpdate.cs" />
+    <Compile Include="..\EasyVocal.Tests\Helpers\TestFolders.cs" Link="Helpers\TestFolders.cs" />
   </ItemGroup>
 
   <ItemGroup>

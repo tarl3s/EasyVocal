@@ -1,5 +1,6 @@
 using System.IO;
 using EasyVocal.Platform.Windows;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
@@ -11,7 +12,7 @@ public class StartMenuShortcutTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+        TestFolders.Delete(folder);
     }
 
     [Fact]

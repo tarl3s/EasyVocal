@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using EasyVocal.Core.Update;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
@@ -12,8 +13,7 @@ public class UpdateRulesTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(temp, recursive: true); }
-        catch (Exception) { /* best effort */ }
+        TestFolders.Delete(temp);
     }
 
     // ---------- versions ----------
@@ -76,7 +76,7 @@ public class UpdateRulesTests : IDisposable
     [Fact]
     public void RunningVersion_IsTheVersionInDirectoryBuildProps()
     {
-        var props = File.ReadAllText(Path.Combine(RepoRoot(), "Directory.Build.props"));
+        var props = File.ReadAllText(Path.Combine(TestFolders.RepoRoot(), "Directory.Build.props"));
         var expected = AppVersion.Parse(Regex.Match(props, @"<Version>([^<]+)</Version>").Groups[1].Value);
         Assert.Equal(expected, UpdateRules.RunningVersion(typeof(UpdateRulesTests).Assembly)); // informational "0.2.0+commit" included
     }
@@ -240,14 +240,5 @@ public class UpdateRulesTests : IDisposable
         Assert.Empty(ReleaseNotes.ToLines(null));
         Assert.Empty(ReleaseNotes.ToLines("\n\n  \n"));
         Assert.True(ReleaseNotes.ToLines(string.Join("\n", Enumerable.Repeat("- x", 1000))).Count <= 200);
-    }
-
-    // ---------- helpers ----------
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Directory.Build.props"))) dir = dir.Parent;
-        return dir?.FullName ?? throw new InvalidOperationException("Directory.Build.props not found above the test folder");
     }
 }

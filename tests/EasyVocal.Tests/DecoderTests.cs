@@ -43,14 +43,14 @@ public class DecoderTests : IDisposable
     [Fact]
     public void Mp3_DecodesThroughNLayer_ToMono48k()
     {
-        var x = new Mp3Decoder().Decode(Fixture("tone440_mono_44k.mp3"));
+        var x = new Mp3Decoder().Decode(Fixture("tone440_mono_44k.mp3"), default);
         AssertTone(x, 4000); // MP3 adds encoder padding
     }
 
     [Fact]
     public void Ogg_DecodesThroughNVorbis_StereoToMono48k()
     {
-        var x = new OggDecoder().Decode(Fixture("tone440_stereo_44k.ogg"));
+        var x = new OggDecoder().Decode(Fixture("tone440_stereo_44k.ogg"), default);
         AssertTone(x, 4500);
     }
 
@@ -113,7 +113,7 @@ public class DecoderTests : IDisposable
             w.Write("fmt "u8); w.Write(16); w.Write((short)2); w.Write((short)1); w.Write(8000); w.Write(4000); w.Write((short)256); w.Write((short)4);
             w.Write("data"u8); w.Write(100); w.Write(new byte[100]);
         }
-        Assert.ThrowsAny<Exception>(() => new WavAiffDecoder().Decode(path));
+        Assert.ThrowsAny<Exception>(() => new WavAiffDecoder().Decode(path, default));
         var ex = Assert.Throws<SoundLoadException>(() => SoundLoader.Load(path, new ISoundDecoder[] { new WavAiffDecoder() }));
         Assert.Equal(SoundLoader.Damaged, ex.Message);
     }
@@ -333,7 +333,7 @@ public class DecoderTests : IDisposable
     {
         if (StandInDecoder() is not { } ffmpeg) return;
         var path = Instruction("partial.m4a", "partial-fail");
-        Assert.Throws<InvalidDataException>(() => ffmpeg.Decode(path));
+        Assert.Throws<InvalidDataException>(() => ffmpeg.Decode(path, default));
         Assert.Equal(SoundLoader.Damaged, Assert.Throws<SoundLoadException>(() => SoundLoader.Load(path, new ISoundDecoder[] { ffmpeg })).Message);
     }
 
@@ -343,7 +343,7 @@ public class DecoderTests : IDisposable
         if (StandInDecoder(TimeSpan.FromSeconds(1.5)) is not { } ffmpeg) return;
         var path = Instruction("hang.m4a", "hang");
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var ex = Assert.Throws<SoundLoadException>(() => ffmpeg.Decode(path));
+        var ex = Assert.Throws<SoundLoadException>(() => ffmpeg.Decode(path, default));
         Assert.Equal(SoundLoader.TookTooLong, ex.Message);
         Assert.InRange(watch.Elapsed.TotalSeconds, 1, 10); // the deadline, plus at most the short wait after the kill
         AssertGone(path);

@@ -68,30 +68,3 @@ public sealed class FakeRunner : ICommandRunner
     }
 }
 
-internal static class TestFolders
-{
-    public static string New(string prefix)
-    {
-        var path = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
-    }
-
-    public static void Delete(string path)
-    {
-        for (int attempt = 0; attempt < 10 && Directory.Exists(path); attempt++)
-        {
-            try { Directory.Delete(path, recursive: true); }
-            catch (IOException) { Thread.Sleep(200); }
-            catch (UnauthorizedAccessException) { Thread.Sleep(200); }
-        }
-    }
-
-    /// <summary>The repository's root (where EasyVocal.sln is).</summary>
-    public static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "EasyVocal.sln"))) dir = dir.Parent;
-        return dir?.FullName ?? throw new DirectoryNotFoundException("EasyVocal.sln not found above " + AppContext.BaseDirectory);
-    }
-}

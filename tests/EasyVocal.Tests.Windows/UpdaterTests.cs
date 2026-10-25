@@ -20,12 +20,7 @@ public class UpdaterTests : IDisposable
 
     public void Dispose()
     {
-        for (int attempt = 0; attempt < 10 && Directory.Exists(temp); attempt++)
-        {
-            try { Directory.Delete(temp, recursive: true); }
-            catch (IOException) { Thread.Sleep(200); }
-            catch (UnauthorizedAccessException) { Thread.Sleep(200); }
-        }
+        TestFolders.Delete(temp);
     }
 
     private static readonly WindowsUpdaterPlatform Win = WindowsUpdaterPlatform.Instance;

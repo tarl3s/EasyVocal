@@ -1,5 +1,6 @@
 using EasyVocal.Platform.Linux;
 using EasyVocal.Platform.MacOS;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests.Platforms;
 

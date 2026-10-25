@@ -23,7 +23,7 @@ public class HeadlessAppTests
     [AvaloniaFact]
     public async Task SmokeTest_EveryWindowOpensAndWorks()
     {
-        var data = NewDataFolder("EV_UiSmoke_");
+        var data = TestFolders.New("EV_UiSmoke_");
         try
         {
             var code = await RunSession(data, "--smoketest", new TestAudioDevices(cablePresent: true));
@@ -35,14 +35,14 @@ public class HeadlessAppTests
         }
         finally
         {
-            DeleteFolder(data);
+            TestFolders.Delete(data);
         }
     }
 
     [AvaloniaFact]
     public async Task E2E_EveryStepPasses()
     {
-        var data = NewDataFolder("EV_UiE2E_");
+        var data = TestFolders.New("EV_UiE2E_");
         try
         {
             var code = await RunSession(data, "--e2e", new TestAudioDevices(cablePresent: false));
@@ -53,7 +53,7 @@ public class HeadlessAppTests
         }
         finally
         {
-            DeleteFolder(data);
+            TestFolders.Delete(data);
         }
     }
 
@@ -95,13 +95,6 @@ public class HeadlessAppTests
         return TestPlatform.Create(devices, new FakeUpdaterPlatform(), SoundDecoders.Default);
     }
 
-    private static string NewDataFolder(string prefix)
-    {
-        var path = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
-    }
-
     /// <summary>EV_UI_SNAPSHOTS=&lt;folder&gt; keeps the PNGs (for looking at them); otherwise they go with the scratch folder.</summary>
     private void KeepSnapshots(string data, string prefix)
     {
@@ -111,15 +104,5 @@ public class HeadlessAppTests
         foreach (var png in Directory.EnumerateFiles(data, "*.png"))
             File.Copy(png, Path.Combine(keep, "headless_" + Path.GetFileName(png)), overwrite: true);
         output.WriteLine("Snapshots kept in " + keep);
-    }
-
-    private static void DeleteFolder(string path)
-    {
-        for (int attempt = 0; attempt < 10 && Directory.Exists(path); attempt++)
-        {
-            try { Directory.Delete(path, recursive: true); }
-            catch (IOException) { Thread.Sleep(300); }
-            catch (UnauthorizedAccessException) { Thread.Sleep(300); }
-        }
     }
 }

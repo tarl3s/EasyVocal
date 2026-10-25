@@ -32,11 +32,7 @@ public class WindowBehaviourTests
             Main.AllowClose();
             Main.Close();
             Controller.Dispose();
-            for (int attempt = 0; attempt < 10 && Directory.Exists(Data); attempt++)
-            {
-                try { Directory.Delete(Data, recursive: true); }
-                catch (IOException) { Thread.Sleep(200); }
-            }
+            TestFolders.Delete(Data);
         }
     }
 
@@ -231,8 +227,7 @@ public class WindowBehaviourTests
     [AvaloniaFact]
     public void MicRefused_TheBannerSaysWhereToAllowIt_AndOpensThatPage()
     {
-        var data = Path.Combine(Path.GetTempPath(), "EV_UiMicRefused_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(data);
+        var data = TestFolders.New("EV_UiMicRefused_");
         int opened = 0;
         var platform = TestPlatform.Create(new RefusedMic(new TestAudioDevices(cablePresent: true)), new FakeUpdaterPlatform(), SoundDecoders.Default)
             with { OpenMicSettings = () => opened++, Texts = EasyVocal.Core.Platform.PlatformTexts.MacOS };
@@ -255,11 +250,7 @@ public class WindowBehaviourTests
             main.AllowClose();
             main.Close();
             controller.Dispose();
-            for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
-            {
-                try { Directory.Delete(data, recursive: true); }
-                catch (IOException) { Thread.Sleep(200); }
-            }
+            TestFolders.Delete(data);
         }
     }
 

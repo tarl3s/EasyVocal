@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
@@ -130,7 +131,7 @@ public class LocalizerTests
     /// <summary>Every English text the person can see: literals in the app's sources plus built-in names.</summary>
     private static IEnumerable<string> UiStrings()
     {
-        var root = RepoRoot();
+        var root = TestFolders.RepoRoot();
         var app = Path.Combine(root, "src", "EasyVocal");
         foreach (var file in Directory.EnumerateFiles(app, "*.*", SearchOption.AllDirectories))
         {
@@ -207,13 +208,5 @@ public class LocalizerTests
         return map!;
     }
 
-    private static string PtBrPath() => Path.Combine(RepoRoot(), "src", "EasyVocal", "Lang", "pt-BR.json");
-
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "EasyVocal.sln"))) dir = dir.Parent;
-        Assert.NotNull(dir);
-        return dir!.FullName;
-    }
+    private static string PtBrPath() => Path.Combine(TestFolders.RepoRoot(), "src", "EasyVocal", "Lang", "pt-BR.json");
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Xunit.Abstractions;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
@@ -45,12 +46,7 @@ public class E2ETests
         }
         finally
         {
-            for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
-            {
-                try { Directory.Delete(data, recursive: true); }
-                catch (IOException) { Thread.Sleep(300); }
-                catch (UnauthorizedAccessException) { Thread.Sleep(300); }
-            }
+            TestFolders.Delete(data);
         }
     }
 

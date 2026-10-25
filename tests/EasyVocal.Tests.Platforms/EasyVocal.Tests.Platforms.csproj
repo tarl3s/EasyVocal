@@ -30,8 +30,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The pretend update source and launcher (the update service against the real macOS/Linux updater platform). -->
+    <!-- The pretend update source and launcher (the update service against the real macOS/Linux updater platform), and the throwaway folders. -->
     <Compile Include="..\EasyVocal.Tests\Helpers\FakeUpdate.cs" Link="Helpers\FakeUpdate.cs" />
+    <Compile Include="..\EasyVocal.Tests\Helpers\TestFolders.cs" Link="Helpers\TestFolders.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -65,8 +65,7 @@ public class ControllerTests
     [Fact]
     public void Controller_RunsOnAnInjectedDispatcher_AndSavesThroughItsTimer()
     {
-        var data = Path.Combine(Path.GetTempPath(), "EV_UiController_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(data);
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var devices = new TestAudioDevices(cablePresent: true);
         var platform = TestPlatform.Create(devices, new FakeUpdaterPlatform(), SoundDecoders.Default);
@@ -108,11 +107,7 @@ public class ControllerTests
         }
         finally
         {
-            for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
-            {
-                try { Directory.Delete(data, recursive: true); }
-                catch (IOException) { Thread.Sleep(200); }
-            }
+            TestFolders.Delete(data);
         }
     }
 
@@ -173,22 +168,6 @@ public class ControllerTests
         public void OpenPage() { }
     }
 
-    private static string NewData()
-    {
-        var data = Path.Combine(Path.GetTempPath(), "EV_UiController_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(data);
-        return data;
-    }
-
-    private static void DeleteData(string data)
-    {
-        for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
-        {
-            try { Directory.Delete(data, recursive: true); }
-            catch (IOException) { Thread.Sleep(200); }
-        }
-    }
-
     private static PlatformServices WithMic(IVirtualMicProvider mic) =>
         TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
 
@@ -207,7 +186,7 @@ public class ControllerTests
     [Fact]
     public void VirtualMic_IsMadeOffTheUiThread_AndRemovedOnQuit()
     {
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
         mic.RemoveGate.SetResult();
@@ -227,13 +206,13 @@ public class ControllerTests
             }
             Assert.Equal(1, mic.Removes);
         }
-        finally { DeleteData(data); }
+        finally { TestFolders.Delete(data); }
     }
 
     [Fact]
     public void VirtualMic_StillBeingMadeWhenEasyVocalQuits_IsRemovedOnceItIsThere()
     {
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
         mic.RemoveGate.SetResult();
@@ -250,13 +229,13 @@ public class ControllerTests
             c.Dispose();
             Assert.Equal(1, mic.Removes);
         }
-        finally { DeleteData(data); }
+        finally { TestFolders.Delete(data); }
     }
 
     [Fact]
     public void VirtualMic_ThatCouldNotBeMade_IsStillAskedToRemoveWhatIsLeft()
     {
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
         mic.Created.SetResult(false);
@@ -267,13 +246,13 @@ public class ControllerTests
             Assert.Equal(1, mic.Creates);
             Assert.Equal(1, mic.Removes); // a half-made one is found by name: the platform decides what is there
         }
-        finally { DeleteData(data); }
+        finally { TestFolders.Delete(data); }
     }
 
     [Fact]
     public void VirtualMic_ThatWentMissing_IsMadeAgain_LessOftenAfterFailures()
     {
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
         mic.RemoveGate.SetResult();
@@ -307,13 +286,13 @@ public class ControllerTests
             ui.TickAll();
             Until(() => !c.PreparingVirtualMic && mic.Creates == 4, ui);
         }
-        finally { DeleteData(data); }
+        finally { TestFolders.Delete(data); }
     }
 
     [Fact]
     public void Quitting_SavesFirst_AndWaitsForAHangingRemovalOnlyBriefly()
     {
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic(); // its removal never finishes
         try
@@ -335,7 +314,7 @@ public class ControllerTests
         finally
         {
             mic.RemoveGate.TrySetResult();
-            DeleteData(data);
+            TestFolders.Delete(data);
         }
     }
 
@@ -377,13 +356,13 @@ public class ControllerTests
         smoke.VirtualMic.OpenPage();
         Assert.False(smoke.Audio.SetDefault(TestAudioDevices.HeadphonesId));
 
-        var data = NewData();
+        var data = TestFolders.New("EV_UiController_");
         try
         {
             using (var c = new AppController(data, smoke, new ManualDispatcher())) c.Start();
             Assert.Equal(0, real.Touches);
         }
-        finally { DeleteData(data); }
+        finally { TestFolders.Delete(data); }
 
         // The e2e test: its own devices and the VB-CABLE look-alike they are named after.
         var e2e = PlatformFactory.ForTests(computer, devices, startup);

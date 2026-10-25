@@ -16,7 +16,7 @@ public class WindowsHotkeysTests
     [Fact]
     public void OwnWindow_RegistersPressesAndTellsTakenFromFree()
     {
-        using var first = (WindowsGlobalHotkeys)WindowsPlatform.Services.CreateHotkeys(null);
+        using var first = (WindowsGlobalHotkeys)WindowsPlatform.Services.CreateHotkeys();
         Assert.True(first.Available);
         Assert.Null(first.UnavailableReason);
         if (first.Check(Rare) != HotkeyCheck.Free)

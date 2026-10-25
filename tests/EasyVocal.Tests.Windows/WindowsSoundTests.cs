@@ -281,7 +281,7 @@ public class WindowsSoundTests : IDisposable
         var (x, decoder) = SoundLoader.LoadWith(mp3, Win);
         Assert.IsType<MediaFoundationDecoder>(decoder); // what 0.2's AudioFileReader used for MP3
         Assert.InRange(Signals.EstimatePitch(x), 430, 450);
-        var acm = new AcmMp3Decoder().Decode(mp3);
+        var acm = new AcmMp3Decoder().Decode(mp3, default);
         Assert.InRange(acm.Length, x.Length - 4000, x.Length + 4000);
         Assert.InRange(Signals.EstimatePitch(acm), 430, 450);
     }

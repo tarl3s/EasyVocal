@@ -4,6 +4,7 @@ using EasyVocal.Core.Engine;
 using EasyVocal.Core.Platform;
 using EasyVocal.Platform.Windows;
 using Microsoft.Win32;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests;
 
@@ -100,7 +101,7 @@ public class VbCableInstallerTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(folder, recursive: true); } catch (IOException) { /* best effort */ }
+        TestFolders.Delete(folder);
     }
 
     private string MakeZip(params (string Name, string Text)[] files)
@@ -255,7 +256,7 @@ public class AuthenticodeTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(folder, recursive: true); } catch (IOException) { /* best effort */ }
+        TestFolders.Delete(folder);
     }
 
     [Theory]

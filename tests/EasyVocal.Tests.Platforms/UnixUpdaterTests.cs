@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using EasyVocal.Core.Update;
 using EasyVocal.Platform.Unix;
 using Xunit.Abstractions;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests.Platforms;
 

@@ -8,6 +8,7 @@ using System.Xml.Linq;
 using EasyVocal.Packager;
 using EasyVocal.Platform.Unix;
 using Xunit.Abstractions;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests.Platforms;
 
@@ -29,7 +30,7 @@ public sealed class ReleasePackagingTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(temp, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        TestFolders.Delete(temp);
     }
 
     private const int Exec = 0x1ED, Plain = 0x1A4;

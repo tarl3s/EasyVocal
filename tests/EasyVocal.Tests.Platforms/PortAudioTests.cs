@@ -1,6 +1,7 @@
 using EasyVocal.Core.Platform;
 using EasyVocal.Platform.Unix;
 using Xunit.Abstractions;
+using EasyVocal.Tests.Helpers;
 
 namespace EasyVocal.Tests.Platforms;
 
