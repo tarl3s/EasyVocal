@@ -27,12 +27,6 @@ public interface ISoundDecoder
     float[] Decode(string path, CancellationToken ct);
 }
 
-public static class SoundDecoderExtensions
-{
-    /// <summary>Decodes without a way to stop it.</summary>
-    public static float[] Decode(this ISoundDecoder decoder, string path) => decoder.Decode(path, CancellationToken.None);
-}
-
 /// <summary>The portable decoder list (a platform builds its own: <c>PlatformServices.Decoders</c>).</summary>
 public static class SoundDecoders
 {

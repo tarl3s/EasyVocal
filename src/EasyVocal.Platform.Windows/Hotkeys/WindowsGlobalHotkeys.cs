@@ -6,9 +6,8 @@ namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// System-wide hotkeys through RegisterHotKey. Windows sends WM_HOTKEY to a window of the thread that created this
-/// (the UI thread, whose message loop delivers it): by default a message-only window of its own, so no UI framework is
-/// involved; or a given window whose owner passes every message to <see cref="ProcessMessage"/>. <see cref="Pressed"/>
-/// fires on that thread.
+/// (the UI thread, whose message loop delivers it): a message-only window of its own, so no UI framework is involved.
+/// <see cref="Pressed"/> fires on that thread.
 /// </summary>
 public sealed class WindowsGlobalHotkeys : IGlobalHotkeys, IHotkeyTestHooks
 {
@@ -59,26 +58,17 @@ public sealed class WindowsGlobalHotkeys : IGlobalHotkeys, IHotkeyTestHooks
     private static extern IntPtr GetModuleHandleW(string? moduleName);
 
     private readonly IntPtr _window;
-    private readonly string? _className; // set when the window is our own
-    private readonly WndProc? _wndProc;  // kept alive as long as the window
+    private readonly string _className;
+    private readonly WndProc _wndProc; // kept alive as long as the window
     private readonly Dictionary<int, string> _actions = new();
     private int _nextId = 1;
     private bool _disposed;
 
     public event Action<string>? Pressed;
 
-    /// <param name="window">
-    /// A window handle (HWND) whose messages its owner passes to <see cref="ProcessMessage"/>, or null for a message-only
-    /// window of our own (create this on the UI thread: its message loop delivers the presses).
-    /// </param>
-    public WindowsGlobalHotkeys(IntPtr? window = null)
+    /// <summary>Create this on the UI thread: its message loop delivers the presses.</summary>
+    public WindowsGlobalHotkeys()
     {
-        if (window is { } given)
-        {
-            if (given == IntPtr.Zero) throw new ArgumentException("The window has no handle.", nameof(window));
-            _window = given;
-            return;
-        }
         _wndProc = OwnWindowProc;
         _className = "EasyVocal.Hotkeys." + Guid.NewGuid().ToString("N");
         var instance = GetModuleHandleW(null);
@@ -119,8 +109,8 @@ public sealed class WindowsGlobalHotkeys : IGlobalHotkeys, IHotkeyTestHooks
 
     public string? UnavailableReason => null;
 
-    /// <summary>For a given window: call for every message it gets; true when it was one of our hotkeys (handled).</summary>
-    public bool ProcessMessage(int msg, IntPtr wParam)
+    /// <summary>True when the message was one of our hotkeys (handled).</summary>
+    private bool ProcessMessage(int msg, IntPtr wParam)
     {
         if (msg != WM_HOTKEY || _disposed || !_actions.TryGetValue(wParam.ToInt32(), out var action)) return false;
         Pressed?.Invoke(action);
@@ -185,11 +175,8 @@ public sealed class WindowsGlobalHotkeys : IGlobalHotkeys, IHotkeyTestHooks
         if (_disposed) return;
         UnregisterAll();
         _disposed = true;
-        if (_className != null)
-        {
-            DestroyWindow(_window);
-            UnregisterClassW(_className, GetModuleHandleW(null));
-        }
+        DestroyWindow(_window);
+        UnregisterClassW(_className, GetModuleHandleW(null));
         GC.KeepAlive(_wndProc);
     }
 }

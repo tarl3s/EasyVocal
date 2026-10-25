@@ -17,7 +17,7 @@ internal static class TestPlatform
     public static PlatformServices Create(IAudioBackend audio, IUpdaterPlatform updater, IReadOnlyList<ISoundDecoder>? decoders = null,
         IMp3Encoder? mp3 = null) =>
         new(audio, new MemoryStartup(), new PlatformFactory.NoShortcut(), new TestVirtualMic(), updater,
-            decoders ?? SoundDecoders.Default, mp3, _ => new MemoryHotkeys());
+            decoders ?? SoundDecoders.Default, mp3, () => new MemoryHotkeys());
 
     /// <summary>The e2e devices with the cable missing at first (the relaunched run: there).</summary>
     public static TestAudioDevices Devices(bool cablePresent) => new(cablePresent);

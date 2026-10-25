@@ -6,7 +6,7 @@ namespace EasyVocal;
 
 /// <summary>
 /// The notification-area (menu bar on macOS) icon: a click opens the window; the menu has ON/OFF, the visible voices
-/// (the active one checked), Open and Quit. Messages that used to be tray balloons are a small notice window of our own
+/// (the active one checked), Open and Quit. Its messages are a small notice window of our own
 /// (<see cref="TrayNotice"/>), the same on every OS.
 /// </summary>
 public sealed class Tray : IDisposable
@@ -42,7 +42,7 @@ public sealed class Tray : IDisposable
     }
 
     /// <summary>A notice whose click runs <paramref name="onClick"/> (e.g. "EasyVocal 0.3.0 is available — click to update").</summary>
-    public void ShowBalloon(string text, Action onClick)
+    public void ShowNotice(string text, Action onClick)
     {
         if (disposed) return;
         TrayNotice.Show(text, onClick, TimeSpan.FromSeconds(12));

@@ -207,8 +207,7 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
     }
 
     /// <summary>One of the devices EasyVocal makes (the sink, its monitor, the remapped source).</summary>
-    private static bool IsOwnDevice(string? device) =>
-        device is SinkName or SourceName or SinkName + ".monitor";
+    private static bool IsOwnDevice(string? device) => CableNames.EasyVocalLinux.IsCable(device);
 
     /// <summary>
     /// Unloads this session's modules, then any other module of ours pactl still lists (one whose load ran out of time,

@@ -26,7 +26,7 @@ public interface IUiTimer
     void Stop();
 }
 
-/// <summary>Avalonia's UI thread (background priority, like the WPF timers the controller had).</summary>
+/// <summary>Avalonia's UI thread; its timers run at background priority (after input and drawing).</summary>
 public sealed class AvaloniaUiDispatcher : IUiDispatcher
 {
     public static AvaloniaUiDispatcher Instance { get; } = new();

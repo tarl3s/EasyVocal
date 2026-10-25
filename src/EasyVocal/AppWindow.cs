@@ -67,7 +67,7 @@ public class AppWindow : Window
     /// </summary>
     protected virtual string? SingleKind => null;
 
-    /// <summary>True once the window was closed by its OK / Save / Done (WPF's DialogResult = true).</summary>
+    /// <summary>True once the window was closed by its OK / Save / Done.</summary>
     public bool Accepted { get; private set; }
 
     /// <summary>Closed by <see cref="CloseForQuit"/>: whatever it is doing, it must let go.</summary>

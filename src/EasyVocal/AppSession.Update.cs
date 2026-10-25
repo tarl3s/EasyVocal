@@ -29,7 +29,7 @@ internal sealed partial class AppSession
         updates = new UpdateCoordinator(c, RealUpdateService(c.Platform.Updater),
             canCheck: !sourceBuild || args.UpdateCheck, canInstall: !sourceBuild, forceCheck: args.UpdateCheck,
             visibleWindow: VisibleUpdateOwner,
-            balloon: (text, click) => tray?.ShowBalloon(text, click),
+            notice: (text, click) => tray?.ShowNotice(text, click),
             quit: () => FireAndForget.Watch(QuitAsync(ask: false), "Quitting for the update"),
             logFile: Path.Combine(dataFolder, "update.log"),
             relaunchArguments: c.Platform.Updater.RelaunchArguments(args.DataFolder));

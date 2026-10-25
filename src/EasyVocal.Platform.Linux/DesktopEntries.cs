@@ -91,11 +91,11 @@ public static class DesktopFile
         return null;
     }
 
-    /// <summary>The largest PNG inside an .ico file (EasyVocal's icon is drawn as PNGs), or null.</summary>
     /// <summary>A PNG's width from its IHDR chunk (bytes 16–19, big-endian); 256 when it can't be read.</summary>
     public static int PngWidth(byte[] png) =>
         png.Length >= 24 ? (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(16, 4)) is var w and > 0 and <= 4096 ? w : 256 : 256;
 
+    /// <summary>The largest PNG inside an .ico file (EasyVocal's icon is drawn as PNGs), or null.</summary>
     public static byte[]? LargestPngInIco(byte[] ico)
     {
         if (ico.Length < 6 || BitConverter.ToUInt16(ico, 2) != 1) return null;

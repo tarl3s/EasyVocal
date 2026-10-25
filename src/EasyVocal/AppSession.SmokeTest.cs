@@ -25,9 +25,6 @@ internal sealed partial class AppSession
 {
     private int smokeFailures;
 
-    /// <summary>How many smoke checks failed so far (the headless host reports it).</summary>
-    internal int SmokeFailures => smokeFailures;
-
     private void RunSmokeTest(string dataFolder)
     {
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(options.Hosted ? 1 : 3) };

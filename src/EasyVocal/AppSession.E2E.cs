@@ -32,9 +32,6 @@ internal sealed partial class AppSession
     private int e2ePassed, e2eFailed;
     private Timer? e2eWatchdog;
 
-    /// <summary>Steps that passed / failed so far (the headless host reports them).</summary>
-    internal (int Passed, int Failed) E2EResult => (e2ePassed, e2eFailed);
-
     /// <summary>A failed check: the step stops and is logged FAIL with this text.</summary>
     private sealed class E2EFailure(string message) : Exception(message);
 

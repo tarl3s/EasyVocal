@@ -28,7 +28,7 @@ public static class WindowsPlatform
         WindowsUpdaterPlatform.Instance,
         Decoders(),
         Mp3,
-        window => new WindowsGlobalHotkeys(window))
+        () => new WindowsGlobalHotkeys())
     {
         Texts = PlatformTexts.Windows,
         OpenMicSettings = OpenMicPrivacy,

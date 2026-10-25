@@ -13,7 +13,7 @@ namespace EasyVocal;
 public partial class App : Application
 {
     /// <summary>
-    /// Where a character the UI font doesn't have comes from. On Windows, as WPF did: arrows, shapes and symbols
+    /// Where a character the UI font doesn't have comes from. On Windows: arrows, shapes and symbols
     /// (▶ ■ ✂ ⌨ ↶) from Segoe UI Symbol, drawn like text in the button's colour; emoji from Segoe UI Emoji, in colour.
     /// Elsewhere the system's own fallback decides.
     /// </summary>

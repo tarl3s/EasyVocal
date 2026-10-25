@@ -18,7 +18,7 @@ namespace EasyVocal;
 
 /// <summary>
 /// The one object windows talk to: owns the settings, the audio engine, the soundboard mixer and the global
-/// hotkeys. Every member belongs to the UI thread; what the engine, the mixer and Windows' device notifications
+/// hotkeys. Every member belongs to the UI thread; what the engine, the mixer and the system's device notifications
 /// report from their own threads is posted here with <see cref="IUiDispatcher.Post"/>
 /// (never <c>Invoke</c>: the engine may be joining one of those threads while the UI waits on it).
 /// </summary>
@@ -118,7 +118,7 @@ public sealed class AppController : IDisposable
     /// <summary>One sentence per hotkey that couldn't be registered (another app owns it), already translated.</summary>
     public IReadOnlyList<string> HotkeyProblems => hotkeyProblems;
 
-    /// <summary>Action ids ("voice:robot", "sound:ding"…) whose hotkey Windows refused in the last <see cref="RebuildHotkeys"/>.</summary>
+    /// <summary>Action ids ("voice:robot", "sound:ding"…) whose hotkey the system refused in the last <see cref="RebuildHotkeys"/>.</summary>
     public IReadOnlyCollection<string> RefusedActions => refusedActions;
 
     /// <summary>The voice in use: the active one when it exists and isn't hidden, else Normal.</summary>
@@ -298,12 +298,12 @@ public sealed class AppController : IDisposable
         }
     }
 
-    // ---------- start with Windows ----------
+    // ---------- start at login ("Start with Windows") ----------
 
-    /// <summary>Where "Start with Windows" is written: the real Run key, or a throwaway one in the smoke test.</summary>
+    /// <summary>Where "Start with Windows" ("Open at login"…) is written: the platform's real entry, or a throwaway one in the tests.</summary>
     public IStartupService Startup { get; set; }
 
-    /// <summary>Turns "Start with Windows" on or off. False (nothing changed) when Windows refused the registry write.</summary>
+    /// <summary>Turns "Start with Windows" on or off. False (nothing changed) when the system refused the write.</summary>
     public bool SetStartWithWindows(bool on)
     {
         try { Startup.Set(on); }
@@ -769,7 +769,7 @@ public sealed class AppController : IDisposable
     {
         try
         {
-            var made = Platform.CreateHotkeys(null);
+            var made = Platform.CreateHotkeys();
             if (!made.Available) AppLog.Info("Global hotkeys are not available here: " + made.UnavailableReason);
             return made;
         }
@@ -832,7 +832,7 @@ public sealed class AppController : IDisposable
 
     /// <summary>
     /// True while one of EasyVocal's own text boxes has the keyboard: the hotkeys are let go meanwhile, so a plain-key
-    /// hotkey ("7", "A") can still be typed into a name. Windows gives them back when the box loses the keyboard
+    /// hotkey ("7", "A") can still be typed into a name. They are taken back when the box loses the keyboard
     /// (also when the person switches to another app).
     /// </summary>
     public void SetTyping(bool on)
@@ -849,7 +849,7 @@ public sealed class AppController : IDisposable
     /// <summary>The hotkeys are let go because a text box has the keyboard.</summary>
     internal bool IsTyping => typing;
 
-    /// <summary>How many hotkeys Windows holds for us right now.</summary>
+    /// <summary>How many hotkeys the system holds for us right now.</summary>
     internal int RegisteredHotkeyCount => hotkeys?.Count ?? 0;
 
     /// <summary>The highest hotkey id in use (the e2e test checks it doesn't keep growing).</summary>
@@ -861,7 +861,7 @@ public sealed class AppController : IDisposable
     /// <summary>The sound's file is decoded and ready to play.</summary>
     internal bool IsSoundLoaded(string soundId) => mixer.TryGet(soundId, out _);
 
-    /// <summary>For the e2e test: Windows reporting the press of the hotkey registered for <paramref name="action"/>.</summary>
+    /// <summary>For the e2e test: the system reporting the press of the hotkey registered for <paramref name="action"/>.</summary>
     internal bool SimulateHotkeyPress(string action) => (hotkeys as IHotkeyTestHooks)?.SimulatePress(action) ?? false;
 
     /// <summary>
@@ -889,7 +889,7 @@ public sealed class AppController : IDisposable
         return colon < 0 ? (action, "") : (action[..colon], action[(colon + 1)..]);
     }
 
-    // Runs inside the hotkey window's WndProc: an exception must never escape into Windows.
+    // On the UI thread (Windows: inside the hotkey window's WndProc): an exception must never escape into the system.
     private void OnHotkey(string action)
     {
         try
@@ -925,7 +925,7 @@ public sealed class AppController : IDisposable
     // ---------- devices ----------
 
     /// <summary>
-    /// The chosen microphone has been missing a while and Windows' default is used for now: its name, else null.
+    /// The chosen microphone has been missing a while and the system's default is used for now: its name, else null.
     /// The saved choice is kept and used again as soon as it is back.
     /// </summary>
     public string? MicStandIn => engine.State == EngineState.Running && micInUse is { Fallback: true } pick ? pick.Name : null;
@@ -952,7 +952,7 @@ public sealed class AppController : IDisposable
     {
         micInUse = null;
         usedMic = null;
-        // Never pass null: null means Windows' default microphone, which could be the virtual cable (a feedback loop).
+        // Never pass null: null means the system's default microphone, which could be the virtual cable (a feedback loop).
         var pick = micPicker.Pick(Settings.MicDeviceId, devices.Inputs(), DateTime.UtcNow);
         var id = pick.Id ?? throw new InvalidOperationException("No microphone is connected.");
         IAudioInput input;
@@ -1201,7 +1201,7 @@ public sealed class AppController : IDisposable
         return sb.ToString();
     }
 
-    // Windows audio thread.
+    // The backend's thread (device notifications).
     private void OnDevicesChanged() => ui.Post(() =>
     {
         if (disposed) return;

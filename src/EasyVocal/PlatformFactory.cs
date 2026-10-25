@@ -57,7 +57,7 @@ internal static class PlatformFactory
     /// <summary>A computer EasyVocal has no platform for yet: no devices, no hotkeys, nothing installed.</summary>
     public static PlatformServices Unsupported { get; } = new(
         new NoDevices(), new NoStartup(), new NoShortcut(), new NoVirtualMic(), new NoUpdater(),
-        SoundDecoders.Default, null, _ => new NoHotkeys());
+        SoundDecoders.Default, null, () => new NoHotkeys());
 
     private sealed class ReadOnlyDefaults(IAudioBackend inner) : IAudioBackend
     {

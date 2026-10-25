@@ -130,9 +130,6 @@ public sealed class PulseBackend : IAudioBackend, IDisposable
         lock (sync) streams.Remove(stream);
     }
 
-    /// <summary>Asks the worker to look again soon (any thread; never waits).</summary>
-    public void Invalidate() => wake.Set();
-
     /// <summary>
     /// Looks now, on the calling thread (never the UI's: the worker, the virtual mic's creation, the tests). A failed look
     /// keeps the last good snapshot. Open streams whose device left the list fail; a changed list raises <see cref="Changed"/>.

@@ -12,12 +12,6 @@ internal static unsafe class PortAudioNative
     private const string Lib = "portaudio";
 
     public const int NoError = 0;
-    public const int NoDevice = -1;
-    public const int InvalidDevice = -9996;
-    public const int DeviceUnavailable = -9985;
-    public const int UnanticipatedHostError = -9999;
-    public const int InvalidChannelCount = -9998;
-    public const int InvalidSampleRate = -9997;
 
     public const ulong Float32 = 0x00000001;
     public const ulong ClipOff = 0x00000001; // paClipOff (0x2 would be paDitherOff)
@@ -64,7 +58,6 @@ internal static unsafe class PortAudioNative
 
     [DllImport(Lib)] public static extern int Pa_Initialize();
     [DllImport(Lib)] public static extern int Pa_Terminate();
-    [DllImport(Lib)] public static extern IntPtr Pa_GetVersionText();
     [DllImport(Lib)] public static extern IntPtr Pa_GetErrorText(int error);
     [DllImport(Lib)] public static extern int Pa_GetDeviceCount();
     [DllImport(Lib)] public static extern int Pa_GetDefaultHostApi();
@@ -80,7 +73,6 @@ internal static unsafe class PortAudioNative
         delegate* unmanaged[Cdecl]<void*, void*, CULong, void*, CULong, void*, int> callback, void* userData);
 
     [DllImport(Lib)] public static extern int Pa_StartStream(IntPtr stream);
-    [DllImport(Lib)] public static extern int Pa_StopStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_AbortStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_CloseStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_IsStreamActive(IntPtr stream);

@@ -294,8 +294,8 @@ public interface IUpdaterPlatform
 /// <param name="Decoders">The order <see cref="SoundLoader"/> tries decoders in.</param>
 /// <param name="Mp3Encoder">MP3 export; null where there is none (only WAV is offered).</param>
 /// <param name="CreateHotkeys">
-/// Global hotkeys, created on the UI thread: given a window handle the UI routes its messages itself (Windows:
-/// <c>WindowsGlobalHotkeys.ProcessMessage</c>); null = the platform makes its own (Windows: a message-only window).
+/// Global hotkeys, created on the UI thread (Windows: on a message-only window of their own, whose messages that
+/// thread's loop delivers).
 /// </param>
 public sealed record PlatformServices(
     IAudioBackend Audio,
@@ -305,7 +305,7 @@ public sealed record PlatformServices(
     IUpdaterPlatform Updater,
     IReadOnlyList<ISoundDecoder> Decoders,
     IMp3Encoder? Mp3Encoder,
-    Func<IntPtr?, IGlobalHotkeys> CreateHotkeys)
+    Func<IGlobalHotkeys> CreateHotkeys)
 {
     /// <summary>The sentences that name this operating system ("Start with Windows"...).</summary>
     public PlatformTexts Texts { get; init; } = PlatformTexts.ForThisComputer;

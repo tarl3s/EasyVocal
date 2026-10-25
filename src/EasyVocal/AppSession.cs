@@ -47,10 +47,7 @@ internal sealed partial class AppSession
     private MainWindow? window;
     private Tray? tray;
     private bool asking, quitting, cleaned;
-    private int uiErrors;
-
-    /// <summary>Exceptions that reached the UI thread (or an unwatched task) during this session: the tests fail on any.</summary>
-    internal int UiErrors => uiErrors;
+    private int uiErrors; // exceptions that reached the UI thread (or an unwatched task): the tests fail on any
 
     /// <param name="shutdown">Ends the app (or, in a test host, the session) with this exit code.</param>
     public AppSession(SessionOptions options, Action<int> shutdown)

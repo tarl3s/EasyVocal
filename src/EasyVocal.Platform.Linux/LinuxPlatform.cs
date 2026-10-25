@@ -161,7 +161,7 @@ public static class LinuxPlatform
             UnixUpdaterPlatform.Linux,
             SoundDecoders.Default, // WAV/AIFF, OGG, MP3 (NLayer), then ffmpeg when it is installed
             null, // no MP3 encoder: the sound editor saves WAV
-            _ => new X11Hotkeys())
+            () => new X11Hotkeys())
         {
             Texts = PlatformTexts.Linux,
             OpenMicSettings = null, // no microphone permission to open on a plain Linux desktop

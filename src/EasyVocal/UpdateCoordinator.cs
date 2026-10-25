@@ -13,7 +13,7 @@ public sealed class UpdateCoordinator
     private readonly AppController controller;
     private readonly UpdateService service;
     private readonly Func<Window?> visibleWindow;
-    private readonly Action<string, Action> balloon;
+    private readonly Action<string, Action> notice;
     private readonly Action quit;
     private readonly string logFile, relaunchArguments;
     private bool offering;
@@ -22,10 +22,10 @@ public sealed class UpdateCoordinator
     /// <param name="canInstall">False in a build run from the source code: the dialog only tells.</param>
     /// <param name="forceCheck"><c>--update-check</c>: check on open even when the setting is off.</param>
     /// <param name="visibleWindow">The window to put the dialog over, or null while EasyVocal is only in the tray.</param>
-    /// <param name="balloon">Shows a tray notice whose click runs the action.</param>
+    /// <param name="notice">Shows a tray notice whose click runs the action.</param>
     /// <param name="quit">Quits the normal way, without asking.</param>
     public UpdateCoordinator(AppController controller, UpdateService service, bool canCheck, bool canInstall, bool forceCheck,
-        Func<Window?> visibleWindow, Action<string, Action> balloon, Action quit, string logFile, string relaunchArguments)
+        Func<Window?> visibleWindow, Action<string, Action> notice, Action quit, string logFile, string relaunchArguments)
     {
         this.controller = controller;
         this.service = service;
@@ -33,7 +33,7 @@ public sealed class UpdateCoordinator
         CanInstall = canInstall;
         ForceCheck = forceCheck;
         this.visibleWindow = visibleWindow;
-        this.balloon = balloon;
+        this.notice = notice;
         this.quit = quit;
         this.logFile = logFile;
         this.relaunchArguments = relaunchArguments;
@@ -52,7 +52,7 @@ public sealed class UpdateCoordinator
         if (check.Status != UpdateStatus.Available || controller.IsDisposed) return;
         var window = visibleWindow();
         if (window != null) await OfferAsync(window, check);
-        else balloon(L.F("EasyVocal {0} is available — click to update", check.Release!.Version), () => FireAndForget.Watch(OfferAsync(visibleWindow(), check), "The update dialog"));
+        else notice(L.F("EasyVocal {0} is available — click to update", check.Release!.Version), () => FireAndForget.Watch(OfferAsync(visibleWindow(), check), "The update dialog"));
     }
 
     /// <summary>Settings' "Check now": the text to show there, or null when the update dialog was shown instead.</summary>

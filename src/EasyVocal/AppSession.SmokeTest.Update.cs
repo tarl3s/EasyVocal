@@ -146,17 +146,17 @@ internal sealed partial class AppSession
         Check((await service.CheckAsync(c.Settings.SkippedUpdateVersion, manual: false)).Status == UpdateStatus.UpToDate, "a skipped version isn't offered on open");
 
         // The check on open, while EasyVocal is in the tray: a notice, no dialog.
-        string? balloonText = null;
+        string? noticeText = null;
         var hidden = new UpdateCoordinator(c, service, canCheck: true, canInstall: true, forceCheck: false, visibleWindow: () => null,
-            balloon: (text, _) => balloonText = text, quit: () => Check(false, "the smoke test's updater never quits"),
+            notice: (text, _) => noticeText = text, quit: () => Check(false, "the smoke test's updater never quits"),
             logFile: Path.Combine(folder, "update.log"), relaunchArguments: "");
         c.Settings.SkippedUpdateVersion = null;
         await hidden.CheckOnOpenAsync();
-        Check(balloonText == L.F("EasyVocal {0} is available — click to update", "9.9.0"), "started hidden, a new version shows a tray notice");
-        if (balloonText != null)
+        Check(noticeText == L.F("EasyVocal {0} is available — click to update", "9.9.0"), "started hidden, a new version shows a tray notice");
+        if (noticeText != null)
         {
             // The notice itself (a window of ours in the screen's corner).
-            TrayNotice.Show(balloonText, () => { }, TimeSpan.FromSeconds(5));
+            TrayNotice.Show(noticeText, () => { }, TimeSpan.FromSeconds(5));
             await Task.Delay(400);
             if (TrayNotice.Shown is { } notice) Snapshot(notice, Png("tray_notice"));
             TrayNotice.CloseAll();

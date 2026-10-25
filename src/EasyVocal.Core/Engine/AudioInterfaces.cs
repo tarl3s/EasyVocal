@@ -2,7 +2,7 @@ using System;
 
 namespace EasyVocal.Core.Engine;
 
-/// <summary>An audio endpoint as Windows lists it. <see cref="Id"/> is the stable endpoint id saved in settings.</summary>
+/// <summary>An audio device as the platform lists it. <see cref="Id"/> is its stable id, the one saved in settings.</summary>
 public sealed record DeviceInfo(string Id, string Name, bool IsDefault);
 
 /// <summary>A microphone delivering mono float samples at <see cref="Dsp.AudioFormat.SampleRate"/>.</summary>
