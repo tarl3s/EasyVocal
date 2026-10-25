@@ -490,6 +490,29 @@ public class PactlTests(ITestOutputHelper output)
                     foreach (var priority in new[] { ThreadPriority.Normal, ThreadPriority.Highest })
                         foreach (int bytes in new[] { 1920, 0 })
                             output.WriteLine($"probe ({priority}, fragsize {bytes}): " + ProbeRead(PactlVirtualMic.SinkName + ".monitor", priority, bytes));
+                    // Opened here, read on another thread (as PulseMic does).
+                    var s = PulseSimple.Open(PulseSimple.Record, PactlVirtualMic.SinkName + ".monitor", "Probe", 1920);
+                    string got = "blocked";
+                    var reader = new Thread(() =>
+                    {
+                        var w = System.Diagnostics.Stopwatch.StartNew();
+                        int n = 0;
+                        var buf = new float[480];
+                        while (w.ElapsedMilliseconds < 500 && PulseSimple.Read(s, buf, out _) == 0) n++;
+                        got = n + " reads in " + w.ElapsedMilliseconds + " ms";
+                    }) { IsBackground = true };
+                    reader.Start();
+                    reader.Join(3000);
+                    output.WriteLine("opened here, read there: " + got);
+                    // A fresh PulseMic now.
+                    int fresh = 0;
+                    using (var again = new PulseMic(null, PactlVirtualMic.SinkName + ".monitor"))
+                    {
+                        again.Samples += (_, _) => Interlocked.Increment(ref fresh);
+                        again.Start();
+                        Thread.Sleep(500);
+                    }
+                    output.WriteLine("a new PulseMic in 500 ms: " + Volatile.Read(ref fresh) + " blocks; the first ones now: " + Volatile.Read(ref monitorBlocks) + " / " + blocks);
                     output.WriteLine(PulseState());
                 }
                 Assert.True(blocks > 20, "the virtual microphone delivered audio");
