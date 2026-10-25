@@ -177,14 +177,22 @@ public partial class MainWindow : AppWindow
         if (controller.SoundGoesToCable)
         {
             // Hearing nothing at all is the worse problem: this comes first. Nothing changes until Fix is pressed.
-            ShowBanner(L.T("Your PC's sound is going into the virtual cable, so you can't hear it."), fix: true, chooseMic: false);
+            ShowBanner(L.T(controller.Platform.Texts.SoundGoesToCable), fix: true, chooseMic: false);
             fixDefaults = true;
             return;
         }
         switch (controller.State)
         {
+            case EngineState.MicLost when controller.MicPermissionDenied:
+                // The system refuses the microphone (privacy settings): only the person can allow it there.
+                ShowBanner(L.T(controller.Platform.Texts.MicBlocked), fix: false, chooseMic: false,
+                    privacy: controller.Platform.OpenMicSettings != null);
+                break;
             case EngineState.MicLost:
                 ShowBanner(L.T("Microphone disconnected — reconnecting…"), fix: false, chooseMic: true);
+                break;
+            case EngineState.NoVirtualCable when controller.PreparingVirtualMic:
+                Banner.IsVisible = false; // EasyVocal is making it right now (Linux): not missing
                 break;
             case EngineState.NoVirtualCable when controller.MonitorOnly:
                 ShowBanner(L.T("Virtual microphone not found. You can still try the voices with 🎧 Hear me."), fix: true, chooseMic: false);
@@ -203,12 +211,20 @@ public partial class MainWindow : AppWindow
         }
     }
 
-    private void ShowBanner(string text, bool fix, bool chooseMic)
+    private void ShowBanner(string text, bool fix, bool chooseMic, bool privacy = false)
     {
         BannerText.Text = text;
         FixButton.IsVisible = fix;
         MicButton.IsVisible = chooseMic;
+        PrivacyButton.IsVisible = privacy;
         Banner.IsVisible = true;
+    }
+
+    /// <summary>The microphone banner's "Open settings": the system's microphone privacy page.</summary>
+    private void PrivacyButton_Click(object? sender, RoutedEventArgs e)
+    {
+        try { controller.Platform.OpenMicSettings?.Invoke(); }
+        catch (Exception ex) { AppLog.Error("Opening the microphone privacy settings failed", ex); }
     }
 
     private void UpdateMeter()
@@ -589,7 +605,7 @@ public partial class MainWindow : AppWindow
             return;
         }
         if (!controller.FixDefaults())
-            await AskDialog.TellAsync(this, L.T("Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings."));
+            await AskDialog.TellAsync(this, L.T(controller.Platform.Texts.FixRefused));
     }
 
     private void MicButton_Click(object? sender, RoutedEventArgs e) => FireAndForget.Watch(SettingsWindow.OpenAsync(controller, this), "Settings");

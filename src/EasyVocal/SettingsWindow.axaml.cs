@@ -26,6 +26,7 @@ public partial class SettingsWindow : AppWindow
     {
         this.controller = controller;
         InitializeComponent();
+        StartBox.Content = L.T(controller.Platform.Texts.StartAtLogin);
         Place("settings", controller);
         BuildHotkeyRows();
         Load();
@@ -43,13 +44,13 @@ public partial class SettingsWindow : AppWindow
             var inputs = controller.Devices.Inputs();
             var outputs = controller.Devices.Outputs();
 
-            DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), inputs, s.MicDeviceId);
+            DeviceBox.Fill(MicBox, L.T(controller.Platform.Texts.AutomaticMic), inputs, s.MicDeviceId);
             micShown = MicBox.SelectedItem as ComboBoxItem;
             MicProblem.IsVisible = false;
 
             OutputHint.Text = L.T(controller.Platform.VirtualMic.Texts.OutputHint);
             DeviceBox.Fill(OutputBox, L.T(controller.Platform.VirtualMic.Texts.AutomaticOutput), outputs, s.OutputDeviceId);
-            DeviceBox.Fill(MonitorBox, L.T("Windows default"), DeviceRules.ExcludeVirtualCable(controller.Platform.VirtualMic.Cable, outputs), s.MonitorDeviceId);
+            DeviceBox.Fill(MonitorBox, L.T(controller.Platform.Texts.DefaultHeadphones), DeviceRules.ExcludeVirtualCable(controller.Platform.VirtualMic.Cable, outputs), s.MonitorDeviceId);
 
             LanguageBox.Items.Clear();
             var languages = new (string Code, string Name)[]
@@ -132,7 +133,7 @@ public partial class SettingsWindow : AppWindow
         bool on = StartBox.IsChecked == true;
         if (controller.SetStartWithWindows(on)) return;
         StartBox.IsChecked = !on;
-        await AskDialog.TellAsync(this, L.T("Windows would not let EasyVocal start with it.")); // already in Settings: no "try again in Settings"
+        await AskDialog.TellAsync(this, L.T(controller.Platform.Texts.StartAtLoginRefused)); // already in Settings: no "try again in Settings"
     }
 
     private void AskQuitBox_Click(object? sender, RoutedEventArgs e)
@@ -173,7 +174,18 @@ public partial class SettingsWindow : AppWindow
     private async void SetupAgainButton_Click(object? sender, RoutedEventArgs e)
     {
         await SetupWindow.OpenAsync(controller, this);
+        if (controller.IsDisposed) return;
         Load(); // setup may have changed the microphone and "Start with Windows"
+    }
+
+    /// <summary>
+    /// Quits EasyVocal (the question first, unless turned off) — also where there is no tray icon to quit from (a
+    /// desktop without one): closing the window only minimises then.
+    /// </summary>
+    private void QuitButton_Click(object? sender, RoutedEventArgs e)
+    {
+        Close();
+        controller.RequestQuit();
     }
 
     // ---------- general hotkeys ----------

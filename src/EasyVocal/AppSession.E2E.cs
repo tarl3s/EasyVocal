@@ -409,7 +409,7 @@ internal sealed partial class AppSession
         await Step("12 VB-CABLE takes Windows' defaults: the headphones stay real, banner + Fix, the install puts back what the person had", async () =>
         {
             await Baseline(c, main);
-            string SoundInCable() => L.T("Your PC's sound is going into the virtual cable, so you can't hear it.");
+            string SoundInCable() => L.T(c.Platform.Texts.SoundGoesToCable);
             int calls = d.SetDefaultCalls.Length;
 
             // The system's default playback device and microphone become the cable (nothing EasyVocal did).

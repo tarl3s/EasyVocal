@@ -302,7 +302,7 @@ internal sealed partial class AppSession
                 Snapshot(w, Png("setup_other"));
                 w.ShowRestartMessage();
                 await Settle(w);
-                Check(w.CableStatus.Text == L.T("Restart your PC to finish installing, then open EasyVocal again."), "setup says to restart when the device never shows up");
+                Check(w.CableStatus.Text == L.T(c.Platform.Texts.RestartToFinish), "setup says to restart when the device never shows up");
                 Snapshot(w, Png("setup_restart"));
                 w.ShowOfficialPageFallback(open: false);
                 await Settle(w);

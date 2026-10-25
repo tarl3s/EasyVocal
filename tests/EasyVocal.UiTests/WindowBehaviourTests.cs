@@ -1,3 +1,4 @@
+using EasyVocal.Core.Text;
 using EasyVocal.Core.Update;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -213,5 +214,67 @@ public class WindowBehaviourTests
             lock (failures) Assert.Single(failures);
         }
         finally { FireAndForget.Failed -= OnFailed; }
+    }
+
+    /// <summary>The devices of the e2e test, but the system refuses the microphone (macOS / Windows privacy settings).</summary>
+    private sealed class RefusedMic(TestAudioDevices inner) : EasyVocal.Core.Platform.IAudioBackend
+    {
+        public IReadOnlyList<EasyVocal.Core.Engine.DeviceInfo> Inputs() => inner.Inputs();
+        public IReadOnlyList<EasyVocal.Core.Engine.DeviceInfo> Outputs() => inner.Outputs();
+        public EasyVocal.Core.Engine.IAudioInput OpenMic(string id) => throw new EasyVocal.Core.Platform.MicPermissionDeniedException();
+        public EasyVocal.Core.Engine.IAudioOutput OpenSpeaker(string id) => inner.OpenSpeaker(id);
+        public EasyVocal.Core.Engine.DefaultIds Defaults(bool playback) => inner.Defaults(playback);
+        public bool SetDefault(string id) => false;
+        public event Action? Changed { add => inner.Changed += value; remove => inner.Changed -= value; }
+    }
+
+    [AvaloniaFact]
+    public void MicRefused_TheBannerSaysWhereToAllowIt_AndOpensThatPage()
+    {
+        var data = Path.Combine(Path.GetTempPath(), "EV_UiMicRefused_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(data);
+        int opened = 0;
+        var platform = TestPlatform.Create(new RefusedMic(new TestAudioDevices(cablePresent: true)), new FakeUpdaterPlatform(), SoundDecoders.Default)
+            with { OpenMicSettings = () => opened++, Texts = EasyVocal.Core.Platform.PlatformTexts.MacOS };
+        var controller = new AppController(data, platform);
+        var main = new MainWindow(controller);
+        try
+        {
+            main.Show();
+            controller.Start();
+            Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+            Assert.True(controller.MicPermissionDenied);
+            Assert.True(main.Banner.IsVisible);
+            Assert.Equal(L.T(EasyVocal.Core.Platform.PlatformTexts.MacOS.MicBlocked), main.BannerText.Text);
+            Assert.False(main.MicButton.IsVisible); // choosing another mic doesn't help: the system refuses every one
+            Ui.Click(main.PrivacyButton);
+            Assert.Equal(1, opened);
+        }
+        finally
+        {
+            main.AllowClose();
+            main.Close();
+            controller.Dispose();
+            for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
+            {
+                try { Directory.Delete(data, recursive: true); }
+                catch (IOException) { Thread.Sleep(200); }
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public void Settings_QuitButton_AsksTheSessionToQuit()
+    {
+        using var f = new Fixture();
+        f.Main.Show();
+        int quits = 0;
+        f.Controller.QuitRequested += () => quits++;
+        var settings = new SettingsWindow(f.Controller);
+        var shown = settings.ShowAsync(null);
+        Assert.Equal(L.T(f.Controller.Platform.Texts.StartAtLogin), settings.StartBox.Content);
+        Ui.Click(settings.QuitButton);
+        Assert.True(shown.IsCompleted);
+        Assert.Equal(1, quits);
     }
 }

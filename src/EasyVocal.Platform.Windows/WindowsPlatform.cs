@@ -28,5 +28,13 @@ public static class WindowsPlatform
         WindowsUpdaterPlatform.Instance,
         Decoders(),
         Mp3,
-        window => new WindowsGlobalHotkeys(window));
+        window => new WindowsGlobalHotkeys(window))
+    {
+        Texts = PlatformTexts.Windows,
+        OpenMicSettings = OpenMicPrivacy,
+    };
+
+    /// <summary>Windows Settings, Privacy &amp; security, Microphone.</summary>
+    public static void OpenMicPrivacy() =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:privacy-microphone") { UseShellExecute = true })?.Dispose();
 }

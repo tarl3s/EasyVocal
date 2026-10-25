@@ -85,6 +85,14 @@ public sealed class AppController : IDisposable
     /// <summary>EasyVocal quit (Dispose ran): code that resumes after a dialog must not touch anything any more.</summary>
     public bool IsDisposed => disposed;
 
+    /// <summary>A window's Quit (Settings' "Quit EasyVocal"): the session asks and quits the normal way. UI thread.</summary>
+    public event Action? QuitRequested;
+
+    public void RequestQuit()
+    {
+        if (!disposed) QuitRequested?.Invoke();
+    }
+
     public string DataFolder { get; }
     public string SoundsFolder { get; }
 

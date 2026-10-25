@@ -1,7 +1,9 @@
 using System.IO;
 using System.Reflection;
 using System.Text;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Threading;
 using EasyVocal.Core.Text;
@@ -93,9 +95,15 @@ internal sealed partial class AppSession
         window = new MainWindow(controller);
         if (!options.Hosted)
         {
-            try { tray = new Tray(controller, ShowMainWindow, () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting")); }
-            catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
+            if (TrayAvailable(platform))
+            {
+                try { tray = new Tray(controller, ShowMainWindow, () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting")); }
+                catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
+            }
+            else AppLog.Info("This desktop shows no tray icons: closing the window minimises it");
+            WatchDockReopen();
         }
+        controller.QuitRequested += () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting");
         // No tray icon to come back from: closing the window minimises it instead of hiding it.
         window.CanHideToTray = tray != null;
         window.HiddenToTray += () => tray?.ShowStillRunningTip();
@@ -140,6 +148,29 @@ internal sealed partial class AppSession
         if (!Args.TestMode) return real;
         var audio = (IAudioBackend?)e2eDevices ?? PlatformFactory.ReadOnlyAudio(real);
         return real with { Audio = audio, Startup = SmokeStartup() };
+    }
+
+    /// <summary>The desktop can show a tray icon (asked of the platform; GNOME without an AppIndicator extension can't).</summary>
+    private static bool TrayAvailable(PlatformServices platform)
+    {
+        try { return platform.HasTray?.Invoke() ?? true; }
+        catch (Exception ex)
+        {
+            AppLog.Error("Asking whether the desktop has a tray failed", ex);
+            return true;
+        }
+    }
+
+    /// <summary>macOS: a click on the Dock icon (or opening the app again) while the window is hidden brings it back.</summary>
+    private void WatchDockReopen()
+    {
+        if (Application.Current?.TryGetFeature(typeof(IActivatableLifetime)) is not IActivatableLifetime lifetime) return;
+        lifetime.Activated += (_, e) =>
+        {
+            if (e.Kind != ActivationKind.Reopen) return;
+            AppLog.Info("Reopened from the Dock: showing the window");
+            ShowMainWindow();
+        };
     }
 
     /// <summary>An exception reached the UI thread or a watched task (any thread): the session's tests fail on it.</summary>
@@ -204,8 +235,8 @@ internal sealed partial class AppSession
                 return;
             }
             var answer = await AskDialog.AskAsync(owner,
-                L.T("Add EasyVocal to the Start menu, so you can open it from there?"),
-                L.T("Add to Start menu"), L.T("No, thanks"), null);
+                L.T(controller.Platform.Texts.AppMenuQuestion),
+                L.T(controller.Platform.Texts.AppMenuYes), L.T("No, thanks"), null);
             if (controller.IsDisposed) return; // quit while the question was up
             settings.StartMenuShortcut = answer.Yes;
             settings.StartMenuAsked = true;

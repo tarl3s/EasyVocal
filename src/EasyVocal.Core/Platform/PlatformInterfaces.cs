@@ -298,4 +298,14 @@ public sealed record PlatformServices(
     IUpdaterPlatform Updater,
     IReadOnlyList<ISoundDecoder> Decoders,
     IMp3Encoder? Mp3Encoder,
-    Func<IntPtr?, IGlobalHotkeys> CreateHotkeys);
+    Func<IntPtr?, IGlobalHotkeys> CreateHotkeys)
+{
+    /// <summary>The sentences that name this operating system ("Start with Windows"...).</summary>
+    public PlatformTexts Texts { get; init; } = PlatformTexts.ForThisComputer;
+
+    /// <summary>Opens the system's microphone privacy settings (the banner's button when the mic is refused); null = none to open.</summary>
+    public Action? OpenMicSettings { get; init; }
+
+    /// <summary>Whether the desktop shows tray icons (asked once at start); null = assume it does. Without one, closing the window minimises it.</summary>
+    public Func<bool>? HasTray { get; init; }
+}

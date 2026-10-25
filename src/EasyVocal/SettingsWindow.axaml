@@ -27,7 +27,7 @@
                 <TextBlock x:Name="LanguageNote" Text="{loc:T 'The language changes the next time you open EasyVocal.'}"
                            Classes="dim small" TextWrapping="Wrap" Margin="0,4,0,0" />
 
-                <CheckBox x:Name="StartBox" Margin="0,16,0,0" Content="{loc:T 'Start with Windows'}" Click="StartBox_Click" />
+                <CheckBox x:Name="StartBox" Margin="0,16,0,0" Click="StartBox_Click" /> <!-- its text names the system: set in code -->
                 <CheckBox x:Name="AskQuitBox" Margin="0,10,0,0" Content="{loc:T 'Ask before quitting'}" Click="AskQuitBox_Click" />
 
                 <CheckBox x:Name="UpdateBox" Margin="0,10,0,0" Content="{loc:T 'Check for updates when EasyVocal opens'}" Click="UpdateBox_Click" />
@@ -45,6 +45,8 @@
         </ScrollViewer>
 
         <DockPanel Grid.Row="1" Margin="20,8,20,16" LastChildFill="False">
+            <Button x:Name="QuitButton" DockPanel.Dock="Left" Content="{loc:T 'Quit EasyVocal'}" Click="QuitButton_Click"
+                    ToolTip.Tip="{loc:T 'Close EasyVocal completely (calls stop getting your voice)'}" />
             <Button x:Name="CloseButton" DockPanel.Dock="Right" MinWidth="96" Theme="{StaticResource AccentButton}"
                     Content="{loc:T 'Close'}" IsDefault="True" IsCancel="True" Click="CancelClick" />
         </DockPanel>

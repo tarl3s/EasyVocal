@@ -41,6 +41,8 @@
                         VerticalAlignment="Center" Content="{loc:T 'Fix'}" Click="FixButton_Click" />
                 <Button x:Name="MicButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
                         VerticalAlignment="Center" Content="{loc:T 'Choose microphone'}" Click="MicButton_Click" />
+                <Button x:Name="PrivacyButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
+                        VerticalAlignment="Center" Content="{loc:T 'Open settings'}" Click="PrivacyButton_Click" IsVisible="False" />
                 <TextBlock x:Name="BannerText" TextWrapping="Wrap" VerticalAlignment="Center" />
             </DockPanel>
         </Border>

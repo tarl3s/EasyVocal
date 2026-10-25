@@ -46,6 +46,7 @@ public partial class SetupWindow : AppWindow
         this.controller = controller;
         this.cableProbe = cableProbe ?? (() => controller.Platform.VirtualMic.Find(controller.Devices.Outputs()) != null);
         InitializeComponent();
+        StartBox.Content = L.T(controller.Platform.Texts.StartAtLoginRecommended);
         CableExplanation.Text = L.T(MicTexts.Explanation);
         InstallButton.IsVisible = controller.Platform.VirtualMic.CanInstall;
         Place("setup", controller);
@@ -175,7 +176,7 @@ public partial class SetupWindow : AppWindow
         waiting = true;
         waitUntil = DateTime.UtcNow + WaitForDevice;
         SetProgress(1);
-        SetStatus(L.T("Waiting for Windows to finish installing…"), false);
+        SetStatus(L.T(controller.Platform.Texts.WaitingForInstall), false);
         waitTimer.Start();
     }
 
@@ -213,7 +214,7 @@ public partial class SetupWindow : AppWindow
     }
 
     internal void ShowRestartMessage() =>
-        SetStatus(L.T("Restart your PC to finish installing, then open EasyVocal again."), true);
+        SetStatus(L.T(controller.Platform.Texts.RestartToFinish), true);
 
     // The system's audio thread.
     private void OnDevicesChanged() => Dispatcher.UIThread.Post(() =>
@@ -238,7 +239,7 @@ public partial class SetupWindow : AppWindow
         try
         {
             // The same list as Settings: a chosen mic that is unplugged shows as "Device not connected", not "Automatic".
-            DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), mics, controller.Settings.MicDeviceId);
+            DeviceBox.Fill(MicBox, L.T(controller.Platform.Texts.AutomaticMic), mics, controller.Settings.MicDeviceId);
             NoMicText.IsVisible = mics.Count == 0;
         }
         finally
@@ -357,7 +358,7 @@ public partial class SetupWindow : AppWindow
     {
         controller.Settings.SetupDone = true;
         if (!controller.SetStartWithWindows(StartBox.IsChecked == true))
-            await AskDialog.TellAsync(this, L.T("Windows would not let EasyVocal start with it. You can try again in Settings."));
+            await AskDialog.TellAsync(this, L.T(controller.Platform.Texts.StartAtLoginRefusedTryAgain));
         controller.Save();
         Accept();
     }

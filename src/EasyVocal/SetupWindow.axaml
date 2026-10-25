@@ -98,7 +98,7 @@
                     </StackPanel>
                 </Border>
 
-                <CheckBox x:Name="StartBox" Margin="2,14,0,0" Content="{loc:T 'Start with Windows (recommended)'}" />
+                <CheckBox x:Name="StartBox" Margin="2,14,0,0" /> <!-- its text names the system: set in code -->
                 <TextBlock Text="{loc:T 'EasyVocal then starts hidden in the tray, so your voice is ready for every call.'}"
                            Classes="dim small" Margin="28,2,0,0" TextWrapping="Wrap" />
             </StackPanel>
