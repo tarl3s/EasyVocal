@@ -5,8 +5,9 @@ Context for AI coding assistants. `README.md` (English) and `README.pt-BR.md` ar
 
 ## The project in one paragraph
 
-EasyVocal is a **free, light Windows real-time voice changer + soundboard for any call app** (C# / Avalonia / .NET 8).
-Microphone → filter → mixer (+ soundboard) → the virtual cable VB-CABLE, which the call app picks as its microphone.
+EasyVocal is a **free, light real-time voice changer + soundboard for any call app** (C# / Avalonia / .NET 8) for
+Windows, macOS and Linux. Microphone → filter → mixer (+ soundboard) → a virtual cable the call app picks as its
+microphone: VB-CABLE on Windows, BlackHole 2ch on macOS, a PipeWire/PulseAudio device EasyVocal makes itself on Linux.
 Audience: people who want fun on calls, not audio people (buttons, emojis, plain sliders). MIT, public repo.
 Owner speaks Brazilian Portuguese; code, comments, UI source text and commits are English.
 
@@ -14,7 +15,9 @@ Owner speaks Brazilian Portuguese; code, comments, UI source text and commits ar
 `docs/superpowers/specs/2026-10-25-cross-platform-design.md`). Phase 1 is done: `EasyVocal.Core` is portable `net8.0`
 and everything Windows-only sits behind its `Core/Platform` interfaces in `EasyVocal.Platform.Windows`. Phase 2 is
 done: the UI is Avalonia 11 (one UI for every OS, WPF and WinForms are gone) and the smoke and e2e tests also run
-headless. macOS/Linux backends come in phase 3 (`PlatformFactory.cs` is where they plug in).
+headless. Phase 3 is done: `EasyVocal.Platform.MacOS` and `EasyVocal.Platform.Linux` (sharing `EasyVocal.Platform.Unix`),
+wired in `PlatformFactory.cs`, and CI (`.github/workflows/ci.yml`) runs the suites on Windows, macOS and Linux.
+Packaging (.app, tar.gz) and the release job are phase 4.
 
 ## Project layout
 
@@ -22,11 +25,15 @@ headless. macOS/Linux backends come in phase 3 (`PlatformFactory.cs` is where th
 |---|---|---|
 | `src/EasyVocal.Core` | `net8.0` (portable) | model, storage, DSP, engine, hotkey logic, localizer, audio editing, decoders, the updater (rules, unpacking, service), the platform interfaces (`Core/Platform/PlatformInterfaces.cs`), `AppLog` |
 | `src/EasyVocal.Platform.Windows` | `net8.0` marked `SupportedOSPlatform("windows")`, no UI | WASAPI devices + Windows' default devices, Media Foundation / ACM decoders and the MP3 encoder, `RegisterHotKey` (on its own message-only window), the Run key, the Start menu `.lnk`, VB-CABLE installer + Authenticode, the updater's PowerShell swap; `WindowsPlatform.Services` hands them out |
-| `src/EasyVocal` | `net8.0`, Avalonia 11 (exe `EasyVocal(.exe)`) | the app: windows, `AppController` (talks only to the interfaces and an `IUiDispatcher`), tray, smoke/e2e test modes; `PlatformFactory.ForThisComputer` is the one place that picks the platform (`OperatingSystem.IsWindows()` → Windows; elsewhere a no-devices stand-in until phase 3). It references the Windows project on every OS and calls it only behind `IsWindows()` (CA1416 checks) |
+| `src/EasyVocal.Platform.Unix` | `net8.0` marked macOS + Linux | what both share: PortAudio devices (own P/Invoke, `PortAudio/`; natives from the `org.k2fsa.portaudio.runtime.*` packages, Apache-2.0; 48 kHz mono float, 10 ms blocks, a 2 s poll for list changes and stalled streams, an optional `IDeviceSource` for the list), `ICommandRunner` (pactl, brew, open… with `LC_ALL=C`; tests fake it), `Opener`, the updater's sh helper (`ShHelperScript`, `ShLauncher`) and `UnixUpdaterPlatform` (.app / folder) |
+| `src/EasyVocal.Platform.MacOS` | `net8.0` marked `macos` | `CoreAudioDevices` (the list: UIDs, names, defaults), `MicPermission` (AVFoundation's status via the ObjC runtime; refused → `MicPermissionDeniedException`, also while recording), `BlackHoleProvider` (`brew install blackhole-2ch` in the background with an osascript password dialog through `SUDO_ASKPASS`, else the official page), `CarbonHotkeys` + `MacKeys` (kVK codes; Win = ⌘), `LaunchAgent` (`~/Library/LaunchAgents/com.tarl3s.easyvocal.plist`, `--tray`), `NoAppMenuEntry`; `MacPlatform.Services` |
+| `src/EasyVocal.Platform.Linux` | `net8.0` marked `linux` | `PulseBackend` (pactl lists sinks/sources and defaults; libpulse-simple streams by name; PortAudio when no PulseAudio/PipeWire server answers), `PactlVirtualMic` (module-null-sink `easyvocal_out` + module-remap-source `easyvocal_mic`, unloaded on quit, leftovers cleaned by name), `X11Hotkeys` + `X11Keys` (XGrabKey on its own thread and display, Caps/Num Lock variants, none on Wayland: `DesktopSession`), `AutostartEntry` (`~/.config/autostart/easyvocal.desktop`), `AppMenuEntry` (`~/.local/share/applications` + icon), `TrayHost` (StatusNotifierWatcher on D-Bus); `LinuxPlatform.Services` |
+| `src/EasyVocal` | `net8.0`, Avalonia 11 (exe `EasyVocal(.exe)`) | the app: windows, `AppController` (talks only to the interfaces and an `IUiDispatcher`), tray, smoke/e2e test modes; `PlatformFactory.ForThisComputer` is the one place that picks the platform (Windows, macOS, Linux; anything else a no-devices stand-in). It references every platform project and calls each only behind `OperatingSystem.IsWindows()/IsMacOS()/IsLinux()` (CA1416 checks) |
 | `tests/EasyVocal.Tests` | `net8.0` | everything portable (runs on any OS), the updater with a pretend platform (`Helpers/FakeUpdate.cs`); fixtures in `Fixtures/` (a 440 Hz tone as MP3 and OGG) |
 | `tests/EasyVocal.FfmpegStandIn` | `net8.0` exe | a tiny program the decoder tests run in place of ffmpeg (what it does is written in the "sound file" it gets) |
 | `tests/EasyVocal.Tests.Windows` | `net8.0-windows` | registry, `.lnk`, VB-CABLE/Authenticode, Media Foundation / ACM, hotkeys, the PowerShell helper, the e2e run; links the portable tests' `Helpers/` |
 | `tests/EasyVocal.UiTests` | `net8.0` (portable) | Avalonia.Headless (drawn with Skia): the app's own smoke and e2e steps in-process on pretend devices/hotkeys/startup/virtual mic (`E2E/TestPlatform.cs`), the e2e relaunch as a second session; `AppController` on a hand-pumped `IUiDispatcher`; `KeyMap`. `EV_UI_SNAPSHOTS=<folder>` keeps the PNGs |
+| `tests/EasyVocal.Tests.Platforms` | `net8.0` (portable, CA1416 off) | the macOS/Linux projects on any OS with a fake `ICommandRunner` (`FakeRunner.cs`): key maps, plist and .desktop files, pactl's arguments and output, BlackHole's install, the sh helper's text, the updater's names and unpacking; PortAudio for real (its win-x64 native is referenced too). Real-system tests check the OS: CoreAudio/Carbon on macOS, Xvfb grabs on Linux, the sh helper run with `/bin/sh`, and the virtual mic carrying a tone through a real PulseAudio server only with `EV_PULSE_TESTS=1` (CI) |
 
 Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (the tests swap pieces with `with { … }`):
 - `IAudioBackend`: list/open devices, defaults (one default = both roles off Windows), set default where supported,
@@ -35,16 +42,22 @@ Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (
   thread: `AppController` posts it to the UI) and `IHotkeyTestHooks` (`HighestId`, `SimulatePress`, tests only);
   `PlatformServices.CreateHotkeys(window handle or null)`.
 - `IStartupService`, `IShortcutService` (`Supported`, `Refresh` → bool, logs).
-- `IVirtualMicProvider`: `Find`, `CallAppDeviceName`, `Texts` (the setup's and settings' sentences, written with
+- `IVirtualMicProvider`: `Find`, `Cable` (`CableNames`: the device names `DeviceRules`, `DefaultDeviceRules` and `MicPicker`
+  use; none of the cable's devices is ever the mic or the headphones), `CallAppDeviceName`, `Texts` (the setup's and settings' sentences, written with
   `UiText.Mark` so the translation test finds them), `CanInstall`/`InstallAsync`, `TakesDefaultsOnInstall` (gates the
   remember / put back / Fix logic), `CanCreate` + `CleanStaleAsync`/`CreateAsync`/`RemoveAsync` (called by
-  `AppController` at start and quit; Linux will create its device), `OpenPage`. Windows = `VbCableProvider`.
+  `AppController` at start, off the UI thread, and at quit — removed even when its creation finished late), `OpenPage`.
+  Windows = `VbCableProvider`, macOS = `BlackHoleProvider`, Linux = `PactlVirtualMic`.
 - `IUpdaterPlatform`: `AssetNames(arch)`, `ExeName`, `InstallRoot` (what is replaced: the exe, the .app, the folder),
   `CanSelfUpdate` (else the release page opens), `Unpack` (zip or tar.gz through `UpdatePackage`'s shared checks),
   the helper (`HelperFileName`, `HelperEncoding`, `BuildHelper(HelperPlan Target/NewPayload)`, `Launcher`),
   `RelaunchArguments`.
 - `Decoders` (the order `SoundLoader` tries, `Core/Sounds/ISoundDecoder`) and `Mp3Encoder` (`IMp3Encoder`, null where
   there is none). Nothing is set in a global: windows load with `controller.Platform.Decoders`.
+- Init properties of `PlatformServices`: `Texts` (`PlatformTexts`, `Core/Platform/PlatformTexts.cs`: every sentence that
+  names the OS — "Start with Windows" / "Open at login" / "Start at login", "Windows default" / "System default",
+  "Restart your PC…", the mic-refused banner; Windows/MacOS/Linux sets), `OpenMicSettings` (the mic-refused banner's
+  "Open settings"; null = no button) and `HasTray` (null = assume one; Linux asks D-Bus: without one, closing minimises).
 
 ## Build, run, test
 
@@ -52,7 +65,8 @@ Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (
 dotnet build                       # 0 errors, 0 warnings expected
 dotnet test                        # every test project (xUnit), including the E2E tests below (builds the app first)
 dotnet test --filter Category!=E2E # everything but the real-window E2E test
-dotnet test tests/EasyVocal.Tests  # only the portable tests (what macOS/Linux run, with tests/EasyVocal.UiTests)
+dotnet test tests/EasyVocal.Tests  # only the portable tests (macOS/Linux CI runs these, tests/EasyVocal.Tests.Platforms and tests/EasyVocal.UiTests)
+EV_PULSE_TESTS=1 xvfb-run -a dotnet test tests/EasyVocal.Tests.Platforms   # Linux: also the real PulseAudio virtual mic and X11 grabs (CI)
 EV_UI_SNAPSHOTS=<folder> dotnet test tests/EasyVocal.UiTests   # headless smoke + e2e; keeps the smoke PNGs in <folder>
 dotnet run --project src/EasyVocal
 dotnet run --project src/EasyVocal -- --data <folder> --smoketest   # opens every window, renders PNGs, exits 0
@@ -89,7 +103,7 @@ the relaunch is a second `AppSession` on the same folder).
 | Area | Files |
 |---|---|
 | DSP (no UI, no NAudio device code) | `src/EasyVocal.Core/Dsp/`: `Effects.cs` (echo, radio, distortion, robot, whisper), `VoiceEffects.cs` (growl, "Big room" reverb, bass/treble tone, vocoder), `VoiceShifter.cs` (pitch/formant TD-PSOLA, plus wobble, monotone and a voiced-only mode for the octave layer), `Biquad.cs` (incl. shelves), `Limiter.cs`, `VoiceChain.cs` (`VoiceSliders` → a table of parameters → shifter [+ octave layer] → growl → vocoder → robot → distortion → radio → whisper → echo → room → tone; slides/crossfades; `CreateFollower` = another signal through the same voice), `IAudioEffect.cs` (+ `IAmountEffect`), `AudioFormat.cs` |
-| Engine | `Core/Engine/`: `AudioEngine.cs` (mic → chain → mixer → outputs; with `SoundsUseVoice` the mixer goes through a follower of the chain first, so mute / Hear me / Hear sounds still tell voice and sounds apart), `AudioInterfaces.cs` (`DeviceInfo`, `IAudioInput`, `IAudioOutput`), `DeviceRules.cs` (finds the virtual cable by VB-CABLE's names, picks real devices), `DefaultDeviceRules.cs` (VB-CABLE taking Windows' default devices: remember, put back, Fix), `FormatConverter.cs`, `MicMeter.cs` (the setup's level bar), `SoundPreview.cs` (the sound editor's ▶ on the headphones) |
+| Engine | `Core/Engine/`: `AudioEngine.cs` (mic → chain → mixer → outputs; with `SoundsUseVoice` the mixer goes through a follower of the chain first, so mute / Hear me / Hear sounds still tell voice and sounds apart), `AudioInterfaces.cs` (`DeviceInfo`, `IAudioInput`, `IAudioOutput`), `DeviceRules.cs` (`CableNames`: VB-CABLE, BlackHole, the Linux devices; finds the platform's cable, picks real devices), `DefaultDeviceRules.cs` (VB-CABLE taking Windows' default devices: remember, put back, Fix), `FormatConverter.cs`, `MicMeter.cs` (the setup's level bar), `SoundPreview.cs` (the sound editor's ▶ on the headphones) |
 | Platform interfaces | `Core/Platform/PlatformInterfaces.cs`: `IAudioBackend` (the seam the controller opens devices through and reads/sets the system's defaults with; the e2e test passes its own) + `MicPermissionDeniedException`, `IGlobalHotkeys` + `HotkeyCheck` + `IHotkeyTestHooks`, `IStartupService`, `IShortcutService`, `IVirtualMicProvider` (+ `VirtualMicTexts`, `UiText`, `InstallStatus`/`InstallResult`), `IUpdaterPlatform`, `PlatformServices` |
 | Sounds | `Core/Sounds/`: `SoundLoader.cs` (`Load`/`LoadWith(path, decoders, ct)` try each decoder that takes the extension; a failure, an empty result or "too long" moves on; only when none gave a sound: the first friendly answer (empty, too long, took too long), else "damaged"; no decoder for the extension = "install ffmpeg"; `Load(path)` alone = the portable list; `Extensions`/`DialogPattern` feed the file pickers), `SoundDecoders.cs` (`ISoundDecoder` with a `CancellationToken`, the portable list WAV/AIFF (NAudio.Core, also WAVE_FORMAT_EXTENSIBLE: 24-bit, float, 5.1) → OGG (NVorbis) → MP3 (NLayer) → ffmpeg, `SampleReading.ToMono48k` = downmix + resample + the 10-minute limit + cancellation), `FfmpegDecoder.cs` (`ffmpeg` on PATH or Homebrew's folders, Snap's last, looked for again until found; `-i file:<path>`, first sound track to mono 48 kHz f32 on stdout straight into the array; one 60 s deadline, killed on timeout or cancel; a non-zero exit is a failure; never installed), `SoundWriter.cs` (16-bit WAV; `IMp3Encoder` for MP3), `AudioEdit.cs` (the sound editor's pure operations on mono 48 kHz: cut/trim/split, speed with WSOLA time-stretch or resample, pitch, gain/normalize, fades, reverse, echo, a voice run offline through `VoiceChain` with its latency removed and its tail kept (on a part it rings on over what follows, like the echo), remove silence), `AudioHistory.cs` (its undo/redo, 20 steps, ~256 MB cap), `SoundMixer.cs`, `StarterSoundSynth.cs` (the 10 starter sounds are generated by code), `LoadTickets.cs` (drops a background decode of a sound that changed meanwhile), `WavePeaks.cs` (min/max of any range from a pyramid, for the editor's wave) |
 | Model and storage | `Core/Model/`: `AppSettings.cs`, `BuiltIns.cs` (14 voices, each with its own signature, see below; starter sounds), `ItemOps.cs` (`ImportSound`: a picked file is copied into `Sounds`, a video only as a WAV of its sound; also the edited-copy rules: `WriteSoundFile`, `UseEditedFile`, `BackToOriginal`, `AddSplitSounds`; a file stays while any sound uses it as `FileName` or `OriginalFileName`), `Core/Layout/WindowFit.cs` (`WindowBox`, clamp a window into a screen's working area, pick the screen, does a remembered place still fit); `Core/Storage/SettingsStore.cs` (`settings.json` + `Sounds\` in `%APPDATA%\EasyVocal`, `~/Library/Application Support/EasyVocal` on macOS, `~/.config/EasyVocal` on Linux; `IsPlainName` treats `\` `/` `:` as folder parts on every OS), `PathCompare.cs` (case-sensitive on Linux only), `TempFolders.cs`; `Core/Logging/AppLog.cs` |
@@ -111,6 +125,11 @@ the relaunch is a second `AppSession` on the same folder).
   can run the awaiting code right away (inline continuation): set any flag the caller checks *before* the click that
   closes it. In the smoke test an `async` step must go through `DialogAsync` (`Dialog` takes an `Action`, so an async
   lambda there becomes `async void` and the window closes under it).
+- Fire-and-forget work from the UI (a dialog opened from a click, a file loaded for an editor) goes through
+  `FireAndForget.Watch(task, "what")`, never `_ = task`: a failure is logged and counts in the smoke/e2e tests at once
+  (they `SettleBackgroundAsync` before checking). A dialog over a minimised owner restores the owner first. Settings has
+  a "Quit EasyVocal" button (`AppController.RequestQuit` → the session's normal quit), for desktops without a tray.
+  macOS: a Dock click while the window is hidden shows it (`IActivatableLifetime.Activated`, `ActivationKind.Reopen`).
 - Text in XAML: `{loc:T 'English text'}` (`xmlns:loc="using:EasyVocal"`); `ToolTip.Tip`, `IsVisible` (no Visibility).
 - Styles: control themes in `Theme.axaml` (`Theme="{StaticResource AccentButton}"`, or `Res.Theme("CardButton")` in
   code); a subclass of a themed control needs `StyleKeyOverride` (AppWindow returns `typeof(Window)`). Emoji
@@ -122,8 +141,10 @@ the relaunch is a second `AppSession` on the same folder).
 
 ## Global constraints
 
-- Today Windows 10/11 (the app is portable `net8.0` + Avalonia; only the Windows platform exists yet); self-contained
-  win-x64 single-file release, ~38 MB zipped (limit ~80-100 MB). Core and the app stay portable `net8.0`: nothing
+- Windows 10/11, macOS (arm64 and x64) and Linux x64 (PipeWire or PulseAudio; hotkeys need X11, none on Wayland).
+  Today's release is the self-contained win-x64 single file, ~38 MB zipped (limit ~80-100 MB; the macOS .app and Linux
+  tar.gz come with phase 4). Latency off Windows: PortAudio / PulseAudio blocks of 10 ms, about 20 ms queued.
+  Core and the app stay portable `net8.0`: nothing
   Windows-only in them unless behind `OperatingSystem.IsWindows()` (CA1416 warns); put platform code in
   `EasyVocal.Platform.Windows` (and the macOS/Linux projects) behind a `Core/Platform` interface. No WPF/WinForms.
 - Free, MIT, no ads, nothing locked. Public repo: no secrets, no personal paths.
@@ -141,10 +162,15 @@ the relaunch is a second `AppSession` on the same folder).
   nonlinearity, loudness): every pair at least 1.5 "audible steps" apart, plus Demon = octave layer, Monster = rough,
   Giant = longest tail and clean, Female up / Male down, the two robots different, loudness within -6..+5 dB. Retune
   a voice with that table (it is printed in the test output) and render the listening samples for the owner.
-- Dependencies: only permissive packages (Core: NAudio.Core, NAudio.Vorbis, NLayer; Windows platform: NAudio; app:
-  Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent (MIT); tests: xUnit, Avalonia.Headless.XUnit).
+- Dependencies: only permissive packages (Core: NAudio.Core, NAudio.Vorbis, NLayer; Windows platform: NAudio;
+  macOS/Linux: org.k2fsa.portaudio.runtime.* (PortAudio's native library, MIT, packaged Apache-2.0) with our own
+  P/Invoke; app: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent (MIT); tests: xUnit, Avalonia.Headless.XUnit). The
+  system's own libraries are loaded at run time: CoreAudio, Carbon, AVFoundation (macOS); libpulse-simple, libX11 (Linux).
 - Audio thread: no allocation per block, no locks held while doing DSP, no LINQ.
 - VB-CABLE is not bundled (donationware); the app downloads the official installer and verifies its signature.
+  BlackHole (GPL) is not bundled either: Homebrew installs it, or the person does from its page. On Linux nothing is
+  installed: EasyVocal loads two pactl modules while it runs. Off Windows EasyVocal never changes the system's default
+  devices (`SetDefault` is false), and only VB-CABLE's install runs the remember / put back / Fix logic.
 
 ## Hard rules
 
