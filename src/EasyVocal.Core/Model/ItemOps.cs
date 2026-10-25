@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using EasyVocal.Core.Sounds;
+using EasyVocal.Core.Storage;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal.Core.Model;
@@ -131,7 +132,7 @@ public static class ItemOps
     /// </summary>
     public static void DeleteFileIfUnused(AppSettings s, string fileName, string soundsFolder)
     {
-        if (string.IsNullOrWhiteSpace(fileName) || Path.GetFileName(fileName) != fileName) return; // never leave the folder
+        if (!SettingsStore.IsPlainName(fileName)) return; // never leave the folder
         if (IsFileUsed(s, fileName)) return;
         try
         {

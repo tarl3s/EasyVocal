@@ -238,9 +238,15 @@ public static class SettingsStore
         return result;
     }
 
-    /// <summary>A file name of the Sounds folder itself (no folders, nothing that leaves it).</summary>
-    private static bool IsPlainName(string? name) =>
-        !string.IsNullOrWhiteSpace(name) && Path.GetFileName(name) == name && name != "." && name != "..";
+    /// <summary>
+    /// A file name of the Sounds folder itself (no folders, nothing that leaves it). Backslashes and colons count as
+    /// folder parts on every system, so a settings file written on Windows means the same on macOS and Linux.
+    /// </summary>
+    public static bool IsPlainName([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? name) =>
+        !string.IsNullOrWhiteSpace(name) && Path.GetFileName(name) == name && name != "." && name != ".."
+        && name.IndexOfAny(FolderChars) < 0;
+
+    private static readonly char[] FolderChars = { '\\', '/', ':' };
 
     private static Dictionary<string, WindowBox> KeepSaneBoxes(Dictionary<string, WindowBox>? boxes)
     {
