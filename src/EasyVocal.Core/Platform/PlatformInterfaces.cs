@@ -226,13 +226,14 @@ public interface IVirtualMicProvider
     /// <summary>EasyVocal makes the device itself while it runs (<see cref="CreateAsync"/> / <see cref="RemoveAsync"/>).</summary>
     bool CanCreate { get; }
 
-    /// <summary>Removes what an earlier EasyVocal created and didn't remove (it crashed). Never throws.</summary>
-    Task CleanStaleAsync(CancellationToken ct);
-
-    /// <summary>Creates the virtual mic for this session, before the devices are opened. False when it didn't work. Never throws.</summary>
+    /// <summary>
+    /// Creates the virtual mic for this session (at start, and again when it went missing). Already there: true at once.
+    /// What an earlier EasyVocal left (it crashed) is removed first; a creation that fails half-way removes what it
+    /// made. False when it didn't work. Never throws.
+    /// </summary>
     Task<bool> CreateAsync(CancellationToken ct);
 
-    /// <summary>Removes what <see cref="CreateAsync"/> made (on quit). Never throws.</summary>
+    /// <summary>Removes the virtual mic (on quit): what this session made and anything else of EasyVocal's left. Never throws.</summary>
     Task RemoveAsync(CancellationToken ct);
 
     /// <summary>Opens <see cref="PageUrl"/> in the browser. Never throws.</summary>

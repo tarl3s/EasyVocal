@@ -135,24 +135,41 @@ public class ControllerTests
         }
     }
 
-    /// <summary>A virtual mic EasyVocal makes itself (like Linux'), whose creation finishes when the test says so.</summary>
+    /// <summary>
+    /// A virtual mic EasyVocal makes itself (like Linux'): the first creation finishes when the test says so, later ones
+    /// at once; <see cref="Present"/> is whether its device is in the list; a removal can be made to hang.
+    /// </summary>
     private sealed class GatedVirtualMic : IVirtualMicProvider
     {
         public readonly TaskCompletionSource<bool> Created = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int Creates, Removes, Cleans;
+        public readonly TaskCompletionSource RemoveGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public volatile bool Present, LaterCreatesWork = true;
+        public int Creates, Removes;
         public string Name => "Test mic";
         public string CallAppDeviceName => "Test mic";
         public VirtualMicTexts Texts { get; } = new("", "", "", "", "", "", "");
         public string PageUrl => "https://example.com";
         public CableNames Cable => CableNames.EasyVocalLinux;
-        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => null;
+        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => Present ? new DeviceInfo("easyvocal_out", "EasyVocal-Output", false) : null;
         public bool CanInstall => false;
         public bool TakesDefaultsOnInstall => false;
         public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) => Task.FromResult(new InstallResult(InstallStatus.Failed));
         public bool CanCreate => true;
-        public Task CleanStaleAsync(CancellationToken ct) { Interlocked.Increment(ref Cleans); return Task.CompletedTask; }
-        public Task<bool> CreateAsync(CancellationToken ct) { Interlocked.Increment(ref Creates); return Created.Task; }
-        public Task RemoveAsync(CancellationToken ct) { Interlocked.Increment(ref Removes); return Task.CompletedTask; }
+
+        public async Task<bool> CreateAsync(CancellationToken ct)
+        {
+            bool made = Interlocked.Increment(ref Creates) == 1 ? await Created.Task : LaterCreatesWork;
+            if (made) Present = true;
+            return made;
+        }
+
+        public Task RemoveAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref Removes);
+            Present = false;
+            return RemoveGate.Task;
+        }
+
         public void OpenPage() { }
     }
 
@@ -172,26 +189,39 @@ public class ControllerTests
         }
     }
 
+    private static PlatformServices WithMic(IVirtualMicProvider mic) =>
+        TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+
+    private static void Until(Func<bool> condition, ManualDispatcher ui)
+    {
+        for (int i = 0; i < 300 && !condition(); i++)
+        {
+            Thread.Sleep(10);
+            ui.Pump();
+        }
+        Assert.True(condition(), "the condition never came true");
+        Thread.Sleep(50); // what the finished work posted (its continuation) is run too
+        ui.Pump();
+    }
+
     [Fact]
     public void VirtualMic_IsMadeOffTheUiThread_AndRemovedOnQuit()
     {
         var data = NewData();
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
-        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        mic.RemoveGate.SetResult();
         try
         {
-            using (var c = new AppController(data, platform, ui))
+            using (var c = new AppController(data, WithMic(mic), ui))
             {
                 var watch = System.Diagnostics.Stopwatch.StartNew();
                 c.Start(); // the creation hangs: Start must not wait for it
                 Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), "Start took " + watch.Elapsed);
                 Assert.True(c.PreparingVirtualMic);
                 mic.Created.SetResult(true);
-                for (int i = 0; i < 200 && c.PreparingVirtualMic; i++) Thread.Sleep(10);
-                ui.Pump();
-                Assert.False(c.PreparingVirtualMic);
-                Assert.Equal(1, mic.Cleans);
+                Until(() => !c.PreparingVirtualMic, ui);
+                ui.TickAll(); // the recovery right after: it is there, nothing to make again
                 Assert.Equal(1, mic.Creates);
                 Assert.Equal(0, mic.Removes);
             }
@@ -206,10 +236,10 @@ public class ControllerTests
         var data = NewData();
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
-        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        mic.RemoveGate.SetResult();
         try
         {
-            var c = new AppController(data, platform, ui);
+            var c = new AppController(data, WithMic(mic), ui);
             c.Start();
             Assert.True(c.PreparingVirtualMic);
             _ = Task.Run(async () =>
@@ -224,19 +254,141 @@ public class ControllerTests
     }
 
     [Fact]
-    public void VirtualMic_ThatCouldNotBeMade_IsNotRemoved()
+    public void VirtualMic_ThatCouldNotBeMade_IsStillAskedToRemoveWhatIsLeft()
     {
         var data = NewData();
         var ui = new ManualDispatcher();
         var mic = new GatedVirtualMic();
         mic.Created.SetResult(false);
-        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        mic.RemoveGate.SetResult();
         try
         {
-            using (var c = new AppController(data, platform, ui)) c.Start();
+            using (var c = new AppController(data, WithMic(mic), ui)) c.Start();
             Assert.Equal(1, mic.Creates);
-            Assert.Equal(0, mic.Removes);
+            Assert.Equal(1, mic.Removes); // a half-made one is found by name: the platform decides what is there
         }
         finally { DeleteData(data); }
+    }
+
+    [Fact]
+    public void VirtualMic_ThatWentMissing_IsMadeAgain_LessOftenAfterFailures()
+    {
+        var data = NewData();
+        var ui = new ManualDispatcher();
+        var mic = new GatedVirtualMic();
+        mic.RemoveGate.SetResult();
+        try
+        {
+            using var c = new AppController(data, WithMic(mic), ui) { VirtualMicRetry = TimeSpan.FromMilliseconds(200) };
+            c.Start();
+            mic.Created.SetResult(true);
+            Until(() => !c.PreparingVirtualMic, ui);
+            Assert.Equal(1, mic.Creates);
+
+            // The sound server restarted and took it along: the recovery makes it again (not before the retry time).
+            mic.Present = false;
+            ui.TickAll();
+            Assert.Equal(1, mic.Creates);
+            Thread.Sleep(300);
+            ui.TickAll();
+            Until(() => !c.PreparingVirtualMic && mic.Creates == 2, ui);
+            Assert.True(mic.Present);
+
+            // Failing: the next try waits twice as long, then four times...
+            mic.LaterCreatesWork = false;
+            mic.Present = false;
+            Thread.Sleep(300);
+            ui.TickAll();
+            Until(() => !c.PreparingVirtualMic && mic.Creates == 3, ui);
+            Thread.Sleep(200);
+            ui.TickAll();
+            Assert.Equal(3, mic.Creates); // well within twice the wait after a failure: not yet
+            Thread.Sleep(300);
+            ui.TickAll();
+            Until(() => !c.PreparingVirtualMic && mic.Creates == 4, ui);
+        }
+        finally { DeleteData(data); }
+    }
+
+    [Fact]
+    public void Quitting_SavesFirst_AndWaitsForAHangingRemovalOnlyBriefly()
+    {
+        var data = NewData();
+        var ui = new ManualDispatcher();
+        var mic = new GatedVirtualMic(); // its removal never finishes
+        try
+        {
+            var c = new AppController(data, WithMic(mic), ui);
+            c.Start();
+            mic.Created.SetResult(true);
+            Until(() => !c.PreparingVirtualMic, ui);
+            c.MicMuted = true; // a change still waiting for the save timer
+            var settings = Path.Combine(data, "settings.json");
+            File.Delete(settings);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            c.Dispose();
+            watch.Stop();
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3), "quitting took " + watch.Elapsed);
+            Assert.Equal(1, mic.Removes);
+            Assert.Contains("\"MicMuted\": true", File.ReadAllText(settings));
+        }
+        finally
+        {
+            mic.RemoveGate.TrySetResult();
+            DeleteData(data);
+        }
+    }
+
+    /// <summary>A virtual mic that records every call that would touch the system.</summary>
+    private sealed class RecordingVirtualMic : IVirtualMicProvider
+    {
+        public int Touches;
+        public string Name => "EasyVocal-Microphone";
+        public string CallAppDeviceName => "EasyVocal-Microphone";
+        public VirtualMicTexts Texts { get; } = new("explained", "", "", "", "", "", "");
+        public string PageUrl => "https://example.com";
+        public CableNames Cable => CableNames.EasyVocalLinux;
+        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => DeviceRules.FindVirtualCable(Cable, outputs);
+        public bool CanInstall => true;
+        public bool TakesDefaultsOnInstall => false;
+        public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) { Interlocked.Increment(ref Touches); return Task.FromResult(new InstallResult(InstallStatus.Installed)); }
+        public bool CanCreate => true;
+        public Task<bool> CreateAsync(CancellationToken ct) { Interlocked.Increment(ref Touches); return Task.FromResult(true); }
+        public Task RemoveAsync(CancellationToken ct) { Interlocked.Increment(ref Touches); return Task.CompletedTask; }
+        public void OpenPage() => Interlocked.Increment(ref Touches);
+    }
+
+    [Fact]
+    public async Task TestRuns_NeverTouchTheRealVirtualMic_NorTheSystemDefaults()
+    {
+        var real = new RecordingVirtualMic();
+        var devices = new TestAudioDevices(cablePresent: true);
+        var computer = WithMic(real);
+        var startup = new MemoryStartup();
+
+        var smoke = PlatformFactory.ForTests(computer, null, startup);
+        Assert.Same(startup, smoke.Startup);
+        Assert.False(smoke.VirtualMic.CanCreate);
+        Assert.Equal("explained", smoke.VirtualMic.Texts.Explanation); // the real one's names and texts
+        Assert.Equal(CableNames.EasyVocalLinux, smoke.VirtualMic.Cable);
+        Assert.False(await smoke.VirtualMic.CreateAsync(default));
+        await smoke.VirtualMic.RemoveAsync(default);
+        Assert.Equal(InstallStatus.Failed, (await smoke.VirtualMic.InstallAsync(new Progress<double>(), default)).Status);
+        smoke.VirtualMic.OpenPage();
+        Assert.False(smoke.Audio.SetDefault(TestAudioDevices.HeadphonesId));
+
+        var data = NewData();
+        try
+        {
+            using (var c = new AppController(data, smoke, new ManualDispatcher())) c.Start();
+            Assert.Equal(0, real.Touches);
+        }
+        finally { DeleteData(data); }
+
+        // The e2e test: its own devices and the VB-CABLE look-alike they are named after.
+        var e2e = PlatformFactory.ForTests(computer, devices, startup);
+        Assert.Same(devices, e2e.Audio);
+        Assert.IsType<TestVirtualMic>(e2e.VirtualMic);
+        Assert.Equal(0, real.Touches);
     }
 }

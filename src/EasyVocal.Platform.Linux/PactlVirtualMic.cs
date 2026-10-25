@@ -1,5 +1,6 @@
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Platform;
+using EasyVocal.Platform.Unix;
 
 namespace EasyVocal.Platform.Linux;
 
@@ -7,8 +8,8 @@ namespace EasyVocal.Platform.Linux;
 /// Linux' virtual microphone, made by EasyVocal itself while it runs (no driver to install): with <c>pactl</c> it loads a
 /// null sink "easyvocal_out" (shown as EasyVocal-Output; the voice is played into it) and a remap of its monitor as the
 /// source "easyvocal_mic" (shown as EasyVocal-Microphone: what the call app picks). Both are unloaded on quit; ones a
-/// crashed EasyVocal left are found by name and unloaded at the next start. Works on PulseAudio and on PipeWire
-/// (pipewire-pulse); without pactl the setup says what to install.
+/// crashed EasyVocal (or a half-made try) left are found by name and unloaded before the next ones are made. Works on
+/// PulseAudio and on PipeWire (pipewire-pulse); without pactl the setup says what to install.
 /// </summary>
 public sealed class PactlVirtualMic : IVirtualMicProvider
 {
@@ -17,6 +18,11 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
     public const string SinkDescription = "EasyVocal-Output";
     public const string SourceDescription = "EasyVocal-Microphone";
     public const string ReadmeUrl = "https://github.com/tarl3s/EasyVocal#linux";
+
+    /// <summary>How long undoing a creation that failed half-way may take (its own deadline: the creation's may be over).</summary>
+    public static readonly TimeSpan UndoTimeout = TimeSpan.FromSeconds(2);
+
+    private static readonly string[] ListModules = { "list", "short", "modules" };
 
     private readonly Pactl pactl;
     private readonly Action? devicesChanged;
@@ -56,10 +62,7 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
         AutomaticOutput: UiText.Mark("Automatic (EasyVocal-Output)"),
         OutputHint: UiText.Mark("Automatic sends your voice to EasyVocal's virtual microphone (EasyVocal-Output). Change it only if you know why."));
 
-    private static readonly VirtualMicTexts NoPactl = Ready with
-    {
-        Explanation = UiText.Mark("EasyVocal needs pactl to make its microphone: install pipewire-pulse (or pulseaudio-utils), then open EasyVocal again."),
-    };
+    private static readonly VirtualMicTexts NoPactl = Ready with { Explanation = Ready.InstallManually };
 
     /// <summary>When pactl is missing the setup's first sentence says what to install.</summary>
     public VirtualMicTexts Texts => pactl.Locate() == null ? NoPactl : Ready;
@@ -85,24 +88,6 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
         get { lock (sync) return (sinkModule, sourceModule); }
     }
 
-    /// <summary>Unloads every module whose arguments name our sink or source (left by an EasyVocal that crashed).</summary>
-    public async Task CleanStaleAsync(CancellationToken ct)
-    {
-        try
-        {
-            var list = await pactl.RunAsync(new[] { "list", "short", "modules" }, ct).ConfigureAwait(false);
-            if (!list.Ok) return;
-            var ours = Pactl.ParseModules(list.Output).Where(IsOurs).OrderByDescending(m => m.Id).ToList(); // the remap first
-            foreach (var m in ours)
-            {
-                AppLog.Info("Removing a virtual microphone module a previous EasyVocal left: #" + m.Id + " " + m.Name);
-                await pactl.RunAsync(new[] { "unload-module", m.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) }, ct).ConfigureAwait(false);
-            }
-            if (ours.Count > 0) devicesChanged?.Invoke();
-        }
-        catch (Exception ex) { AppLog.Error("Cleaning up an old virtual microphone failed", ex); }
-    }
-
     /// <summary>A module of ours: a null sink called <see cref="SinkName"/> or a source called <see cref="SourceName"/>.</summary>
     public static bool IsOurs(PulseModule m) =>
         (m.Name == "module-null-sink" && HasArgument(m.Arguments, "sink_name=" + SinkName)) ||
@@ -115,8 +100,26 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
         return false;
     }
 
+    /// <summary>The modules of ours pactl lists now, the remap first (it reads from the sink); null when pactl didn't answer.</summary>
+    private async Task<List<PulseModule>?> OursAsync(CancellationToken ct)
+    {
+        var list = await pactl.RunAsync(ListModules, ct).ConfigureAwait(false);
+        return list.Ok ? Pactl.ParseModules(list.Output).Where(IsOurs).OrderByDescending(m => m.Id).ToList() : null;
+    }
+
+    private Task<CommandResult> UnloadAsync(int module, CancellationToken ct) =>
+        pactl.RunAsync(new[] { "unload-module", module.ToString(System.Globalization.CultureInfo.InvariantCulture) }, ct);
+
+    /// <summary>
+    /// Makes the sink and the microphone. Already made by this session and still there (asked again after the sound
+    /// server came back): nothing to do. Anything else of ours that is loaded (a crashed run's, a half of an earlier try,
+    /// this session's after a server restart gave its numbers to others) is unloaded first. A creation that fails or runs
+    /// out of time half-way is undone: the defaults go back and whatever was loaded is unloaded, with a deadline of its own.
+    /// </summary>
     public async Task<bool> CreateAsync(CancellationToken ct)
     {
+        bool loading = false;
+        PulseDefaults? before = null;
         try
         {
             if (pactl.Locate() == null)
@@ -124,12 +127,30 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
                 AppLog.Info("pactl isn't installed: no virtual microphone (install pipewire-pulse or pulseaudio-utils)");
                 return false;
             }
-            var before = await pactl.DefaultsAsync(ct).ConfigureAwait(false);
+            var ours = await OursAsync(ct).ConfigureAwait(false);
+            if (ours == null)
+            {
+                AppLog.Info("pactl didn't answer: no virtual microphone for now");
+                return false;
+            }
+            var (sinkNow, sourceNow) = Loaded;
+            if (sinkNow != null && sourceNow != null && ours.Exists(m => m.Id == sinkNow) && ours.Exists(m => m.Id == sourceNow)) return true;
+            lock (sync) sinkModule = sourceModule = null;
+            foreach (var m in ours)
+            {
+                AppLog.Info("Removing a virtual microphone module left over: #" + m.Id + " " + m.Name);
+                await UnloadAsync(m.Id, ct).ConfigureAwait(false);
+            }
+            if (ours.Count > 0) devicesChanged?.Invoke();
+
+            before = await pactl.DefaultsAsync(ct).ConfigureAwait(false);
+            loading = true;
             var sink = await pactl.RunAsync(SinkArguments, ct).ConfigureAwait(false);
             var sinkId = sink.Ok ? Pactl.ParseModuleId(sink.Output) : null;
             if (sinkId == null)
             {
                 AppLog.Info("pactl couldn't make the virtual microphone's output: " + sink.Error.Trim());
+                await UndoAsync(before).ConfigureAwait(false); // a load that ran out of time may have made it all the same
                 return false;
             }
             lock (sync) sinkModule = sinkId;
@@ -138,7 +159,7 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
             if (sourceId == null)
             {
                 AppLog.Info("pactl couldn't make the virtual microphone: " + source.Error.Trim());
-                await RemoveAsync(ct).ConfigureAwait(false);
+                await UndoAsync(before).ConfigureAwait(false);
                 return false;
             }
             lock (sync) sourceModule = sourceId;
@@ -149,8 +170,18 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
         catch (Exception ex)
         {
             AppLog.Error("Making the virtual microphone failed", ex);
+            if (loading) await UndoAsync(before).ConfigureAwait(false);
             return false;
         }
+    }
+
+    /// <summary>A creation that failed half-way: the defaults from before come back, then everything of ours is unloaded. Never throws.</summary>
+    private async Task UndoAsync(PulseDefaults? before)
+    {
+        using var cts = new CancellationTokenSource(UndoTimeout);
+        try { await PutDefaultsBackAsync(before, cts.Token).ConfigureAwait(false); }
+        catch (Exception ex) { AppLog.Error("Putting the default devices back failed", ex); }
+        await RemoveAsync(cts.Token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -179,6 +210,10 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
     private static bool IsOwnDevice(string? device) =>
         device is SinkName or SourceName or SinkName + ".monitor";
 
+    /// <summary>
+    /// Unloads this session's modules, then any other module of ours pactl still lists (one whose load ran out of time,
+    /// so its number was never read). Never throws.
+    /// </summary>
     public async Task RemoveAsync(CancellationToken ct)
     {
         int? sink, source;
@@ -189,13 +224,24 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
         }
         try
         {
+            bool changed = false;
             foreach (var id in new[] { source, sink }) // the remap before the sink it reads from
                 if (id is { } m)
-                    await pactl.RunAsync(new[] { "unload-module", m.ToString(System.Globalization.CultureInfo.InvariantCulture) }, ct).ConfigureAwait(false);
-            if (sink != null || source != null) devicesChanged?.Invoke();
+                {
+                    await UnloadAsync(m, ct).ConfigureAwait(false);
+                    changed = true;
+                }
+            if (pactl.Locate() != null)
+                foreach (var m in await OursAsync(ct).ConfigureAwait(false) ?? new List<PulseModule>())
+                {
+                    AppLog.Info("Removing a virtual microphone module: #" + m.Id + " " + m.Name);
+                    await UnloadAsync(m.Id, ct).ConfigureAwait(false);
+                    changed = true;
+                }
+            if (changed) devicesChanged?.Invoke();
         }
         catch (Exception ex) { AppLog.Error("Removing the virtual microphone failed", ex); }
     }
 
-    public void OpenPage() => Unix.Opener.Open(PageUrl);
+    public void OpenPage() => Opener.Open(PageUrl);
 }

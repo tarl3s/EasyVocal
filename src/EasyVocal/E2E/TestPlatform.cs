@@ -117,8 +117,6 @@ internal sealed class TestVirtualMic : IVirtualMicProvider
 
     public bool CanCreate => false;
 
-    public Task CleanStaleAsync(CancellationToken ct) => Task.CompletedTask;
-
     public Task<bool> CreateAsync(CancellationToken ct) => Task.FromResult(false);
 
     public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;

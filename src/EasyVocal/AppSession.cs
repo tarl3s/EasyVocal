@@ -139,15 +139,12 @@ internal sealed partial class AppSession
     }
 
     /// <summary>
-    /// The platform a test run uses: never changes the system's real default devices (the smoke test lists the real
-    /// devices, read-only), never touches the real "Start with Windows" entry.
+    /// The platform a test run uses (<see cref="PlatformFactory.ForTests"/>): never changes the system's real default
+    /// devices (the smoke test lists the real devices, read-only), never touches the real "Start with Windows" entry or
+    /// the real virtual mic.
     /// </summary>
-    private PlatformServices TestPlatformFor(PlatformServices real)
-    {
-        if (!Args.TestMode) return real;
-        var audio = (IAudioBackend?)e2eDevices ?? PlatformFactory.ReadOnlyAudio(real);
-        return real with { Audio = audio, Startup = SmokeStartup() };
-    }
+    private PlatformServices TestPlatformFor(PlatformServices real) =>
+        Args.TestMode ? PlatformFactory.ForTests(real, e2eDevices, SmokeStartup()) : real;
 
     private void MakeTray()
     {

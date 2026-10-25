@@ -9,17 +9,25 @@ namespace EasyVocal.Platform.Linux;
 /// <summary>
 /// Linux' sound devices, chosen without waiting on the UI thread: PulseAudio / PipeWire (<see cref="PulseBackend"/>)
 /// when pactl and libpulse-simple are there; if its first look finds no server answering, PortAudio (ALSA) takes over
-/// and <see cref="Changed"/> tells the app to look again. Without pactl or libpulse-simple, PortAudio from the start.
+/// and <see cref="Changed"/> tells the app to look again. From then on the server is asked again now and then
+/// (<c>pactl info</c>): once it answers (it started late, or was restarted), PulseAudio takes over again. Without pactl
+/// or libpulse-simple, PortAudio from the start.
 /// </summary>
 public sealed class LinuxAudio : IAudioBackend, IDisposable
 {
+    /// <summary>How often a server that didn't answer is asked again.</summary>
+    public static readonly TimeSpan ServerRetry = TimeSpan.FromSeconds(10);
+
     private readonly object sync = new();
+    private readonly CancellationTokenSource stop = new();
     private IAudioBackend inner;
     private bool disposed;
 
-    /// <param name="pulse">The PulseAudio backend, or null when it can't be used here at all.</param>
+    /// <param name="pulse">Makes the PulseAudio backend, or null when it can't be used here at all.</param>
     /// <param name="fallback">Makes the PortAudio backend (only when it is needed).</param>
-    public LinuxAudio(PulseBackend? pulse, Func<IAudioBackend> fallback)
+    /// <param name="pactl">Asks whether the server answers again (null = the system's pactl).</param>
+    /// <param name="retryEvery">How often (null = <see cref="ServerRetry"/>).</param>
+    public LinuxAudio(Func<PulseBackend>? pulse, Func<IAudioBackend> fallback, Pactl? pactl = null, TimeSpan? retryEvery = null)
     {
         if (pulse == null)
         {
@@ -28,13 +36,15 @@ public sealed class LinuxAudio : IAudioBackend, IDisposable
         }
         else
         {
-            inner = pulse;
+            var first = pulse();
+            inner = first;
             AppLog.Info("Sound: PulseAudio / PipeWire (pactl + libpulse-simple)");
-            pulse.FirstLook.ContinueWith(t =>
+            first.FirstLook.ContinueWith(t =>
             {
                 if (t.Result) return;
-                AppLog.Info("Sound: no PulseAudio / PipeWire server answered: PortAudio (ALSA) instead");
+                AppLog.Info("Sound: no PulseAudio / PipeWire server answered: PortAudio (ALSA) instead, until one does");
                 Switch(fallback());
+                _ = WaitForServerAsync(pulse, pactl ?? Pactl.Default, retryEvery ?? ServerRetry, stop.Token);
             }, TaskScheduler.Default);
         }
         inner.Changed += Relay;
@@ -48,6 +58,29 @@ public sealed class LinuxAudio : IAudioBackend, IDisposable
 
     /// <summary>The PulseAudio backend while it is the one in use, else null.</summary>
     public PulseBackend? Pulse => Inner as PulseBackend;
+
+    /// <summary>Asks the server again every <paramref name="every"/> until it answers, then PulseAudio takes over. Never throws.</summary>
+    private async Task WaitForServerAsync(Func<PulseBackend> pulse, Pactl pactl, TimeSpan every, CancellationToken ct)
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(every, ct).ConfigureAwait(false);
+                if (await pactl.DefaultsAsync(ct).ConfigureAwait(false) == null) continue;
+                var next = pulse();
+                if (await next.FirstLook.ConfigureAwait(false))
+                {
+                    AppLog.Info("Sound: the PulseAudio / PipeWire server answers now: using it again");
+                    Switch(next);
+                    return;
+                }
+                next.Dispose();
+            }
+        }
+        catch (OperationCanceledException) { /* quitting */ }
+        catch (Exception ex) { AppLog.Error("Asking the sound server again failed", ex); }
+    }
 
     private void Switch(IAudioBackend next)
     {
@@ -83,6 +116,7 @@ public sealed class LinuxAudio : IAudioBackend, IDisposable
             disposed = true;
             now = inner;
         }
+        stop.Cancel();
         (now as IDisposable)?.Dispose();
     }
 }
@@ -108,7 +142,7 @@ public static class LinuxPlatform
         {
             if (audio != null) return audio;
             bool pulse = Pactl.Default.Locate() != null && PulseLibraryPresent();
-            audio = new LinuxAudio(pulse ? new PulseBackend() : null, () => new PortAudioBackend(systemFingerprint: AlsaDevices.Fingerprint));
+            audio = new LinuxAudio(pulse ? () => new PulseBackend() : null, () => new PortAudioBackend(systemFingerprint: AlsaDevices.Fingerprint));
             return audio;
         }
     }

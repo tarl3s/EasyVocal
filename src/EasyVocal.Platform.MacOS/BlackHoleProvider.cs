@@ -127,8 +127,6 @@ public sealed class BlackHoleProvider(ICommandRunner? runner = null) : IVirtualM
 
     public bool CanCreate => false;
 
-    public Task CleanStaleAsync(CancellationToken ct) => Task.CompletedTask;
-
     public Task<bool> CreateAsync(CancellationToken ct) => Task.FromResult(false);
 
     public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;

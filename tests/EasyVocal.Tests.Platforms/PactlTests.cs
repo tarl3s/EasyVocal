@@ -225,26 +225,90 @@ public class PactlTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task LinuxAudio_SwitchesToPortAudio_WhenNoServerAnswers()
+    public async Task LinuxAudio_SwitchesToPortAudio_WhenNoServerAnswers_AndBackWhenOneDoes()
     {
         var (runner, pactl) = Fake();
         runner.Answers["info"] = new CommandResult(1, "", "Connection failure: Connection refused");
-        int made = 0;
-        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var audio = new LinuxAudio(new PulseBackend(pactl, watch: true), () => { made++; return new Stand(); });
-        audio.Changed += () => changed.TrySetResult();
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        int made = 0, pulses = 0;
+        int changes = 0;
+        using var audio = new LinuxAudio(() => { pulses++; return new PulseBackend(pactl, watch: true); },
+            () => { made++; return new Stand(); }, pactl, TimeSpan.FromMilliseconds(50));
+        audio.Changed += () => Interlocked.Increment(ref changes);
+        await Until(() => audio.Inner is Stand);
         Assert.Equal(1, made);
-        Assert.IsType<Stand>(audio.Inner);
         Assert.Equal("pa:ALSA:mic", audio.Inputs().Single().Id);
+        await Task.Delay(200);
+        Assert.IsType<Stand>(audio.Inner); // still no server: asked again, PortAudio stays
+        Assert.Equal(1, pulses);
+
+        runner.Answers["info"] = new CommandResult(0, Info(), ""); // the server started (or came back)
+        await Until(() => audio.Inner is PulseBackend);
+        Assert.Equal(2, pulses);
+        Assert.Equal(2, audio.Outputs().Count);
+        Assert.True(Volatile.Read(ref changes) >= 2, "each switch tells the app to look again");
 
         // With a server, PulseAudio stays; without pactl or libpulse, PortAudio from the start.
         var (_, good) = Fake();
-        using var pulse = new LinuxAudio(new PulseBackend(good, watch: false), () => throw new InvalidOperationException("not needed"));
+        using var pulse = new LinuxAudio(() => new PulseBackend(good, watch: false), () => throw new InvalidOperationException("not needed"));
         Assert.IsType<PulseBackend>(pulse.Inner);
         using var direct = new LinuxAudio(null, () => new Stand());
         Assert.IsType<Stand>(direct.Inner);
     }
+
+    /// <summary>
+    /// pactl's modules as a server keeps them: load-module adds one under the next number (and prints it), unload-module
+    /// removes it, <c>list short modules</c> shows what is loaded. <see cref="OnCall"/> runs first (to cancel, to fail).
+    /// </summary>
+    private sealed class PretendModules
+    {
+        public readonly SortedDictionary<int, (string Name, string Arguments)> Loaded = new();
+        public Action<FakeRunner.Call>? OnCall;
+        /// <summary>The sink's load "runs out of time": the module is made, but its number is never printed.</summary>
+        public bool SinkTimesOut;
+        public bool SourceFails;
+        private int next = 536870913;
+
+        public PretendModules(FakeRunner runner)
+        {
+            runner.During = call =>
+            {
+                OnCall?.Invoke(call);
+                var a = call.Arguments;
+                lock (Loaded)
+                {
+                    if (a.Length > 1 && a[0] == "load-module")
+                    {
+                        var key = string.Join(" ", a);
+                        if (a[1] == "module-remap-source" && SourceFails)
+                            runner.Answers[key] = new CommandResult(1, "", "Failure: Module initialization failed");
+                        else
+                        {
+                            int id = next++;
+                            Loaded[id] = (a[1], string.Join(" ", a.Skip(2)));
+                            runner.Answers[key] = a[1] == "module-null-sink" && SinkTimesOut
+                                ? new CommandResult(-1, "", "timed out: ") : new CommandResult(0, id + "\n", "");
+                        }
+                    }
+                    else if (a.Length == 2 && a[0] == "unload-module") Loaded.Remove(int.Parse(a[1]));
+                    runner.Answers["list short modules"] = new CommandResult(0,
+                        string.Concat(Loaded.Select(m => m.Key + "\t" + m.Value.Name + "\t" + m.Value.Arguments + "\n")), "");
+                }
+            };
+        }
+
+        public void Add(int id, string name, string arguments)
+        {
+            lock (Loaded) Loaded[id] = (name, arguments);
+        }
+
+        public bool AnyOfOurs()
+        {
+            lock (Loaded) return Loaded.Any(m => PactlVirtualMic.IsOurs(new PulseModule(m.Key, m.Value.Name, m.Value.Arguments)));
+        }
+    }
+
+    private const string LoadSink = "load-module module-null-sink sink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output";
+    private const string LoadSource = "load-module module-remap-source master=easyvocal_out.monitor source_name=easyvocal_mic source_properties=device.description=EasyVocal-Microphone";
 
     [Fact]
     public async Task VirtualMic_IsMadeRemovedAndCleanedByName()
@@ -252,21 +316,19 @@ public class PactlTests(ITestOutputHelper output)
         var (runner, pactl) = Fake();
         int changes = 0;
         var mic = new PactlVirtualMic(pactl, () => changes++);
-        runner.Answers[string.Join(" ", PactlVirtualMic.SinkArguments)] = new CommandResult(0, "536870913\n", "");
-        runner.Answers[string.Join(" ", PactlVirtualMic.SourceArguments)] = new CommandResult(0, "536870914\n", "");
-        runner.Answers["list short modules"] = new CommandResult(0,
-            "5\tmodule-null-sink\tsink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output\n" +
-            "6\tmodule-remap-source\tmaster=easyvocal_out.monitor source_name=easyvocal_mic source_properties=device.description=EasyVocal-Microphone\n" +
-            "7\tmodule-null-sink\tsink_name=someone_else\n", "");
+        var server = new PretendModules(runner);
+        server.Add(5, "module-null-sink", "sink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output");
+        server.Add(6, "module-remap-source", "master=easyvocal_out.monitor source_name=easyvocal_mic source_properties=device.description=EasyVocal-Microphone");
+        server.Add(7, "module-null-sink", "sink_name=someone_else");
 
         Assert.True(mic.CanCreate);
         Assert.False(mic.CanInstall);
         Assert.False(mic.TakesDefaultsOnInstall);
         Assert.Equal("EasyVocal-Microphone", mic.CallAppDeviceName);
 
-        await mic.CleanStaleAsync(default);
         Assert.True(await mic.CreateAsync(default));
         Assert.Equal((536870913, 536870914), (mic.Loaded.Sink!.Value, mic.Loaded.Source!.Value));
+        Assert.True(await mic.CreateAsync(default)); // asked again while it is there: nothing changes
         await mic.RemoveAsync(default);
         Assert.Equal((null, null), (mic.Loaded.Sink, mic.Loaded.Source));
         await mic.RemoveAsync(default); // twice: nothing more
@@ -276,21 +338,38 @@ public class PactlTests(ITestOutputHelper output)
             "list short modules",
             "unload-module 6", "unload-module 5", // a crashed run's leftovers, the remap first; someone else's sink is left alone
             "info", // the defaults before
-            "load-module module-null-sink sink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output",
-            "load-module module-remap-source master=easyvocal_out.monitor source_name=easyvocal_mic source_properties=device.description=EasyVocal-Microphone",
+            LoadSink, LoadSource,
             "info", // and after: unchanged, so nothing is put back
-            "unload-module 536870914", "unload-module 536870913",
+            "list short modules", // the second CreateAsync: both still there
+            "unload-module 536870914", "unload-module 536870913", "list short modules",
+            "list short modules",
         }, runner.Lines());
         Assert.All(runner.Calls, c => Assert.Equal("/usr/bin/pactl", c.Program));
         Assert.Equal(3, changes); // cleaned, made, removed: the device list is read again each time
+        Assert.Equal(new[] { 7 }, server.Loaded.Keys);
+    }
+
+    [Fact]
+    public async Task VirtualMic_IsMadeAgain_AfterTheServerRestarted()
+    {
+        var (runner, pactl) = Fake();
+        var server = new PretendModules(runner);
+        var mic = new PactlVirtualMic(pactl);
+        Assert.True(await mic.CreateAsync(default));
+        lock (server.Loaded) server.Loaded.Clear(); // systemctl --user restart pipewire: every module is gone
+        server.Add(536870913, "module-null-sink", "sink_name=someone_else"); // and the old number is someone else's now
+        Assert.True(await mic.CreateAsync(default));
+        Assert.Equal((536870915, 536870916), (mic.Loaded.Sink!.Value, mic.Loaded.Source!.Value));
+        await mic.RemoveAsync(default);
+        Assert.False(server.AnyOfOurs());
+        Assert.Contains(536870913, server.Loaded.Keys);
     }
 
     [Fact]
     public async Task VirtualMic_ThatBecameTheDefault_GivesTheDefaultsBack()
     {
         var (runner, pactl) = Fake();
-        runner.Answers[string.Join(" ", PactlVirtualMic.SinkArguments)] = new CommandResult(0, "41\n", "");
-        runner.Answers[string.Join(" ", PactlVirtualMic.SourceArguments)] = new CommandResult(0, "42\n", "");
+        _ = new PretendModules(runner);
         runner.InTurn["info"] = new Queue<CommandResult>(new[]
         {
             new CommandResult(0, Info(), ""),                                // before: the person's speakers and mic
@@ -302,6 +381,7 @@ public class PactlTests(ITestOutputHelper output)
 
         // Already ours before (the person chose it): left alone.
         var (other, mine) = Fake();
+        _ = new PretendModules(other);
         other.Answers["info"] = new CommandResult(0, Info("easyvocal_out", Yeti), "");
         await new PactlVirtualMic(mine).CreateAsync(default);
         Assert.DoesNotContain(other.Lines(), l => l.StartsWith("set-default", StringComparison.Ordinal));
@@ -311,21 +391,45 @@ public class PactlTests(ITestOutputHelper output)
     public async Task VirtualMic_HalfMade_IsUndone_AndNoPactlSaysWhatToInstall()
     {
         var (runner, pactl) = Fake();
-        runner.Answers[string.Join(" ", PactlVirtualMic.SinkArguments)] = new CommandResult(0, "41\n", "");
-        runner.Answers[string.Join(" ", PactlVirtualMic.SourceArguments)] = new CommandResult(1, "", "Failure: Module initialization failed");
+        var server = new PretendModules(runner) { SourceFails = true };
         var mic = new PactlVirtualMic(pactl);
         Assert.False(await mic.CreateAsync(default));
-        Assert.Equal("unload-module 41", runner.Lines()[^1]);
+        Assert.False(server.AnyOfOurs());
+        Assert.Equal(new[] { "unload-module 536870913", "list short modules" }, runner.Lines()[^2..]);
         Assert.Equal((null, null), (mic.Loaded.Sink, mic.Loaded.Source));
 
         var (none, missing) = Fake(installed: false);
         var noPactl = new PactlVirtualMic(missing);
         Assert.False(await noPactl.CreateAsync(default));
-        await noPactl.CleanStaleAsync(default);
+        await noPactl.RemoveAsync(default);
         Assert.Empty(none.Calls);
         Assert.Contains("pipewire-pulse", noPactl.Texts.Explanation);
         Assert.Contains("pulseaudio-utils", noPactl.Texts.Explanation);
         Assert.DoesNotContain("pipewire-pulse", mic.Texts.Explanation); // with pactl: nothing to install
+    }
+
+    [Fact]
+    public async Task VirtualMic_OutOfTimeHalfWay_IsUndoneWithADeadlineOfItsOwn()
+    {
+        // The sink's load runs out of time (made, its number never read): found by name and unloaded.
+        var (runner, pactl) = Fake();
+        var server = new PretendModules(runner) { SinkTimesOut = true };
+        Assert.False(await new PactlVirtualMic(pactl).CreateAsync(default));
+        Assert.False(server.AnyOfOurs());
+
+        // The creation's own deadline passes right after the sink was made, and the system had switched to it: the
+        // undo still runs (its own deadline), the defaults go back, nothing of ours stays.
+        var (late, latePactl) = Fake();
+        var lateServer = new PretendModules(late);
+        late.InTurn["info"] = new Queue<CommandResult>(new[] { new CommandResult(0, Info(), "") });
+        late.Answers["info"] = new CommandResult(0, Info("easyvocal_out", Yeti), "");
+        using var deadline = new CancellationTokenSource();
+        lateServer.OnCall = call => { if (string.Join(" ", call.Arguments) == LoadSource) deadline.Cancel(); };
+        var mic = new PactlVirtualMic(latePactl);
+        Assert.False(await mic.CreateAsync(deadline.Token));
+        Assert.False(lateServer.AnyOfOurs());
+        Assert.Contains("set-default-sink " + Speakers, late.Lines());
+        Assert.Equal((null, null), (mic.Loaded.Sink, mic.Loaded.Source));
     }
 
     /// <summary>
@@ -344,7 +448,6 @@ public class PactlTests(ITestOutputHelper output)
         using var backend = new PulseBackend(watch: false);
         backend.Refresh();
         var mic = new PactlVirtualMic(devicesChanged: () => backend.Refresh());
-        await mic.CleanStaleAsync(default);
         Assert.True(await mic.CreateAsync(default), "the virtual microphone was made");
         try
         {

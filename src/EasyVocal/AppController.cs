@@ -200,10 +200,10 @@ public sealed class AppController : IDisposable
         StopPreview();
         loadCancel.Cancel();
         engine.Dispose();
-        RemoveVirtualMic();
         if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
-        if (savePending) SaveNow();
+        if (savePending) SaveNow(); // before the virtual mic: its removal may be cut short when the process ends
         saveTimer.Stop();
+        RemoveVirtualMic();
     }
 
     // ---------- settings ----------
@@ -1018,16 +1018,24 @@ public sealed class AppController : IDisposable
     // ---------- the virtual mic EasyVocal makes itself (Linux) ----------
 
     private static readonly TimeSpan VirtualMicWait = TimeSpan.FromSeconds(5);
-    private Task<bool>? virtualMicTask; // the creation of this session's virtual mic (null: the platform doesn't make one)
+    /// <summary>How long quitting waits on the UI thread for the virtual mic's removal (the rest goes on in the background).</summary>
+    private static readonly TimeSpan VirtualMicQuitWait = TimeSpan.FromSeconds(1.5);
+    /// <summary>After a creation, the first wait before making a missing virtual mic again (doubled after each failure, up to 5 min).</summary>
+    internal TimeSpan VirtualMicRetry { get; set; } = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan VirtualMicRetryMax = TimeSpan.FromMinutes(5);
+    private Task<bool>? virtualMicTask; // the latest creation of this session's virtual mic (null: the platform doesn't make one)
+    private DateTime nextVirtualMicTry;
+    private int virtualMicFailures;
     private readonly CancellationTokenSource loadCancel = new();
 
     /// <summary>The platform is still making this session's virtual mic (the banner doesn't call it missing yet).</summary>
     public bool PreparingVirtualMic => virtualMicTask is { IsCompleted: false };
 
     /// <summary>
-    /// Where the platform makes the virtual mic (CanCreate): removes one a crashed run left, then creates this session's,
-    /// off the UI thread (the window keeps painting; the audio waits for it like for a cable being installed). Once it is
-    /// there the audio is brought up at once; a failure is logged (the setup then shows it missing).
+    /// Where the platform makes the virtual mic (CanCreate): creates this session's (the platform removes one a crashed
+    /// run left first), off the UI thread (the window keeps painting; the audio waits for it like for a cable being
+    /// installed). Once it is there the audio is brought up at once; a failure is logged (the setup then shows it missing)
+    /// and the recovery tries again a while later (<see cref="EnsureVirtualMic"/>).
     /// </summary>
     private void PrepareVirtualMic()
     {
@@ -1038,7 +1046,6 @@ public sealed class AppController : IDisposable
             try
             {
                 using var cts = new CancellationTokenSource(VirtualMicWait);
-                await vm.CleanStaleAsync(cts.Token).ConfigureAwait(false);
                 return await vm.CreateAsync(cts.Token).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -1050,7 +1057,10 @@ public sealed class AppController : IDisposable
         virtualMicTask = task;
         task.ContinueWith(t => ui.Post(() =>
         {
-            AppLog.Info(t.Result ? vm.Name + " created" : vm.Name + " could not be created");
+            AppLog.Info(t.Result ? vm.Name + " is there" : vm.Name + " could not be created");
+            virtualMicFailures = t.Result ? 0 : virtualMicFailures + 1;
+            var wait = VirtualMicRetry * Math.Pow(2, Math.Min(virtualMicFailures, 10));
+            nextVirtualMicTry = DateTime.UtcNow + (wait > VirtualMicRetryMax ? VirtualMicRetryMax : wait);
             if (disposed) return; // quitting: Dispose removes it
             if (t.Result) Recover(); // opens the call device now instead of at the next 2 s round
             RaiseChanged();
@@ -1058,8 +1068,21 @@ public sealed class AppController : IDisposable
     }
 
     /// <summary>
-    /// On quit: removes the virtual mic this session created — also one whose creation was still running (it is waited
-    /// for, then removed). Waits a few seconds at most.
+    /// The recovery's look at the virtual mic EasyVocal makes: missing from the devices (its creation failed, or the sound
+    /// server restarted and took it along) — made again, now and then (<see cref="VirtualMicRetry"/>, longer after each failure).
+    /// </summary>
+    private void EnsureVirtualMic()
+    {
+        if (virtualMicTask is not { IsCompleted: true } || DateTime.UtcNow < nextVirtualMicTry) return;
+        if (Platform.VirtualMic.Find(devices.Outputs()) != null) return;
+        AppLog.Info(Platform.VirtualMic.Name + " is missing: making it again");
+        PrepareVirtualMic();
+    }
+
+    /// <summary>
+    /// On quit: removes the virtual mic — what this session made, also when its creation was still running or failed
+    /// half-way (the platform finds its devices by name). Waits <see cref="VirtualMicQuitWait"/> at most on the UI
+    /// thread: the rest goes on in the background (and the next start removes anything left).
     /// </summary>
     private void RemoveVirtualMic()
     {
@@ -1067,27 +1090,18 @@ public sealed class AppController : IDisposable
         if (task == null) return;
         virtualMicTask = null;
         var vm = Platform.VirtualMic;
-        try
+        var removal = Task.Run(async () =>
         {
-            var removal = Task.Run(async () =>
+            try
             {
-                bool made;
-                try { made = await task.WaitAsync(VirtualMicWait).ConfigureAwait(false); }
-                catch (TimeoutException)
-                {
-                    // Still being made: remove it whenever it is done (the process may end first; the next start cleans it).
-                    _ = task.ContinueWith(async t => { if (t.Result) await vm.RemoveAsync(CancellationToken.None).ConfigureAwait(false); },
-                        TaskScheduler.Default);
-                    return;
-                }
-                if (!made) return;
+                await task.ConfigureAwait(false); // a creation still running finishes first (it never throws)
                 using var cts = new CancellationTokenSource(VirtualMicWait);
                 await vm.RemoveAsync(cts.Token).ConfigureAwait(false);
                 AppLog.Info(vm.Name + " removed");
-            });
-            if (!removal.Wait(VirtualMicWait * 2 + TimeSpan.FromSeconds(1))) AppLog.Info(vm.Name + " is still being removed");
-        }
-        catch (Exception ex) { AppLog.Error("Removing the virtual microphone failed", ex); }
+            }
+            catch (Exception ex) { AppLog.Error("Removing the virtual microphone failed", ex); }
+        });
+        if (!removal.Wait(VirtualMicQuitWait)) AppLog.Info(vm.Name + " is still being removed (in the background; the next start removes anything left)");
     }
 
     /// <summary>
@@ -1239,6 +1253,7 @@ public sealed class AppController : IDisposable
                 return;
             }
             engine.TryRecover();
+            EnsureVirtualMic();
             if (RemembersDefaults) CheckDefaults(); // the installer may switch the defaults a while after the cable shows up
         }
         catch (Exception ex) { AppLog.Error("Recovering the audio failed", ex); }

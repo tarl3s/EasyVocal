@@ -39,8 +39,6 @@ public sealed class VbCableProvider : IVirtualMicProvider
     /// <summary>VB-CABLE is a driver: EasyVocal never creates or removes the device itself.</summary>
     public bool CanCreate => false;
 
-    public Task CleanStaleAsync(CancellationToken ct) => Task.CompletedTask;
-
     public Task<bool> CreateAsync(CancellationToken ct) => Task.FromResult(false);
 
     public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;

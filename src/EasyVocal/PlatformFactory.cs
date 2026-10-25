@@ -40,8 +40,19 @@ internal static class PlatformFactory
         }
     }
 
-    /// <summary>The same devices, but the system's default devices are never changed (the smoke test).</summary>
-    public static IAudioBackend ReadOnlyAudio(PlatformServices real) => new ReadOnlyDefaults(real.Audio);
+    /// <summary>
+    /// What a test run (<c>--smoketest</c>, <c>--e2e</c>) uses instead of <paramref name="real"/>: the e2e test's devices,
+    /// else the real ones whose system defaults are never changed; <paramref name="startup"/> for "Start with Windows";
+    /// and a virtual mic that is never created, removed or installed (a running EasyVocal's EasyVocal-Microphone on Linux
+    /// stays untouched) — for the e2e test the VB-CABLE look-alike its devices are named after.
+    /// </summary>
+    public static PlatformServices ForTests(PlatformServices real, IAudioBackend? e2eDevices, IStartupService startup) =>
+        real with
+        {
+            Audio = e2eDevices ?? new ReadOnlyDefaults(real.Audio),
+            Startup = startup,
+            VirtualMic = e2eDevices != null ? new E2E.TestVirtualMic() : new ReadOnlyVirtualMic(real.VirtualMic),
+        };
 
     /// <summary>A computer EasyVocal has no platform for yet: no devices, no hotkeys, nothing installed.</summary>
     public static PlatformServices Unsupported { get; } = new(
@@ -62,6 +73,25 @@ internal static class PlatformFactory
             add => inner.Changed += value;
             remove => inner.Changed -= value;
         }
+    }
+
+    /// <summary>The platform's virtual mic as the tests see it: its names and texts, never created, removed, installed or opened.</summary>
+    private sealed class ReadOnlyVirtualMic(IVirtualMicProvider inner) : IVirtualMicProvider
+    {
+        public string Name => inner.Name;
+        public string CallAppDeviceName => inner.CallAppDeviceName;
+        public VirtualMicTexts Texts => inner.Texts;
+        public string PageUrl => inner.PageUrl;
+        public CableNames Cable => inner.Cable;
+        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => inner.Find(outputs);
+        public bool CanInstall => inner.CanInstall;
+        public bool TakesDefaultsOnInstall => inner.TakesDefaultsOnInstall;
+        public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) =>
+            Task.FromResult(new InstallResult(InstallStatus.Failed, "the tests never install the virtual microphone"));
+        public bool CanCreate => false;
+        public Task<bool> CreateAsync(CancellationToken ct) => Task.FromResult(false);
+        public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;
+        public void OpenPage() { }
     }
 
     private sealed class NoDevices : IAudioBackend
@@ -108,7 +138,6 @@ internal static class PlatformFactory
         public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) =>
             Task.FromResult(new InstallResult(InstallStatus.Failed, "not on this platform yet"));
         public bool CanCreate => false;
-        public Task CleanStaleAsync(CancellationToken ct) => Task.CompletedTask;
         public Task<bool> CreateAsync(CancellationToken ct) => Task.FromResult(false);
         public Task RemoveAsync(CancellationToken ct) => Task.CompletedTask;
         public void OpenPage() { }
