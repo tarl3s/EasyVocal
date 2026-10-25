@@ -453,16 +453,9 @@ public partial class AudioEditorWindow : Window
 
     private async void FadeOutButton_Click(object sender, RoutedEventArgs e) => await Fade(fadeIn: false);
 
-    private Task Fade(bool fadeIn)
-    {
-        var (start, count) = Wave.HasSelection ? (Wave.SelectionStart, Wave.SelectionLength) : AudioEdit.DefaultFadeRange(Current.Length, fadeIn);
-        bool picked = Wave.HasSelection;
-        return Edit(x =>
-        {
-            var y = AudioEdit.OnRange(x, start, count, fadeIn ? AudioEdit.FadeIn : AudioEdit.FadeOut);
-            return picked ? (y, start, count) : (y, 0, 0);
-        });
-    }
+    // With nothing picked a fade covers the first or last half second, not the whole sound.
+    private Task Fade(bool fadeIn) => EditPart((x, s, c) => AudioEdit.OnRange(x, s, c, fadeIn ? AudioEdit.FadeIn : AudioEdit.FadeOut),
+        Wave.HasSelection ? null : AudioEdit.DefaultFadeRange(Current.Length, fadeIn));
 
     private async void ReverseButton_Click(object sender, RoutedEventArgs e) => await EditRange(AudioEdit.Reverse);
 
@@ -470,18 +463,21 @@ public partial class AudioEditorWindow : Window
 
     private async void EchoStrongButton_Click(object sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Strong);
 
-    private Task Echo(AudioEdit.EchoStrength strength) => EditRinging((x, s, c) => AudioEdit.EchoRange(x, s, c, strength));
+    private Task Echo(AudioEdit.EchoStrength strength) => EditPart((x, s, c) => AudioEdit.EchoRange(x, s, c, strength));
 
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
     {
         if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
-        await EditRinging((x, s, c) => AudioEdit.ApplyVoiceRange(x, s, c, sliders));
+        await EditPart((x, s, c) => AudioEdit.ApplyVoiceRange(x, s, c, sliders));
     }
 
-    /// <summary>An edit of the picked part (or everything) whose tail rings on over what follows; the part stays picked.</summary>
-    private Task EditRinging(Func<float[], int, int, float[]> op)
+    /// <summary>
+    /// An edit of the whole sound given a range (<paramref name="range"/>, else the picked part or everything), such
+    /// as one whose tail rings on over what follows; a picked part stays picked.
+    /// </summary>
+    private Task EditPart(Func<float[], int, int, float[]> op, (int Start, int Count)? range = null)
     {
-        var (start, count) = Target();
+        var (start, count) = range ?? Target();
         bool picked = Wave.HasSelection;
         return Edit(x =>
         {

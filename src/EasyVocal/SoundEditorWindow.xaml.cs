@@ -222,8 +222,7 @@ public partial class SoundEditorWindow : Window
         }
         bool neverEdited = newFilePath != null || string.IsNullOrEmpty(editing?.OriginalFileName);
         bool isOriginal = audioChange == AudioChange.Restored || (audioChange == AudioChange.None && neverEdited);
-        var name = string.IsNullOrWhiteSpace(NameBox.Text) ? L.T("New sound") : NameBox.Text.Trim();
-        var editor = new AudioEditorWindow(controller, name, emojiGrid.Selected, VolumeSlider.Value, samples,
+        var editor = new AudioEditorWindow(controller, ShownName, emojiGrid.Selected, VolumeSlider.Value, samples,
             isOriginal, isOriginal ? null : OriginalPath(), editing?.Id) { Owner = this };
         if (editor.ShowDialog() != true || editor.Result is not { } result) return;
         samples = result.Samples;
@@ -234,7 +233,10 @@ public partial class SoundEditorWindow : Window
 
     /// <summary>The file the sound came from: a file just picked, else the sound's original (or its only) file.</summary>
     private string? OriginalPath() =>
-        newFilePath ?? (string.IsNullOrEmpty(editing?.OriginalFileName) ? controller.SoundPath(editing?.FileName) : controller.SoundPath(editing!.OriginalFileName));
+        newFilePath ?? controller.SoundPath(string.IsNullOrEmpty(editing?.OriginalFileName) ? editing?.FileName : editing.OriginalFileName);
+
+    /// <summary>The name as typed, or "New sound" while the box is empty.</summary>
+    private string ShownName => string.IsNullOrWhiteSpace(NameBox.Text) ? L.T("New sound") : NameBox.Text.Trim();
 
     private void UpdateFileText()
     {
@@ -253,8 +255,7 @@ public partial class SoundEditorWindow : Window
 
     private void HotkeyButton_Click(object sender, RoutedEventArgs e)
     {
-        var name = string.IsNullOrWhiteSpace(NameBox.Text) ? L.T("New sound") : NameBox.Text.Trim();
-        if (HotkeyCaptureDialog.Pick(this, controller, "sound:" + itemId, name, pendingHotkey, out var result))
+        if (HotkeyCaptureDialog.Pick(this, controller, "sound:" + itemId, ShownName, pendingHotkey, out var result))
         {
             pendingHotkey = result;
             UpdateHotkeyButton();

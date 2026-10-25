@@ -68,7 +68,7 @@ public partial class SettingsWindow : Window
             AskQuitBox.IsChecked = s.ConfirmQuit;
             UpdateBox.IsChecked = s.CheckForUpdates;
             CheckNowButton.Visibility = controller.Updates != null ? Visibility.Visible : Visibility.Collapsed;
-            UpdateStatus.Text = L.F("Version {0}", UpdateRules.RunningVersion(typeof(SettingsWindow).Assembly));
+            UpdateStatus.Text = VersionText();
             RefreshHotkeyRows();
         }
         finally
@@ -148,6 +148,8 @@ public partial class SettingsWindow : Window
         controller.Save();
     }
 
+    private static string VersionText() => L.F("Version {0}", UpdateRules.RunningVersion(typeof(SettingsWindow).Assembly));
+
     private async void CheckNowButton_Click(object sender, RoutedEventArgs e)
     {
         if (controller.Updates is not { } updates) return;
@@ -156,7 +158,7 @@ public partial class SettingsWindow : Window
         try
         {
             var text = await updates.CheckNowAsync(this);
-            UpdateStatus.Text = text ?? L.F("Version {0}", UpdateRules.RunningVersion(typeof(SettingsWindow).Assembly));
+            UpdateStatus.Text = text ?? VersionText();
         }
         catch (Exception ex)
         {

@@ -105,6 +105,8 @@ public sealed class ReverbEffect : IAmountEffect
     private readonly Biquad lowCut;
     private int prePos;
     private double preDelay = -1;           // the pre-delay in use (samples); it glides to a new size instead of jumping
+    private double tunedAmount = -1;        // the size the comb feedbacks and the wet level below were worked out for
+    private float wetLevel;
     private double amount = 0.5;
 
     public ReverbEffect(int sampleRate)
@@ -129,17 +131,8 @@ public sealed class ReverbEffect : IAmountEffect
     {
         double a = amount;
         if (a <= 0) return;
-        double rt60 = DecaySeconds(a);
-        double g2 = 0;
-        for (int c = 0; c < combs.Length; c++)
-        {
-            double g = Math.Pow(10, -3.0 * combs[c].Length / (sampleRate * rt60));
-            feedback[c] = (float)g;
-            g2 += g * g;
-        }
-        g2 /= combs.Length;
-        // White noise through one comb has 1 / (1 - g²) times its power; eight of them add up.
-        float wet = (float)(0.9 * Math.Pow(a, 0.6) * Math.Sqrt((1 - g2) / combs.Length));
+        if (a != tunedAmount) Tune(a);
+        float wet = wetLevel;
         float dry = (float)(1 - 0.35 * a);
         float damp = (float)(0.2 + 0.2 * a);
         double preTarget = (0.008 + 0.08 * a * a) * sampleRate;
@@ -165,6 +158,23 @@ public sealed class ReverbEffect : IAmountEffect
             for (int p = 0; p < allPasses.Length; p++) r = allPasses[p].Process(r, 0.5f);
             mono[i] = x * dry + wet * r;
         }
+    }
+
+    /// <summary>The comb feedbacks for this size's decay time, and the wet level that keeps a bigger room as loud.</summary>
+    private void Tune(double a)
+    {
+        double rt60 = DecaySeconds(a);
+        double g2 = 0;
+        for (int c = 0; c < combs.Length; c++)
+        {
+            double g = Math.Pow(10, -3.0 * combs[c].Length / (sampleRate * rt60));
+            feedback[c] = (float)g;
+            g2 += g * g;
+        }
+        g2 /= combs.Length;
+        // White noise through one comb has 1 / (1 - g²) times its power; eight of them add up.
+        wetLevel = (float)(0.9 * Math.Pow(a, 0.6) * Math.Sqrt((1 - g2) / combs.Length));
+        tunedAmount = a;
     }
 
     public void Reset()

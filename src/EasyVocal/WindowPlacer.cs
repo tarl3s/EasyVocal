@@ -84,11 +84,9 @@ public static class WindowPlacer
         var anchor = window.Owner is { IsLoaded: true } owner && !window.IsLoaded
             ? new WindowBox(owner.Left, owner.Top, owner.ActualWidth, owner.ActualHeight)
             : new WindowBox(window.Left, window.Top, Math.Max(1, window.ActualWidth), Math.Max(1, window.ActualHeight));
-        if (!anchor.IsFinite) return Primary(areas);
+        if (!anchor.IsFinite) return areas[0]; // the primary screen
         return WindowFit.AreaFor(anchor, areas);
     }
-
-    private static WindowBox Primary(IReadOnlyList<WindowBox> areas) => areas[0];
 
     /// <summary>
     /// Every monitor's working area in WPF units, the primary first. EasyVocal is system-DPI aware, so one scale

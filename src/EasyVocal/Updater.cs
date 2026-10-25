@@ -417,7 +417,7 @@ public static class HelperScript
         return sb.ToString();
     }
 
-    /// <summary>Writes the script (with its BOM) and returns how to run it, hidden.</summary>
+    /// <summary>How to run the script: Windows PowerShell, hidden, no profile, this script only.</summary>
     public static ProcessStartInfo StartInfo(string scriptPath)
     {
         var psi = new ProcessStartInfo

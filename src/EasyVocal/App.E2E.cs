@@ -252,10 +252,7 @@ public partial class App
             ClickSound(main, "airhorn");
             Expect(plain440 > 0.05, Inv($"off: the airhorn plays as it is with Chipmunk on (440 Hz {plain440:0.000})"));
 
-            main.Tabs.SelectedIndex = 1;
-            main.UpdateLayout();
-            Expect(main.SoundsUseVoiceBox.IsVisible, "the switch is on the Sounds tab");
-            Click(main.SoundsUseVoiceBox);
+            ClickSoundsUseVoice(main);
             Expect(c.SoundsUseVoice && c.Settings.SoundsUseVoice, "the switch turns on (and is saved)");
             ClickSound(main, "airhorn");
             var (voiced, _) = await Record(Call, settleMs: 100, voiced: false);
@@ -267,7 +264,7 @@ public partial class App
             Expect(E2ESignal.Rms(voiced) > 0.05 && voiced440 < 0.3 * plain440, "on: the airhorn takes the Chipmunk voice");
             Expect(back440 > 0.6 * plain440, "switching to Normal while it plays brings the airhorn back as it is");
             ClickSound(main, "airhorn");
-            Click(main.SoundsUseVoiceBox);
+            ClickSoundsUseVoice(main);
             Expect(!c.SoundsUseVoice, "the switch turns off");
         });
 
@@ -452,9 +449,7 @@ public partial class App
             ClickVoice(main, myVoice ?? throw new E2EFailure("step 7 made no voice"));
             Click(main.OnOffButton);
             Click(main.HearMeButton);
-            main.Tabs.SelectedIndex = 1;
-            main.UpdateLayout();
-            Click(main.SoundsUseVoiceBox);
+            ClickSoundsUseVoice(main);
             Expect(!c.FilterEnabled && c.HearMe && c.ActiveVoice.Id == myVoice && c.SoundsUseVoice, "OFF, Hear me on, the custom voice active, Sounds use the voice on");
             File.WriteAllLines(Path.Combine(e2eData, "e2e-expect.txt"), new[] { "voice=" + myVoice, "sound=" + keep.Id, "hotkey=" + hotkey });
         });
@@ -562,9 +557,7 @@ public partial class App
             Expect(E2ESignal.Pitch(chip) > 200, "the call has the Chipmunk voice");
 
             Click(main.MuteButton);
-            main.Tabs.SelectedIndex = 1;
-            main.UpdateLayout();
-            Click(main.SoundsUseVoiceBox); // the sound below is measured as it is, not through Chipmunk
+            ClickSoundsUseVoice(main); // the sound below is measured as it is, not through Chipmunk
             Expect(!c.SoundsUseVoice, "Sounds use the voice turns off");
             await WaitUntil(() => c.IsSoundLoaded(soundId), 5000, "the custom sound to load");
             ClickSound(main, soundId);
@@ -683,6 +676,15 @@ public partial class App
         var card = main.SoundCard(id);
         Expect(card is { IsVisible: true }, "the sound card " + id + " is on screen");
         Click(card);
+    }
+
+    /// <summary>The Sounds tab's "🎭 Sounds use the voice" switch, clicked where a person finds it.</summary>
+    private static void ClickSoundsUseVoice(MainWindow main)
+    {
+        main.Tabs.SelectedIndex = 1;
+        main.UpdateLayout();
+        Expect(main.SoundsUseVoiceBox.IsVisible, "the switch is on the Sounds tab");
+        Click(main.SoundsUseVoiceBox);
     }
 
     private static bool HasMenu(Button? card, string header) =>

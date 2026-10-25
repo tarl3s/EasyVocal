@@ -93,16 +93,11 @@ public sealed class UpdateCoordinator
         {
             service.StartInstall(newExe, Environment.ProcessId, logFile, relaunchArguments);
         }
-        catch (UpdateException ex)
-        {
-            AppLog.Error("Starting the update failed (" + ex.Problem + ")", ex);
-            AskDialog.Tell(owner is { IsVisible: true } ? owner : null, UpdateWindow.ProblemText(ex.Problem));
-            return;
-        }
         catch (Exception ex)
         {
-            AppLog.Error("Starting the update failed", ex);
-            AskDialog.Tell(owner is { IsVisible: true } ? owner : null, UpdateWindow.ProblemText(UpdateProblem.Launch));
+            var problem = ex is UpdateException u ? u.Problem : UpdateProblem.Launch;
+            AppLog.Error("Starting the update failed (" + problem + ")", ex);
+            AskDialog.Tell(owner is { IsVisible: true } ? owner : null, UpdateWindow.ProblemText(problem));
             return;
         }
         AppLog.Info("Quitting so the update can be installed");
