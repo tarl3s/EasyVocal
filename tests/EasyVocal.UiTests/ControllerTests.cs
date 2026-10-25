@@ -65,6 +65,7 @@ public class ControllerTests
     public void Controller_RunsOnAnInjectedDispatcher_AndSavesThroughItsTimer()
     {
         var data = Path.Combine(Path.GetTempPath(), "EV_UiController_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(data);
         var ui = new ManualDispatcher();
         var devices = new TestAudioDevices(cablePresent: true);
         var platform = TestPlatform.Create(devices, new FakeUpdaterPlatform(), SoundDecoders.Default);
