@@ -39,7 +39,7 @@ public sealed class SingleInstance : IDisposable
     /// <summary>After this many pipe failures in a row the listener gives up (a second launch then just starts).</summary>
     private const int MaxPipeFailures = 5;
     /// <summary>The lock is held: an EasyVocal is (very likely) there, maybe still starting its listener — wait for it.</summary>
-    private static readonly TimeSpan WakeTimeout = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan WakeTimeout = TimeSpan.FromSeconds(2); // a busy computer may take that long to start it
     /// <summary>Only checking (we got the lock): a listener that exists answers at once.</summary>
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(100);
     /// <summary>A client that connects and never writes can't hold the listener longer than this.</summary>

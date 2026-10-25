@@ -23,9 +23,6 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
     private const int Block = AudioFormat.BlockSize;
     private const string In = "ev_test_in", Out = "ev_test_out";
 
-    /// <summary>Clearly-audible steps (see <see cref="VoiceFeatures.Distance"/>) a voice may be from its offline render.</summary>
-    private const double MaxDistance = 0.6;
-
     [Fact]
     public async Task EveryVoice_SoundsTheSameThroughPulseAudio_AsOffline()
     {
@@ -97,9 +94,7 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
             int lag = found!.Value;
             output.WriteLine($"the recording is {lag / (double)Sr * 1000:0} ms off the timeline");
 
-            var offline = new Dictionary<string, (float[] Out, int Latency)>();
             var failures = new List<string>();
-            double inputPitch = double.NaN;
             for (int v = 0; v < voices.Count; v++)
             {
                 var sliders = voices[v].Sliders;
@@ -112,12 +107,12 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
                 double ratio = Math.Pow(2, sliders.Clamp().Pitch);
                 var a = VoiceFeatures.Measure(padded, PadTo(input, reference.Length), latency, ratio);
                 var b = VoiceFeatures.Measure(reference, PadTo(input, reference.Length), latency, ratio);
-                if (v == 0) inputPitch = b.PitchHz;
-                double d = VoiceFeatures.Distance(a, b, inputPitch);
-                int gaps = Dropouts(real, input.Length + latency);
-                output.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{voices[v].Id,-12} distance {d:0.00}  dropouts {gaps}\n   real    {a}\n   offline {b}"));
-                if (d > MaxDistance) failures.Add(string.Create(CultureInfo.InvariantCulture, $"{voices[v].Id} sounds different ({d:0.00} steps)"));
-                if (gaps > 0) failures.Add($"{voices[v].Id}: {gaps} dropouts");
+                int gaps = Dropouts(real, input.Length + latency), gapsOffline = Dropouts(reference, input.Length + latency);
+                var differences = Differences(a, b);
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"{voices[v].Id,-12} {(differences.Count == 0 ? "same" : string.Join(", ", differences))}  dropouts {gaps} (offline {gapsOffline})\n   real    {a}\n   offline {b}"));
+                if (differences.Count > 0) failures.Add(voices[v].Id + " sounds different: " + string.Join(", ", differences));
+                if (gaps > gapsOffline) failures.Add($"{voices[v].Id}: {gaps - gapsOffline} dropouts");
             }
             Assert.True(failures.Count == 0, string.Join("; ", failures));
         }
@@ -128,15 +123,36 @@ public class LinuxVoicePathTests(ITestOutputHelper output)
         }
     }
 
-    /// <summary>Six syllables of a vowel gliding between 110 and 190 Hz, with pauses (like speech, with no TTS on Linux).</summary>
+    /// <summary>
+    /// What a listener would tell apart between the real path (<paramref name="a"/>) and the offline render: pitch
+    /// (4 %, when both are voiced), brightness (8 %), tilt (2 dB), loudness (1.5 dB), roughness, breathiness, the room's
+    /// tail (5 dB) and the octave layer (3 dB). Empty = the same voice.
+    /// </summary>
+    private static List<string> Differences(VoiceFeatures a, VoiceFeatures b)
+    {
+        var d = new List<string>();
+        void Check(bool same, FormattableString what) { if (!same) d.Add(what.ToString(CultureInfo.InvariantCulture)); }
+        bool voiced = a.VoicedShare > 0.3 && b.VoicedShare > 0.3 && !double.IsNaN(a.PitchHz) && !double.IsNaN(b.PitchHz);
+        if (voiced) Check(Math.Abs(Math.Log(a.PitchHz / b.PitchHz)) < Math.Log(1.04), $"pitch {a.PitchHz:0} vs {b.PitchHz:0} Hz");
+        Check(Math.Abs(Math.Log(a.Centroid / b.Centroid)) < Math.Log(1.08), $"brightness {a.Centroid:0} vs {b.Centroid:0} Hz");
+        Check(Math.Abs(a.TiltDb - b.TiltDb) < 2, $"tilt {a.TiltDb:0.0} vs {b.TiltDb:0.0} dB");
+        Check(Math.Abs(a.LevelDb - b.LevelDb) < 1.5, $"level {a.LevelDb:0.0} vs {b.LevelDb:0.0} dB");
+        Check(Math.Abs(a.Roughness - b.Roughness) < 0.15, $"roughness {a.Roughness:0.00} vs {b.Roughness:0.00}");
+        Check(Math.Abs(a.Flatness - b.Flatness) < 0.05, $"breathiness {a.Flatness:0.000} vs {b.Flatness:0.000}");
+        Check(Math.Abs(a.TailDb - b.TailDb) < 5, $"tail {a.TailDb:0} vs {b.TailDb:0} dB");
+        Check(Math.Abs(a.SubOctaveDb - b.SubOctaveDb) < 3, $"octave below {a.SubOctaveDb:0.0} vs {b.SubOctaveDb:0.0} dB");
+        return d;
+    }
+
+    /// <summary>Six syllables of a vowel, its pitch gliding between 115 and 175 Hz all along (a median that doesn't jump), with pauses.</summary>
     private static float[] Syllables()
     {
         var all = new List<float>();
         double[][] vowels = { new[] { 700.0, 1200, 2600 }, new[] { 300.0, 2300, 3000 }, new[] { 500.0, 900, 2500 } };
         for (int s = 0; s < 6; s++)
         {
-            double f0 = 110 + 80 * ((s * 37) % 6) / 5.0;
-            var syllable = Signals.PulseVowel(f0, vowels[s % 3], 0.3);
+            double t0 = s * 0.425;
+            var syllable = Signals.PulseVowel(t => 145 + 30 * Math.Sin(2 * Math.PI * (t0 + t) / 1.3), vowels[s % 3], 0.3);
             for (int n = 0; n < syllable.Length; n++) syllable[n] *= 0.5f * (float)Math.Sin(Math.PI * n / syllable.Length);
             all.AddRange(syllable);
             all.AddRange(new float[Sr / 8]);

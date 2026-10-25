@@ -150,7 +150,7 @@ public class SingleInstanceTests : IDisposable
         watch.Stop();
         Assert.NotNull(first);
         Assert.False(first!.WithoutLock);
-        // Only a quick look (none at all where the pipe is a socket file), never the 500 ms a held lock gets.
+        // Only a quick look (none at all where the pipe is a socket file), never the 2 s a held lock gets.
         Assert.True(watch.ElapsedMilliseconds < 400, "took " + watch.ElapsedMilliseconds + " ms");
     }
 

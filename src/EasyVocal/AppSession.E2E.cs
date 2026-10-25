@@ -325,27 +325,36 @@ internal sealed partial class AppSession
         {
             await Baseline(c, main);
             var chipmunk = c.Settings.Voices.First(v => v.Id == "chipmunk");
-            await Modal(w => w is HotkeyCaptureDialog, () => ClickMenu(main.VoiceCard("chipmunk"), L.T("Set hotkey…")), w =>
+            // Ctrl+1 unless another app on this computer holds it — the dialog may tell at once, or the system refuses it
+            // once saved (macOS keeps Ctrl+1 for "Switch to Desktop 1") — then what a person would try next.
+            bool saved = false;
+            foreach (var (mods, vk) in new[] { (HotkeyMods.Ctrl, 0x31), (HotkeyMods.Ctrl | HotkeyMods.Alt | HotkeyMods.Shift, 0x31), (HotkeyMods.Ctrl | HotkeyMods.Alt | HotkeyMods.Shift, 0x7A) })
             {
-                var dialog = (HotkeyCaptureDialog)w;
-                // Ctrl+1 unless another app on this PC holds it: then what a person would try next.
-                foreach (var (mods, vk) in new[] { (HotkeyMods.Ctrl, 0x31), (HotkeyMods.Ctrl | HotkeyMods.Alt | HotkeyMods.Shift, 0x31), (HotkeyMods.Ctrl | HotkeyMods.Alt | HotkeyMods.Shift, 0x7A) })
+                string tried = "";
+                await Modal(w => w is HotkeyCaptureDialog, () => ClickMenu(main.VoiceCard("chipmunk"), L.T("Set hotkey…")), w =>
                 {
+                    var dialog = (HotkeyCaptureDialog)w;
                     dialog.Simulate(mods, vk);
-                    if (!dialog.SaveButton.IsEnabled) continue;
-                    Click(dialog.SaveButton);
-                    if (!dialog.IsVisible || dialog.Accepted) return Task.CompletedTask;
-                    Note("taken by another app: " + dialog.KeyText.Text);
+                    tried = dialog.KeyText.Text ?? "";
+                    if (dialog.SaveButton.IsEnabled) Click(dialog.SaveButton);
+                    return Task.CompletedTask;
+                }, "the hotkey dialog");
+                if (chipmunk.Hotkey != null && !c.RefusedActions.Contains("voice:chipmunk"))
+                {
+                    saved = true;
+                    break;
                 }
-                throw new E2EFailure("no free hotkey could be saved");
-            }, "the hotkey dialog");
+                Note("taken by another app: " + tried);
+            }
+            Expect(saved, "a free hotkey could be saved");
             hotkey = chipmunk.Hotkey;
             Note("hotkey: " + hotkey + (options.Hosted ? " (in-memory hotkeys)" : " (registered with the system)"));
             Expect(hotkey != null && !c.RefusedActions.Contains("voice:chipmunk") && c.RegisteredHotkeyCount == 1, "the hotkey is saved and registered");
             Expect(HasText(main.VoiceCard("chipmunk"), hotkey!), "the card shows its hotkey");
             Expect(c.ActiveVoice.Id == "normal", "Normal is still the active voice");
             Expect(c.SimulateHotkeyPress("voice:chipmunk"), "the hotkey is registered for Chipmunk");
-            Expect(c.ActiveVoice.Id == "chipmunk", "pressing the hotkey switches to Chipmunk");
+            // A press comes on the hotkeys' own thread (X11, Carbon) and is posted to the UI thread.
+            await WaitUntil(() => c.ActiveVoice.Id == "chipmunk", 2000, "the hotkey's press to switch to Chipmunk");
             var (got, _) = await Record(Call, settleMs: 200);
             Expect(E2ESignal.Pitch(got) > 200, "the call has the Chipmunk voice");
             for (int i = 0; i < 50; i++) { c.SetTyping(true); c.SetTyping(false); } // a text box gaining and losing the keyboard
@@ -638,7 +647,9 @@ internal sealed partial class AppSession
             await ExpectCopy(Call, "OFF after the restart: the call gets the clean voice");
             await ExpectCopy(Phones, "Hear me after the restart: the headphones get the voice");
 
-            Expect(c.SimulateHotkeyPress("voice:chipmunk") && c.ActiveVoice.Id == "chipmunk" && c.FilterEnabled, "the hotkey switches to Chipmunk (and turns the filter on)");
+            Expect(c.SimulateHotkeyPress("voice:chipmunk"), "the hotkey is registered again");
+            await WaitUntil(() => c.ActiveVoice.Id == "chipmunk", 2000, "the hotkey to switch to Chipmunk");
+            Expect(c.FilterEnabled, "the hotkey switches to Chipmunk and turns the filter on");
             var (chip, _) = await Record(Call, settleMs: 200);
             Expect(E2ESignal.Pitch(chip) > 200, "the call has the Chipmunk voice");
 
