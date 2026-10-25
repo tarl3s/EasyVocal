@@ -197,6 +197,15 @@ public sealed class AudioEngine : IDisposable
         }
     }
 
+    /// <summary>True while a session has its microphone open (running, or lost and not closed yet).</summary>
+    public bool HoldsMic
+    {
+        get
+        {
+            lock (stateLock) return session != null;
+        }
+    }
+
     /// <summary>True while a session runs whose monitor device stopped working (unplugged headphones).</summary>
     public bool MonitorLost
     {

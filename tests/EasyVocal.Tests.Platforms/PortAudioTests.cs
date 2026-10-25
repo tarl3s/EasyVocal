@@ -69,6 +69,11 @@ public class PortAudioTests(ITestOutputHelper output)
             speaker.TrimTo(0);
         }
         Assert.Throws<ObjectDisposedException>(() => speaker.Write(new float[10]));
+        // Closed on a thread of its own once its own audio thread stopped it (never aborted from here while it runs).
+        var stream = (PortAudioStream)speaker;
+        Assert.True(SpinWait.SpinUntil(() => stream.Closed.IsCompleted, 10000), "the speaker closed");
+        output.WriteLine("closed: " + stream.CloseRoute);
+        Assert.Equal("completed", stream.CloseRoute);
     }
 
     [Fact]
@@ -195,6 +200,7 @@ public class PortAudioTests(ITestOutputHelper output)
             Assert.Throws<IOException>(() => speaker.Write(new float[480])); // the engine opens everything again
             Assert.Equal(1, backend.Starts); // not while a stream is open
         }
+        Assert.True(backend.WaitForClosing(TimeSpan.FromSeconds(10)), "the speaker closed");
         backend.Inputs();
         Assert.Equal(2, backend.Starts); // with nothing open: started again, the new card in its list
     }

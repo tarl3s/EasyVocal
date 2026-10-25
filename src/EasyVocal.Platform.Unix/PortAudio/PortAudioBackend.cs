@@ -43,7 +43,8 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
     private readonly IDeviceSource? source;
     private readonly Func<bool>? micRefused;
     private readonly Func<string>? systemFingerprint;
-    private readonly List<PortAudioStream> streams = new();
+    private readonly List<PortAudioStream> streams = new(); // open ones, and those still closing
+    private readonly HashSet<PortAudioStream> closing = new(); // its own lock: a stream's Dispose never waits for sync
     private readonly Timer poll;
     private List<PaDevice> paDevices = new();
     private bool initialized, stale = true, unavailable, disposed;
@@ -114,6 +115,7 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
     public IAudioInput OpenMic(string id)
     {
         if (micRefused?.Invoke() == true) throw new MicPermissionDeniedException();
+        WaitForClosing(OpenWait);
         lock (sync)
         {
             var device = Resolve(id, input: true);
@@ -125,6 +127,7 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
 
     public IAudioOutput OpenSpeaker(string id)
     {
+        WaitForClosing(OpenWait);
         lock (sync)
         {
             var device = Resolve(id, input: false);
@@ -134,11 +137,38 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
         }
     }
 
-    /// <summary>A stream closed (from its Dispose).</summary>
-    internal void Closed(PortAudioStream stream)
+    /// <summary>A stream is being closed on a thread of its own (see <see cref="PortAudioStream"/>). Never takes <see cref="sync"/>.</summary>
+    internal void Closing(PortAudioStream stream)
     {
-        lock (sync) streams.Remove(stream);
+        lock (closing) closing.Add(stream);
     }
+
+    /// <summary>A stream closed (<paramref name="stillOpen"/>: left open on purpose, so PortAudio is never restarted under it).</summary>
+    internal void Closed(PortAudioStream stream, bool stillOpen)
+    {
+        if (!stillOpen)
+            lock (sync) streams.Remove(stream);
+        lock (closing) closing.Remove(stream);
+    }
+
+    /// <summary>
+    /// Waits (without the lock) until no stream is closing, at most <paramref name="limit"/>; true when none is. A stream
+    /// opens only once the last one closed: on macOS opening one while another's audio thread stops it could freeze.
+    /// </summary>
+    internal bool WaitForClosing(TimeSpan limit)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            lock (closing)
+                if (closing.Count == 0) return true;
+            if (watch.Elapsed >= limit) return false;
+            Thread.Sleep(2);
+        }
+    }
+
+    /// <summary>How long an open waits for streams still closing (a stream closes within a few blocks).</summary>
+    private static readonly TimeSpan OpenWait = TimeSpan.FromSeconds(1);
 
     /// <summary>The lock every PortAudio call takes (it is not thread-safe while streams open and close).</summary>
     internal object Sync => sync;
@@ -312,9 +342,12 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
         }
         poll.Dispose();
         foreach (var s in open) s.Dispose();
+        bool allClosed = WaitForClosing(TimeSpan.FromSeconds(2));
         lock (sync)
         {
-            if (initialized) PortAudioNative.Pa_Terminate();
+            // Pa_Terminate aborts what is still open: never under a stream whose audio thread may be stopping it.
+            if (initialized && allClosed && streams.Count == 0) PortAudioNative.Pa_Terminate();
+            else if (initialized) AppLog.Info("PortAudio is left running: a sound stream is still closing");
             initialized = false;
         }
     }

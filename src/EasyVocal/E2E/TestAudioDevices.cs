@@ -31,6 +31,12 @@ internal sealed class TestAudioDevices : IAudioBackend
     /// <summary>The loop the microphone plays (mono 48 kHz, <see cref="E2ESignal.LoopSeconds"/> long).</summary>
     public float[] VoiceLoop => voice;
 
+    /// <summary>How many microphone streams are open right now (the engine's, a level meter's).</summary>
+    public int OpenMics
+    {
+        get { lock (sync) return mics.Count(m => !m.Disposed); }
+    }
+
     /// <summary>The microphone opened last and still open (the one the engine listens to while it runs).</summary>
     public TestMic? Mic
     {

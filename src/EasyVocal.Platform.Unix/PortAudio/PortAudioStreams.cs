@@ -8,22 +8,47 @@ using EasyVocal.Core.Platform;
 namespace EasyVocal.Platform.Unix;
 
 /// <summary>
+/// What PortAudio's audio thread is handed with every block (the stream's userData), in native memory: the stream
+/// itself (a GCHandle), how many channels to silence, and whether PortAudio said the stream finished.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct PaCallbackContext
+{
+    public IntPtr Self;
+    public int OutputChannels;
+    public int Finished;
+}
+
+/// <summary>
 /// One PortAudio stream with a callback (PortAudio's audio thread calls <see cref="OnAudio"/>; nothing there allocates
 /// or locks). The backend's poll calls <see cref="Check"/>: a stream that stopped calling back (unplugged) fails.
+/// <para>
+/// Closing (<see cref="Dispose"/>, which never waits): from then on the callback gives silence and answers paComplete,
+/// so PortAudio stops the stream on its own audio thread; a thread of its own waits for PortAudio to say that stop is
+/// over, and only then makes the stream "stopped" (Pa_AbortStream, with nothing left to stop) and closes it. Stopping a
+/// stream from outside while its audio thread stops it deadlocks on macOS — both end in AudioOutputUnitStop and wait for
+/// each other (EasyVocal froze) — and Pa_CloseStream on a stream that isn't "stopped" aborts it, which macOS's PortAudio
+/// never marks by itself after paComplete. Only a stream whose callback no longer runs (a device gone) is aborted from
+/// outside, and its callback answers paContinue from that moment, so it is never stopped from two threads.
+/// </para>
 /// </summary>
 internal abstract unsafe class PortAudioStream : IDisposable
 {
     /// <summary>No callback for this long while started: the device is gone.</summary>
     private static readonly long StallTicks = Stopwatch.Frequency * 3 / 2;
 
+    private const int Running = 0, Closing = 1, Completing = 2, Aborting = 3; // closeState
+
     protected readonly PortAudioBackend Backend;
     private readonly object gate = new(); // Check vs Dispose (never taken by the callback)
+    private readonly TaskCompletionSource closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private IPaStreamCalls calls = PaStreamCalls.Instance;
     private IntPtr stream;
     private GCHandle self;
+    private PaCallbackContext* context;
     private long lastCallback;
-    private int outputChannels; // for the silence a closing playback stream gives
     private volatile bool started;
-    private int failed;
+    private int failed, closeState = Running;
     protected volatile bool Disposed;
 
     protected PortAudioStream(PortAudioBackend backend) => Backend = backend;
@@ -31,17 +56,78 @@ internal abstract unsafe class PortAudioStream : IDisposable
     /// <summary>The device's name, for messages.</summary>
     protected string DeviceName { get; init; } = "";
 
+    /// <summary>How long a closing stream's callback has to answer (a live one does within a block, 10 ms).</summary>
+    internal TimeSpan AnswerWait { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>How long PortAudio has to say that a stream whose callback completed has stopped.</summary>
+    internal TimeSpan StopWait { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Done when the stream is closed (or left open on purpose, see <see cref="CloseRoute"/>).</summary>
+    internal Task Closed => closed.Task;
+
+    /// <summary>
+    /// How the stream ended, for the tests: "completed" (stopped by its own audio thread), "aborted" (no callback any
+    /// more), "never started", "left open"; null while open or closing.
+    /// </summary>
+    internal string? CloseRoute { get; private set; }
+
     /// <summary>Under the backend's lock (the caller holds it): opens the stream; throws <see cref="PortAudioException"/>.</summary>
     protected void Open(PortAudioNative.StreamParameters* input, PortAudioNative.StreamParameters* output, double rate, int framesPerBuffer)
     {
-        self = GCHandle.Alloc(this);
-        outputChannels = output != null ? output->ChannelCount : 0;
+        Attach(output != null ? output->ChannelCount : 0);
         int error = PortAudioNative.Pa_OpenStream(out stream, input, output, rate, new CULong((uint)framesPerBuffer),
-            new CULong((uint)PortAudioNative.ClipOff), &Callback, (void*)GCHandle.ToIntPtr(self));
-        if (error == PortAudioNative.NoError) return;
-        self.Free();
-        stream = IntPtr.Zero;
-        throw new PortAudioException("Opening " + DeviceName, error);
+            new CULong((uint)PortAudioNative.ClipOff), &Callback, context);
+        if (error != PortAudioNative.NoError)
+        {
+            stream = IntPtr.Zero;
+            FreeContext();
+            throw new PortAudioException("Opening " + DeviceName, error);
+        }
+        error = PortAudioNative.Pa_SetStreamFinishedCallback(stream, &Finished);
+        if (error != PortAudioNative.NoError) AppLog.Info("PortAudio won't say when " + DeviceName + " stops (" + error + "): closing it waits longer");
+    }
+
+    private void Attach(int outputChannels)
+    {
+        self = GCHandle.Alloc(this);
+        context = (PaCallbackContext*)NativeMemory.AllocZeroed((nuint)sizeof(PaCallbackContext));
+        context->Self = GCHandle.ToIntPtr(self);
+        context->OutputChannels = outputChannels;
+    }
+
+    /// <summary>Only once nothing can call back any more (the stream is closed or was never opened).</summary>
+    private void FreeContext()
+    {
+        if (context != null)
+        {
+            NativeMemory.Free(context);
+            context = null;
+        }
+        if (self.IsAllocated) self.Free();
+    }
+
+    /// <summary>For tests: a pretend stream on <paramref name="pretend"/> calls (no PortAudio, no device).</summary>
+    internal void AttachForTests(IPaStreamCalls pretend, int outputChannels)
+    {
+        calls = pretend;
+        Attach(outputChannels);
+        stream = 1;
+    }
+
+    /// <summary>For tests: one block as PortAudio's audio thread hands it over; returns the callback's answer.</summary>
+    internal int CallbackForTests(float[] output, int frames)
+    {
+        fixed (float* o = output) return Answer(context, null, o, (nuint)frames);
+    }
+
+    /// <summary>For tests: PortAudio says the stream finished.</summary>
+    internal void FinishedForTests() => Volatile.Write(ref context->Finished, 1);
+
+    /// <summary>For tests: the callback with a userData whose handle is <paramref name="target"/> (zero = none).</summary>
+    internal static int CallbackForTests(IntPtr target, int outputChannels, float[] output, int frames)
+    {
+        var ctx = new PaCallbackContext { Self = target, OutputChannels = outputChannels };
+        fixed (float* o = output) return Answer(&ctx, null, o, (nuint)frames);
     }
 
     /// <summary>Picks the first (channels, rate) the device takes. Null when none.</summary>
@@ -67,25 +153,48 @@ internal abstract unsafe class PortAudioStream : IDisposable
     };
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-    private static int Callback(void* input, void* output, CULong frames, void* timeInfo, CULong statusFlags, void* userData)
+    private static int Callback(void* input, void* output, CULong frames, void* timeInfo, CULong statusFlags, void* userData) =>
+        Answer((PaCallbackContext*)userData, input, output, frames.Value);
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static void Finished(void* userData)
     {
+        if (userData != null) Volatile.Write(ref ((PaCallbackContext*)userData)->Finished, 1);
+    }
+
+    /// <summary>
+    /// PortAudio's audio thread, every block. A closing stream gives silence and answers paComplete (paContinue once it
+    /// is being aborted from outside); a userData that isn't a stream of ours gives silence and paComplete.
+    /// </summary>
+    private static int Answer(PaCallbackContext* ctx, void* input, void* output, nuint frames)
+    {
+        if (ctx == null) return PortAudioNative.Complete;
         try
         {
-            if (GCHandle.FromIntPtr((IntPtr)userData).Target is not PortAudioStream s) return PortAudioNative.Continue;
+            if (ctx->Self == IntPtr.Zero || GCHandle.FromIntPtr(ctx->Self).Target is not PortAudioStream s)
+            {
+                Silence(ctx, output, frames);
+                return PortAudioNative.Complete;
+            }
             Volatile.Write(ref s.lastCallback, Stopwatch.GetTimestamp());
             if (s.Disposed)
             {
-                // Closing: silence, and PortAudio stops the stream from this thread (see Dispose).
-                if (output != null) new Span<float>(output, (int)frames.Value * s.outputChannels).Clear();
-                return PortAudioNative.Complete;
+                Silence(ctx, output, frames);
+                return Interlocked.CompareExchange(ref s.closeState, Completing, Closing) == Aborting ? PortAudioNative.Continue : PortAudioNative.Complete;
             }
-            s.OnAudio((float*)input, (float*)output, (int)frames.Value);
+            s.OnAudio((float*)input, (float*)output, (int)frames);
             return PortAudioNative.Continue;
         }
         catch (Exception)
         {
-            return PortAudioNative.Continue; // never into PortAudio; a broken block is silence
+            Silence(ctx, output, frames); // never into PortAudio; a broken block is silence
+            return PortAudioNative.Continue;
         }
+    }
+
+    private static void Silence(PaCallbackContext* ctx, void* output, nuint frames)
+    {
+        if (output != null && ctx->OutputChannels > 0) new Span<float>(output, (int)frames * ctx->OutputChannels).Clear();
     }
 
     /// <summary>PortAudio's audio thread: <paramref name="input"/> (capture) or <paramref name="output"/> (playback), interleaved.</summary>
@@ -100,7 +209,7 @@ internal abstract unsafe class PortAudioStream : IDisposable
         {
             if (Disposed) throw new ObjectDisposedException(GetType().Name);
             Volatile.Write(ref lastCallback, Stopwatch.GetTimestamp());
-            int error = PortAudioNative.Pa_StartStream(stream);
+            int error = calls.Start(stream);
             if (error != PortAudioNative.NoError) throw new PortAudioException("Starting " + DeviceName, error);
             started = true;
         }
@@ -113,7 +222,7 @@ internal abstract unsafe class PortAudioStream : IDisposable
         {
             if (Disposed || !started || Volatile.Read(ref failed) == 1) return;
             if (micRefused && this is PortAudioMic) { Report(new MicPermissionDeniedException()); return; }
-            int active = PortAudioNative.Pa_IsStreamActive(stream);
+            int active = calls.IsActive(stream);
             if (active < 0) { Report(new PortAudioException(DeviceName + " stopped", active)); return; }
             if (active == 0) { Report(new IOException(DeviceName + " stopped by itself.")); return; }
             if (Stopwatch.GetTimestamp() - Volatile.Read(ref lastCallback) > StallTicks)
@@ -131,43 +240,94 @@ internal abstract unsafe class PortAudioStream : IDisposable
     /// <summary>For tests: the device failing as if unplugged.</summary>
     internal void SimulateFailure(Exception why) => Report(why);
 
+    /// <summary>Closes the stream on a thread of its own (see the class): never waits, not even for the backend's lock.</summary>
     public void Dispose()
     {
         lock (gate)
         {
             if (Disposed) return;
+            Volatile.Write(ref closeState, Closing);
             Disposed = true;
         }
-        lock (Backend.Sync)
-        {
-            if (stream != IntPtr.Zero)
-            {
-                if (started) StopFromItsOwnThread();
-                PortAudioNative.Pa_CloseStream(stream);
-                stream = IntPtr.Zero;
-            }
-            if (self.IsAllocated) self.Free();
-        }
-        Backend.Closed(this);
-        OnDisposed();
+        Backend.Closing(this);
+        new Thread(CloseWhenStopped) { IsBackground = true, Name = "EasyVocal: closing a sound stream" }.Start();
     }
 
-    /// <summary>
-    /// Under the backend's lock, with <see cref="Disposed"/> set: the callback has answered paComplete, so PortAudio stops
-    /// the stream from its own audio thread; this waits for that (1 s at most). Stopping it from here as well
-    /// (Pa_AbortStream) while the audio thread does deadlocks on macOS: both end in AudioOutputUnitStop and wait on
-    /// each other (EasyVocal froze for good, e.g. when the setup's level meter closed). Only a stream whose callback
-    /// doesn't run any more (a device gone) is aborted from here.
-    /// </summary>
-    private void StopFromItsOwnThread()
+    private bool IsFinished => Volatile.Read(ref context->Finished) == 1;
+
+    /// <summary>Waits in 2 ms steps until <paramref name="done"/> or <paramref name="limit"/>; true when done.</summary>
+    private static bool WaitFor(Func<bool> done, TimeSpan limit)
     {
-        long until = Stopwatch.GetTimestamp() + Stopwatch.Frequency;
-        while (PortAudioNative.Pa_IsStreamActive(stream) == 1 && Stopwatch.GetTimestamp() < until) Thread.Sleep(5);
-        if (PortAudioNative.Pa_IsStreamActive(stream) == 1) PortAudioNative.Pa_AbortStream(stream);
-        else Thread.Sleep(30); // the audio thread finishes stopping itself before the stream is closed
+        var watch = Stopwatch.StartNew();
+        while (!done())
+        {
+            if (watch.Elapsed >= limit) return false;
+            Thread.Sleep(2);
+        }
+        return true;
     }
 
-    protected virtual void OnDisposed() { }
+    /// <summary>The closing thread (see the class).</summary>
+    private void CloseWhenStopped()
+    {
+        string route = "completed";
+        bool leftOpen = false;
+        try
+        {
+            lock (Backend.Sync)
+            {
+                // Start checks Disposed under this lock: a stream not started by now never will be (no audio thread).
+                if (!started)
+                {
+                    route = "never started";
+                    CloseNow();
+                    return;
+                }
+            }
+            // 1. Within a block the callback answers paComplete (or the stream already ended by itself).
+            WaitFor(() => Volatile.Read(ref closeState) != Closing || IsFinished, AnswerWait);
+            if (!IsFinished && Interlocked.CompareExchange(ref closeState, Aborting, Closing) == Closing)
+            {
+                // 2a. No callback for that long (a device gone): it answers paContinue from now on, so this is the only stop.
+                route = "aborted";
+                lock (Backend.Sync) calls.Abort(stream);
+            }
+            else if (!WaitFor(() => IsFinished, StopWait) && calls.IsActive(stream) != 0)
+            {
+                // 2b. Its audio thread stops it, and PortAudio didn't say so in time (inactive by now: nothing is stopping
+                // it any more). Still active, which it never should be after paComplete: stopping it from here could
+                // freeze the sound system, so it stays open.
+                route = "left open";
+                leftOpen = true;
+                AppLog.Info(DeviceName + " didn't stop: left open");
+                return;
+            }
+            // 3. Nothing runs on it now: made "stopped" (Pa_CloseStream would abort a stream that isn't), then closed.
+            lock (Backend.Sync)
+            {
+                if (calls.IsStopped(stream) != 1) calls.Abort(stream);
+                CloseNow();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Closing " + DeviceName + " failed", ex);
+        }
+        finally
+        {
+            Backend.Closed(this, stillOpen: leftOpen); // one left open stays counted: PortAudio is never restarted under it
+            CloseRoute = route;
+            closed.TrySetResult();
+        }
+    }
+
+    /// <summary>Under the backend's lock, with nothing running on the stream: closes it and frees what its callback used.</summary>
+    private void CloseNow()
+    {
+        if (stream != IntPtr.Zero) calls.Close(stream);
+        stream = IntPtr.Zero;
+        FreeContext();
+    }
 }
 
 /// <summary>

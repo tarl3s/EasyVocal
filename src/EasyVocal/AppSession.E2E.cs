@@ -170,7 +170,7 @@ internal sealed partial class AppSession
                 "Normal's card offers no Hide (other built-in voices do)");
         });
 
-        await Step("2b card order: drag a voice card and a sound card, Move left / right, a click still picks; saved", async () =>
+        await Step("2b card order: drag a voice card and a sound card, a drop off the cards moves nothing, Move left / right, a click still picks; saved", async () =>
         {
             var voicesBefore = c.Settings.Voices.Select(v => v.Id).ToList();
             var soundsBefore = c.Settings.Sounds.Select(s => s.Id).ToList();
@@ -184,6 +184,21 @@ internal sealed partial class AppSession
                 "the cards show the new order");
             Expect(c.Settings.Voices.Count == voicesBefore.Count && main.VoicePanel.Children[^1] is Border, "nothing lost, the AI card stays last");
             Expect(Tray.MenuVoices(c).Select(v => v.Id).SequenceEqual(c.Settings.Voices.Where(v => !v.Hidden).Select(v => v.Id)), "the tray menu lists the voices in the same order");
+
+            // Dragged over a card (its bar shows), then off every card and let go there: nothing moves, the bar goes.
+            var order = c.Settings.Voices.Select(v => v.Id).ToList();
+            var away = new TestMouse();
+            var robotCard = main.VoiceCard("robot")!;
+            var femaleCard = main.VoiceCard("female")!;
+            away.Press(robotCard, new Point(robotCard.Bounds.Width / 2, robotCard.Bounds.Height / 2));
+            away.Move(femaleCard, new Point(femaleCard.Bounds.Width * 0.25, femaleCard.Bounds.Height / 2), leftDown: true);
+            Expect(main.DropBarShown, "a bar shows where the card would go");
+            away.Move(femaleCard, new Point(-4000, -4000), leftDown: true);
+            Expect(!main.DropBarShown, "off every card: no bar");
+            away.Release(femaleCard, new Point(-4000, -4000));
+            await Settle(main);
+            Expect(c.Settings.Voices.Select(v => v.Id).SequenceEqual(order) && c.ActiveVoice.Id == active && !main.DropBarShown,
+                "a card dropped off every card moves nothing (and isn't clicked)");
 
             ClickMenu(main.VoiceCard("ghost"), "→  " + L.T("Move right"));
             await Settle(main);

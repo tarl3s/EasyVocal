@@ -377,6 +377,23 @@ public class ItemOpsTests : IDisposable
     }
 
     [Fact]
+    public void VisibleItems_AreTheShownOnes_InTheirOrder()
+    {
+        var s = Fresh();
+        Assert.True(ItemOps.Move(s.Voices, v => v.Id, "robot", "normal"));
+        s.Voices.First(v => v.Id == "female").Hidden = true;
+        s.Sounds[1].Hidden = true;
+
+        var shown = ItemOps.VisibleVoices(s).Select(v => v.Id).ToList();
+        Assert.Equal(s.Voices.Where(v => v.Id != "female").Select(v => v.Id), shown);
+        Assert.Equal("robot", shown[0]); // the person's order
+        Assert.Equal(s.Voices.Select(v => v.Id), ItemOps.VisibleVoices(s, showHidden: true).Select(v => v.Id));
+        Assert.DoesNotContain(s.Sounds[1], ItemOps.VisibleSounds(s));
+        Assert.Equal(s.Sounds.Count - 1, ItemOps.VisibleSounds(s).Count);
+        Assert.Equal(s.Sounds, ItemOps.VisibleSounds(s, showHidden: true));
+    }
+
+    [Fact]
     public void UseEditedFile_RemembersTheOriginalOnce_AndDropsOldEditedCopies()
     {
         var s = Fresh();

@@ -110,15 +110,17 @@ public class AudioEditTests
     // ---------- pitch ----------
 
     [Theory]
-    [InlineData(5)]
-    [InlineData(-5)]
-    [InlineData(12)]
-    public void ShiftPitch_MovesThePitch_AndKeepsTheLength(int semitones)
+    [InlineData(5, 160)]
+    [InlineData(-5, 160)]
+    [InlineData(12, 160)]
+    [InlineData(AudioEdit.MaxPitchShift, 160)]
+    [InlineData(-AudioEdit.MaxPitchShift, 320)] // two octaves down from 320 Hz: 80 Hz, still a voice
+    public void ShiftPitch_MovesThePitch_AndKeepsTheLength(int semitones, double from)
     {
-        var x = Signals.PulseVowel(160, new[] { 700.0, 1200 }, 1.5);
+        var x = Signals.PulseVowel(from, new[] { 700.0, 1200 }, 1.5);
         var y = AudioEdit.ShiftPitch(x, semitones);
         Assert.Equal(x.Length, y.Length);
-        double want = 160 * Math.Pow(2, semitones / 12.0);
+        double want = from * Math.Pow(2, semitones / 12.0);
         Assert.InRange(Signals.EstimatePitch(y), want * 0.97, want * 1.03);
     }
 
@@ -133,6 +135,15 @@ public class AudioEditTests
         double want = 300 * Math.Pow(2, semitones / 12.0);
         Assert.InRange(Signals.EstimatePitch(y), want * 0.95, want * 1.05);
         Assert.Empty(AudioEdit.ShiftPitch(Array.Empty<float>(), semitones));
+    }
+
+    [Fact]
+    public void ShiftPitch_GoesTwoOctavesAtMost()
+    {
+        var x = Signals.Sine(300, 0.1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => AudioEdit.ShiftPitch(x, AudioEdit.MaxPitchShift + 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => AudioEdit.ShiftPitch(x, -AudioEdit.MaxPitchShift - 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => AudioEdit.ShiftPitch(x, double.NaN));
     }
 
     // ---------- volume ----------

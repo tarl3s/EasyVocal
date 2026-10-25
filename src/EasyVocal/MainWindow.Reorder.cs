@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
@@ -78,8 +79,9 @@ public partial class MainWindow
             var size = c.Button.Bounds.Size;
             if (at.X < 0 || at.Y < 0 || at.X > size.Width || at.Y > size.Height) continue;
             ShowDropTarget(id, at.X > size.Width / 2);
-            break;
+            return;
         }
+        ShowDropTarget(null, false); // over no card: no bar, and a drop here moves nothing
     }
 
     private void ShowDropTarget(string? id, bool after)
@@ -136,13 +138,16 @@ public partial class MainWindow
     }
 
     private List<string> AllIds(bool voice) => voice
-        ? controller.Settings.Voices.Select(v => v.Id).ToList()
-        : controller.Settings.Sounds.Select(s => s.Id).ToList();
+        ? controller.Settings.Voices.ConvertAll(v => v.Id)
+        : controller.Settings.Sounds.ConvertAll(s => s.Id);
 
     /// <summary>The ids of the cards on screen, in their order.</summary>
     private List<string> ShownIds(bool voice) => voice
-        ? controller.Settings.Voices.Where(v => showHidden || !v.Hidden).Select(v => v.Id).ToList()
-        : controller.Settings.Sounds.Where(s => showHidden || !s.Hidden).Select(s => s.Id).ToList();
+        ? ItemOps.VisibleVoices(controller.Settings, showHidden).ConvertAll(v => v.Id)
+        : ItemOps.VisibleSounds(controller.Settings, showHidden).ConvertAll(s => s.Id);
+
+    /// <summary>A drop bar shows on some card (for the tests).</summary>
+    internal bool DropBarShown => voiceCards.Values.Concat(soundCards.Values).Any(c => c.DropBefore.IsVisible || c.DropAfter.IsVisible);
 
     private void Move(string id, bool voice, string? beforeId)
     {

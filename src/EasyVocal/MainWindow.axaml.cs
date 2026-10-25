@@ -245,9 +245,8 @@ public partial class MainWindow : AppWindow
     {
         VoicePanel.Children.Clear();
         voiceCards.Clear();
-        foreach (var v in controller.Settings.Voices)
+        foreach (var v in ItemOps.VisibleVoices(controller.Settings, showHidden))
         {
-            if (v.Hidden && !showHidden) continue;
             var id = v.Id;
             var card = MakeCard(v.Emoji, AppController.DisplayName(v), v.Hotkey, v.Hidden, () => VoiceMenu(v));
             card.Button.Click += (_, _) =>
@@ -267,9 +266,8 @@ public partial class MainWindow : AppWindow
     {
         SoundPanel.Children.Clear();
         soundCards.Clear();
-        foreach (var s in controller.Settings.Sounds)
+        foreach (var s in ItemOps.VisibleSounds(controller.Settings, showHidden))
         {
-            if (s.Hidden && !showHidden) continue;
             var id = s.Id;
             bool broken = !s.Hidden && controller.IsSoundBroken(id);
             var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden, () => SoundMenu(s), broken);

@@ -30,6 +30,7 @@ public partial class SetupWindow : AppWindow
     private readonly Func<bool> cableProbe;
     private readonly DispatcherTimer meterTimer, waitTimer;
     private MicMeter? meter;
+    private string? meterMicId; // the microphone the level bar shows
     private bool meterFromEngine;
     private CancellationTokenSource? cancelInstall;
     private DateTime waitUntil;
@@ -69,6 +70,7 @@ public partial class SetupWindow : AppWindow
         {
             FillMics();
             controller.Devices.Changed += OnDevicesChanged;
+            controller.Changed += OnControllerChanged;
             meterTimer.Start();
         };
     }
@@ -252,15 +254,33 @@ public partial class SetupWindow : AppWindow
 
     private void StartMeter(IReadOnlyList<DeviceInfo> inputs)
     {
+        meterMicId = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(controller.Platform.VirtualMic.Cable, inputs)?.Id;
+        PickMeterSource(restart: true);
+    }
+
+    /// <summary>
+    /// The audio has (or opens again by itself) the microphone the bar shows: the bar shows the audio's level, and never
+    /// opens a second stream on that device (opening and closing one beside the voice's stream could freeze CoreAudio on
+    /// a Mac). Otherwise the bar listens on its own. Asked again whenever the audio or the devices change.
+    /// </summary>
+    private void PickMeterSource(bool restart)
+    {
+        bool fromEngine = meterMicId != null && meterMicId == controller.AudioMicId;
+        if (!restart && fromEngine == meterFromEngine) return;
         meter?.Dispose();
         meter = null;
-        var id = DeviceBox.IdOf(MicBox) ?? DeviceRules.DefaultMic(controller.Platform.VirtualMic.Cable, inputs)?.Id;
-        // The running audio already listens to that microphone: its level, not a second stream of the same device
-        // (opening and closing one beside the voice's stream is what could freeze CoreAudio on a Mac).
-        meterFromEngine = id != null && id == controller.MicInUseId;
-        if (meterFromEngine) return;
-        if (id != null) meter = new MicMeter(controller.Devices, id); // an unplugged choice can't be opened: the bar just stays empty
+        meterFromEngine = fromEngine;
+        if (!fromEngine && meterMicId != null && !closed)
+            meter = new MicMeter(controller.Devices, meterMicId); // an unplugged choice can't be opened: the bar just stays empty
     }
+
+    private void OnControllerChanged()
+    {
+        if (!closed) PickMeterSource(restart: false);
+    }
+
+    /// <summary>The level bar listens through the audio (for the tests).</summary>
+    internal bool MeterFromEngine => meterFromEngine;
 
     private void MicBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
@@ -373,6 +393,7 @@ public partial class SetupWindow : AppWindow
     {
         closed = true;
         controller.Devices.Changed -= OnDevicesChanged;
+        controller.Changed -= OnControllerChanged;
         meterTimer.Stop();
         waitTimer.Stop();
         cancelInstall?.Cancel();

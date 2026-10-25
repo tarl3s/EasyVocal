@@ -70,6 +70,15 @@ public static class ItemOps
     public static bool CanHide(VoicePreset v) => v.Id != BuiltInVoices.NormalId;
 
     /// <summary>
+    /// The voices shown, in their order (the person's, saved): the cards (hidden ones too while "Show hidden" is on), the
+    /// tray menu and Move left / right all list these.
+    /// </summary>
+    public static List<VoicePreset> VisibleVoices(AppSettings s, bool showHidden = false) => s.Voices.FindAll(v => showHidden || !v.Hidden);
+
+    /// <summary>The sounds shown, in their order (see <see cref="VisibleVoices"/>).</summary>
+    public static List<SoundItem> VisibleSounds(AppSettings s, bool showHidden = false) => s.Sounds.FindAll(x => showHidden || !x.Hidden);
+
+    /// <summary>
     /// Moves the item <paramref name="id"/> to just before <paramref name="beforeId"/> (null = the end of the list): the
     /// order the cards, the tray menu and the editor's lists show. False when nothing moved (unknown id, same place).
     /// </summary>

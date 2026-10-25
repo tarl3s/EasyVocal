@@ -63,6 +63,7 @@ public partial class AudioEditorWindow : AppWindow
 
         Wave.Samples = samples;
         Wave.SelectionChanged += UpdateAll;
+        PitchBox.SelectionChanged += (_, _) => UpdateAll(); // Higher / Lower turn off where a step would go past two octaves
         Wave.ViewChanged += UpdateScroll;
         playTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
         playTimer.Tick += (_, _) => UpdatePlayhead();
@@ -115,9 +116,9 @@ public partial class AudioEditorWindow : AppWindow
             Content = (normal?.Emoji ?? "🙂") + "  " + (normal != null ? AppController.DisplayName(normal) : L.T("Normal")),
             Tag = new VoiceSliders(),
         });
-        foreach (var v in controller.Settings.Voices)
+        foreach (var v in ItemOps.VisibleVoices(controller.Settings))
         {
-            if (v.Hidden || v.Kind != VoiceKind.Classic || v.Sliders.IsNeutral) continue;
+            if (v.Kind != VoiceKind.Classic || v.Sliders.IsNeutral) continue;
             var item = new ComboBoxItem { Content = v.Emoji + "  " + AppController.DisplayName(v), Tag = v.Sliders.Clone() };
             VoiceBox.Items.Add(item);
         }
@@ -153,6 +154,10 @@ public partial class AudioEditorWindow : AppWindow
         TrimButton.IsEnabled = sel && Wave.SelectionLength < x.Length;
         SplitButton.IsEnabled = !sel && Wave.CursorPosition > 0 && Wave.CursorPosition < x.Length;
         VoiceButton.IsEnabled = VoiceBox.Items.Count > 0;
+        int step = Picked(PitchBox, 3);
+        HigherButton.IsEnabled = PitchNow + step <= AudioEdit.MaxPitchShift;
+        LowerButton.IsEnabled = PitchNow - step >= -AudioEdit.MaxPitchShift;
+        if (!busy) SyncSpeedBox();
         OriginalButton.IsEnabled = free && !history.Current.IsOriginal && (originalSamples != null || originalPath != null);
         ExportButton.IsEnabled = free && any;
         SaveButton.IsEnabled = free && history.Changed && any;
@@ -458,6 +463,8 @@ public partial class AudioEditorWindow : AppWindow
 
     private Retune? speedRun, pitchRun, voiceRun;
     private int pitchTotal;
+    private double runSpeed = 1; // the speed run's: its speed and whether it keeps the pitch
+    private bool runKeepsPitch, speedBoxShowsRun;
 
     /// <summary>The run still applies: the sound shown is its result and the same part (or nothing) is picked.</summary>
     private bool Continues(Retune? run) =>
@@ -491,27 +498,60 @@ public partial class AudioEditorWindow : AppWindow
         return (AudioEdit.Splice(x, start, count, part), part.Length);
     });
 
-    /// <summary>The speed the box shows is the speed the part has now (of the sound before the run).</summary>
+    /// <summary>
+    /// The speed the box shows is the speed the part has now (of the sound before the run). The other way of changing it
+    /// (keep the pitch or not) starts a new run from what is shown.
+    /// </summary>
     private async void SpeedButton_Click(object? sender, RoutedEventArgs e)
     {
         double speed = Picked(SpeedBox, 1.0);
         bool keep = Picked(SpeedModeBox, true);
-        var run = await RetuneRange(speedRun, p => AudioEdit.ChangeSpeed(p, speed, keep));
-        if (run != null) speedRun = run;
+        var run = await RetuneRange(runKeepsPitch == keep ? speedRun : null, p => AudioEdit.ChangeSpeed(p, speed, keep));
+        if (run == null) return;
+        speedRun = run;
+        runSpeed = speed;
+        runKeepsPitch = keep;
+        speedBoxShowsRun = false; // shown again below
+        UpdateAll();
     }
+
+    /// <summary>
+    /// The speed box tells what the next speed is measured from: the run's speed while it goes on (also after a redo back
+    /// to it), 1× once the sound or the part changed some other way (an undo, another tool, another part).
+    /// </summary>
+    private void SyncSpeedBox()
+    {
+        bool on = Continues(speedRun);
+        if (on == speedBoxShowsRun) return;
+        speedBoxShowsRun = on;
+        SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, on ? runSpeed : 1.0);
+    }
+
+    /// <summary>How far the pitch is moved now (in this run), in semitones.</summary>
+    private int PitchNow => Continues(pitchRun) ? pitchTotal : 0;
 
     private async void HigherButton_Click(object? sender, RoutedEventArgs e) => await Pitch(+1);
 
     private async void LowerButton_Click(object? sender, RoutedEventArgs e) => await Pitch(-1);
 
-    /// <summary>Higher / lower add up (3 up then 5 down = 2 down), always made in one go from the sound before the run.</summary>
+    /// <summary>
+    /// Higher / lower add up (3 up then 5 down = 2 down), always made in one go from the sound before the run, two
+    /// octaves either way at most (the buttons turn off before that).
+    /// </summary>
     private async Task Pitch(int sign)
     {
-        int total = (Continues(pitchRun) ? pitchTotal : 0) + sign * Picked(PitchBox, 3);
+        int total = PitchNow + sign * Picked(PitchBox, 3);
+        if (Math.Abs(total) > AudioEdit.MaxPitchShift)
+        {
+            Status(L.T("The pitch goes two octaves up or down at most."));
+            return;
+        }
         var run = await RetuneRange(pitchRun, p => total == 0 ? p : AudioEdit.ShiftPitch(p, total));
         if (run == null) return;
         pitchRun = run;
         pitchTotal = total;
+        UpdateAll();
+        if (!HigherButton.IsEnabled || !LowerButton.IsEnabled) Status(L.T("The pitch goes two octaves up or down at most."));
     }
 
     private async void LouderButton_Click(object? sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, AudioEdit.LouderFactor));

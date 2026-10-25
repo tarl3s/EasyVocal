@@ -54,6 +54,8 @@ public sealed class SingleInstance : IDisposable
     private readonly FileStream? lockFile;
     private readonly CancellationTokenSource stop = new();
     private readonly object sync = new();
+    private readonly UnixListener? unix;
+    private readonly HashSet<Stream> connections = new(); // being read; closed at once on dispose
     private Action? show;
     private bool pendingShow, disposed;
 
@@ -70,7 +72,12 @@ public sealed class SingleInstance : IDisposable
     {
         this.names = names;
         this.lockFile = lockFile;
-        if (listen) Listening = ListenAsync(stop.Token);
+        if (!listen) return;
+        // macOS/Linux: one Unix socket of our own at the path .NET's pipe clients connect to (a second launch's Knock).
+        // .NET's own pipe server shares one socket between its instances and, under a quick connect-write-close, lost a
+        // wake now and then on macOS; a plain socket accepts every connection the same way.
+        if (!OperatingSystem.IsWindows()) unix = new UnixListener(SocketPath(names.PipeName));
+        Listening = ListenAsync(stop.Token);
     }
 
     /// <summary>The pipe listener (portable path); done when it stopped; null when this one doesn't listen.</summary>
@@ -270,9 +277,10 @@ public sealed class SingleInstance : IDisposable
     private const int MaxClients = 3;
 
     /// <summary>
-    /// Listens until <paramref name="ct"/>; done only once every pipe instance is closed (the connections still being
-    /// read stop with <paramref name="ct"/> too). On macOS/Linux an instance left open keeps the socket answering, and a
-    /// launch right after this one quit (an update's restart, the e2e relaunch) would take it for a running EasyVocal.
+    /// Listens until <paramref name="ct"/>; done once every pipe instance is closed. <see cref="Dispose"/> closes the
+    /// socket and the connections being read itself, at once: on macOS/Linux an instance left open keeps the socket
+    /// answering, and a launch right after this one quit (an update's restart, the e2e relaunch) would take it for a
+    /// running EasyVocal.
     /// </summary>
     private async Task ListenAsync(CancellationToken ct)
     {
@@ -280,17 +288,21 @@ public sealed class SingleInstance : IDisposable
         try { await ListenLoopAsync(slots, ct).ConfigureAwait(false); }
         finally
         {
+            // The readers end as soon as their connection is closed (Dispose does that): never long.
+            var deadline = DateTime.UtcNow + QuitWait;
             for (int i = 0; i < MaxClients; i++)
-                await slots.WaitAsync(ReadTimeout + TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            {
+                var left = deadline - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero || !await slots.WaitAsync(left).ConfigureAwait(false)) break;
+            }
         }
     }
 
+    /// <summary>How long quitting waits for the listener (it stops at once: its socket and connections are closed first).</summary>
+    private static readonly TimeSpan QuitWait = TimeSpan.FromMilliseconds(500);
+
     private async Task ListenLoopAsync(SemaphoreSlim slots, CancellationToken ct)
     {
-        // macOS/Linux: one Unix socket of our own at the path .NET's pipe clients connect to (a second launch's Knock).
-        // .NET's own pipe server shares one socket between its instances and, under a quick connect-write-close, lost a
-        // wake now and then on macOS; a plain socket accepts every connection the same way.
-        using var unix = OperatingSystem.IsWindows() ? null : new UnixListener(SocketPath(names.PipeName));
         int failures = 0;
         while (!ct.IsCancellationRequested)
         {
@@ -308,6 +320,7 @@ public sealed class SingleInstance : IDisposable
                 _ = ReadOneAsync(connection, slots, ct);
             }
             catch (OperationCanceledException) { return; }
+            catch (Exception) when (ct.IsCancellationRequested) { return; } // the socket was closed under the accept: quitting
             catch (Exception ex)
             {
                 if (++failures >= MaxPipeFailures)
@@ -340,53 +353,95 @@ public sealed class SingleInstance : IDisposable
         }
     }
 
-    /// <summary>A listening Unix socket at <c>path</c>, made on the first accept (again after a failure), removed on dispose.</summary>
-    private sealed class UnixListener(string path) : IDisposable
+    /// <summary>
+    /// A listening Unix socket at <c>path</c>, made on the first accept (again after a failure), removed on dispose — only
+    /// while it is still ours: a later EasyVocal may have replaced a socket it took for a stale one, and deleting its file
+    /// would make that one unreachable. Ours = the token written next to it (<c>path.owner</c>) is still the one we wrote.
+    /// </summary>
+    internal sealed class UnixListener(string path) : IDisposable
     {
+        private readonly object gate = new();
+        private readonly string token = Guid.NewGuid().ToString("N");
         private Socket? socket;
+        private bool disposed;
+
+        private string OwnerFile => path + ".owner";
 
         public async Task<Stream> AcceptAsync(CancellationToken ct)
         {
-            if (socket == null)
+            Socket listening;
+            lock (gate)
             {
-                var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                try
+                if (disposed) throw new OperationCanceledException(ct);
+                if (socket == null)
                 {
-                    // We hold the lock and nobody answered on it (TryAcquire): a socket file there is a stale one.
-                    if (File.Exists(path)) File.Delete(path);
-                    s.Bind(new UnixDomainSocketEndPoint(path));
-                    s.Listen(16);
+                    var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    try
+                    {
+                        // We hold the lock and nobody answered on it (TryAcquire): a socket file there is a stale one.
+                        if (File.Exists(path)) File.Delete(path);
+                        s.Bind(new UnixDomainSocketEndPoint(path));
+                        s.Listen(16);
+                        File.WriteAllText(OwnerFile, token);
+                    }
+                    catch
+                    {
+                        s.Dispose();
+                        throw;
+                    }
+                    socket = s;
                 }
-                catch
-                {
-                    s.Dispose();
-                    throw;
-                }
-                socket = s;
+                listening = socket;
             }
-            try { return new NetworkStream(await socket.AcceptAsync(ct).ConfigureAwait(false), ownsSocket: true); }
+            try { return new NetworkStream(await listening.AcceptAsync(ct).ConfigureAwait(false), ownsSocket: true); }
             catch (OperationCanceledException) { throw; }
             catch
             {
-                Dispose();
+                Close();
                 throw;
             }
         }
 
+        /// <summary>True while the socket file at the path is the one this listener made.</summary>
+        internal bool OwnsPath()
+        {
+            try { return File.Exists(path) && File.ReadAllText(OwnerFile) == token; }
+            catch (Exception) { return false; }
+        }
+
+        private void Close()
+        {
+            lock (gate)
+            {
+                if (socket == null) return;
+                socket.Dispose();
+                socket = null;
+                if (!OwnsPath()) return; // replaced by someone else's: theirs stays
+                try { File.Delete(path); } catch (Exception) { /* gone already */ }
+                try { File.Delete(OwnerFile); } catch (Exception) { /* gone already */ }
+            }
+        }
+
+        /// <summary>Closes the socket at once (a pending accept ends) and removes its file if it is still ours.</summary>
         public void Dispose()
         {
-            if (socket == null) return;
-            socket.Dispose();
-            socket = null;
-            try { File.Delete(path); } catch (Exception) { /* gone already */ }
+            lock (gate) disposed = true;
+            Close();
         }
     }
 
     /// <summary>Reads one connection's byte (at most <see cref="ReadTimeout"/>), then frees its slot. Never throws.</summary>
     private async Task ReadOneAsync(Stream server, SemaphoreSlim slots, CancellationToken ct)
     {
+        bool tracked;
+        lock (sync)
+        {
+            tracked = !disposed;
+            if (tracked) connections.Add(server);
+        }
         try
         {
+            if (!tracked) return;
             var buffer = new byte[1];
             int read;
             using (var patience = CancellationTokenSource.CreateLinkedTokenSource(ct))
@@ -397,22 +452,36 @@ public sealed class SingleInstance : IDisposable
             }
             if (read == 1 && buffer[0] == ShowByte && !ct.IsCancellationRequested) RaiseShow(); // a mere look (IsRunning) shows nothing
         }
+        catch (Exception) when (ct.IsCancellationRequested) { /* closed under the read: quitting */ }
         catch (Exception ex) { AppLog.Info("A 'show the window' connection failed: " + ex.Message); }
         finally
         {
+            lock (sync) connections.Remove(server);
             server.Dispose();
             try { slots.Release(); } catch (ObjectDisposedException) { /* the listener has stopped */ }
         }
     }
 
-
+    /// <summary>
+    /// Lets go: the socket and every connection are closed right here, before the lock is let go (see
+    /// <see cref="ListenAsync"/>), so the listener stops at once; this waits for it <see cref="QuitWait"/> at most.
+    /// </summary>
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
+        Stream[] open;
+        lock (sync)
+        {
+            if (disposed) return;
+            disposed = true;
+            open = connections.ToArray();
+        }
         stop.Cancel();
-        // Closed before the lock is let go (see ListenAsync); a cancelled listener stops at once.
-        try { Listening?.Wait(TimeSpan.FromSeconds(2)); }
+        unix?.Dispose();
+        foreach (var c in open)
+        {
+            try { c.Dispose(); } catch (Exception) { /* closing anyway */ }
+        }
+        try { Listening?.Wait(QuitWait); }
         catch (Exception) { /* it logged its own trouble */ }
         showWait?.Unregister(null);
         showSignal?.Dispose();

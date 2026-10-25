@@ -265,6 +265,25 @@ internal sealed partial class AppSession
         await w.IdleAsync();
         Check(w.Current.AsSpan().SequenceEqual(original) && w.Wave.SelectionLength == Sr, "1× gives the part its own speed back");
 
+        w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 0.5);
+        Press(w.SpeedButton);
+        await w.IdleAsync();
+        Press(w.UndoButton);
+        Check(Picked(w.SpeedBox) == 1.0, "after an undo the speed list shows 1× again (the next speed is measured from what is shown)");
+        w.SelectForTest(Sr / 2, Sr);
+        w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 0.5);
+        Press(w.SpeedButton); // keeping the pitch
+        await w.IdleAsync();
+        w.SpeedModeBox.SelectedIndex = 1; // "Change the pitch too": another kind of change, measured from what is shown
+        w.SpeedBox.SelectedIndex = Array.IndexOf(AudioEdit.Speeds, 1.0);
+        Press(w.SpeedButton);
+        await w.IdleAsync();
+        Check(Math.Abs(w.Current.Length - (len + Sr)) < 4, "after switching how the speed changes, 1× leaves the part as it is now");
+        Press(w.UndoButton);
+        w.SpeedModeBox.SelectedIndex = 0;
+        Check(w.Current.AsSpan().SequenceEqual(original), "undone");
+        w.SelectForTest(Sr / 2, Sr);
+
         w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 3);
         Press(w.HigherButton);
         await w.IdleAsync();
@@ -275,6 +294,12 @@ internal sealed partial class AppSession
         await w.IdleAsync();
         Check(w.Current.AsSpan().SequenceEqual(AudioEdit.Splice(original, Sr / 2, Sr, AudioEdit.ShiftPitch(AudioEdit.Slice(original, Sr / 2, Sr), 1))),
             "higher 3, higher 3, lower 5 is one step higher, made once from the part before");
+        w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 12);
+        Press(w.HigherButton); // 13 up now
+        await w.IdleAsync();
+        Check(!w.HigherButton.IsEnabled && w.LowerButton.IsEnabled, "another 12 up would pass two octaves: Higher turns off, Lower doesn't");
+        w.PitchBox.SelectedIndex = Array.IndexOf(AudioEdit.PitchSteps, 7);
+        Check(w.HigherButton.IsEnabled, "7 more (20 up) still fits");
 
         w.SelectForTest(Sr / 2, Sr);
         Check(w.VoiceBox.SelectedIndex == 0 && w.VoiceBox.Items.Count > 2, "the voice list starts with Normal");

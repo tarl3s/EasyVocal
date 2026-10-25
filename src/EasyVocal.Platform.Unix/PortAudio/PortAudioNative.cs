@@ -72,10 +72,18 @@ internal static unsafe class PortAudioNative
         CULong framesPerBuffer, CULong flags,
         delegate* unmanaged[Cdecl]<void*, void*, CULong, void*, CULong, void*, int> callback, void* userData);
 
+    /// <summary>
+    /// Called with the stream's userData once the stream is inactive: after its callback answered paComplete and
+    /// PortAudio stopped it (on macOS when the AudioUnit says it no longer runs), or after a stop call.
+    /// </summary>
+    [DllImport(Lib)]
+    public static extern int Pa_SetStreamFinishedCallback(IntPtr stream, delegate* unmanaged[Cdecl]<void*, void> finished);
+
     [DllImport(Lib)] public static extern int Pa_StartStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_AbortStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_CloseStream(IntPtr stream);
     [DllImport(Lib)] public static extern int Pa_IsStreamActive(IntPtr stream);
+    [DllImport(Lib)] public static extern int Pa_IsStreamStopped(IntPtr stream);
 
     /// <summary>PortAudio's sentence for an error code.</summary>
     public static string ErrorText(int error)
@@ -90,4 +98,25 @@ public sealed class PortAudioException(string what, int error)
     : IOException(what + ": " + PortAudioNative.ErrorText(error) + " (" + error + ")")
 {
     public int Error { get; } = error;
+}
+
+/// <summary>The PortAudio calls made on an open stream (the tests pass a pretend one to see when each is made).</summary>
+internal interface IPaStreamCalls
+{
+    int Start(IntPtr stream);
+    int Abort(IntPtr stream);
+    int Close(IntPtr stream);
+    int IsActive(IntPtr stream);
+    int IsStopped(IntPtr stream);
+}
+
+internal sealed class PaStreamCalls : IPaStreamCalls
+{
+    public static readonly PaStreamCalls Instance = new();
+
+    public int Start(IntPtr stream) => PortAudioNative.Pa_StartStream(stream);
+    public int Abort(IntPtr stream) => PortAudioNative.Pa_AbortStream(stream);
+    public int Close(IntPtr stream) => PortAudioNative.Pa_CloseStream(stream);
+    public int IsActive(IntPtr stream) => PortAudioNative.Pa_IsStreamActive(stream);
+    public int IsStopped(IntPtr stream) => PortAudioNative.Pa_IsStreamStopped(stream);
 }

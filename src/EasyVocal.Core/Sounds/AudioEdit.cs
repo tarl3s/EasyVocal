@@ -21,6 +21,9 @@ public static class AudioEdit
     /// <summary>The pitch steps the editor offers, in semitones.</summary>
     public static readonly int[] PitchSteps = { 1, 2, 3, 5, 7, 12 };
 
+    /// <summary>The furthest <see cref="ShiftPitch"/> goes, in semitones either way (two octaves).</summary>
+    public const int MaxPitchShift = 24;
+
     /// <summary>"Louder" is +3 dB; "Quieter" is the inverse.</summary>
     public const double LouderFactor = 1.4125375446;
 
@@ -101,14 +104,19 @@ public static class AudioEdit
         return keepPitch ? TimeStretch(x, speed) : Resample(x, speed);
     }
 
-    /// <summary>Higher (positive) or lower (negative) by <paramref name="semitones"/>, same length.</summary>
+    /// <summary>
+    /// Higher (positive) or lower (negative) by <paramref name="semitones"/> (at most <see cref="MaxPitchShift"/> either
+    /// way), same length.
+    /// </summary>
     public static float[] ShiftPitch(float[] x, double semitones)
     {
+        if (double.IsNaN(semitones) || Math.Abs(semitones) > MaxPitchShift) throw new ArgumentOutOfRangeException(nameof(semitones));
         if (semitones == 0 || x.Length == 0) return (float[])x.Clone();
         double ratio = Math.Pow(2, semitones / 12.0);
-        // Stretch to ratio × as long (pitch kept), then play that ratio × faster: the length comes back, the pitch moves.
-        var longer = TimeStretch(x, 1 / ratio);
-        return FitLength(Resample(longer, ratio), x.Length);
+        // The pitch moves by resampling (ratio × faster) and the length comes back by stretching with the pitch kept. The
+        // shorter of the two comes first, so nothing in between is ever longer than the sound (at most 4× shorter).
+        if (ratio > 1) return FitLength(TimeStretch(Resample(x, ratio), 1 / ratio), x.Length);
+        return FitLength(Resample(TimeStretch(x, 1 / ratio), ratio), x.Length);
     }
 
     /// <summary>Plays the sound <paramref name="speed"/> times as fast: length / speed, pitch × speed.</summary>

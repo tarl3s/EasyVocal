@@ -944,12 +944,23 @@ public sealed class AppController : IDisposable
     // ---------- devices ----------
 
     /// <summary>
+    /// The microphone the audio has open, or opens again by itself (it recovers every 2 s): the setup's level bar shows
+    /// the audio's level for it instead of opening that device a second time. Null while the audio is stopped.
+    /// </summary>
+    public string? AudioMicId
+    {
+        get
+        {
+            if (!started || disposed || engine.State == EngineState.Stopped) return null;
+            if (engine.HoldsMic) return usedMic;
+            return micPicker.Pick(Settings.MicDeviceId, devices.Inputs(), DateTime.UtcNow).Id;
+        }
+    }
+
+    /// <summary>
     /// The chosen microphone has been missing a while and the system's default is used for now: its name, else null.
     /// The saved choice is kept and used again as soon as it is back.
     /// </summary>
-    /// <summary>The microphone the running audio listens to (its id), or null.</summary>
-    public string? MicInUseId => engine.State is EngineState.Running or EngineState.NoVirtualCable ? usedMic : null;
-
     public string? MicStandIn => engine.State == EngineState.Running && micInUse is { Fallback: true } pick ? pick.Name : null;
 
     /// <summary>The virtual cable is missing, but the mic and the headphones work (the voices can be tried with Hear me).</summary>

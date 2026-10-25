@@ -133,6 +133,64 @@ public class SingleInstanceTests : IDisposable
     }
 
     [Fact]
+    public void Portable_Quitting_IsQuick_EvenWithAClientConnectedThatSaysNothing()
+    {
+        var names = Names(portable: true);
+        var first = SingleInstance.TryAcquire(names)!;
+        Assert.NotNull(first);
+        using var silent = new System.IO.Pipes.NamedPipeClientStream(".", names.PipeName, System.IO.Pipes.PipeDirection.Out);
+        silent.Connect(2000); // connected, and being read
+        Thread.Sleep(200);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        first.Dispose();
+        watch.Stop();
+        Assert.True(watch.ElapsedMilliseconds < 1000, "quitting took " + watch.ElapsedMilliseconds + " ms");
+        Assert.True(first.Listening!.IsCompleted, "the listener stopped before the lock was let go");
+        Assert.False(SingleInstance.IsRunning(names));
+    }
+
+    [Fact]
+    public async Task UnixSocket_ThatIsNoLongerOurs_IsNeverDeleted()
+    {
+        // macOS/Linux only, where the listener runs: Windows deletes a socket file only once its last handle closes.
+        if (OperatingSystem.IsWindows()) return;
+        // Short: a Unix socket path is at most 104 characters on macOS.
+        var path = Path.Combine(Path.GetTempPath(), "evs" + Guid.NewGuid().ToString("N")[..8]);
+        using var cts = new CancellationTokenSource();
+        var a = new SingleInstance.UnixListener(path);
+        var b = new SingleInstance.UnixListener(path);
+        try
+        {
+            var acceptA = a.AcceptAsync(cts.Token);
+            Assert.True(a.OwnsPath());
+            // A later EasyVocal took that socket for a stale one and made its own at the same path.
+            var acceptB = b.AcceptAsync(cts.Token);
+            Assert.False(a.OwnsPath());
+            Assert.True(b.OwnsPath());
+
+            a.Dispose(); // the first one quits: the file is the later one's now, and stays
+            Assert.True(File.Exists(path));
+            await Assert.ThrowsAnyAsync<Exception>(() => acceptA.WaitAsync(TimeSpan.FromSeconds(5)));
+            using (var client = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified))
+            {
+                client.Connect(new System.Net.Sockets.UnixDomainSocketEndPoint(path)); // the later one still answers
+                using var accepted = await acceptB.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            b.Dispose(); // its own: removed, with its token
+            Assert.False(File.Exists(path));
+            Assert.False(File.Exists(path + ".owner"));
+        }
+        finally
+        {
+            a.Dispose();
+            b.Dispose();
+            try { File.Delete(path); } catch (Exception) { /* gone */ }
+            try { File.Delete(path + ".owner"); } catch (Exception) { /* gone */ }
+        }
+    }
+
+    [Fact]
     public void PipeName_IsShortAndPerUser()
     {
         var a = SingleInstance.ShortPipeName("alice");

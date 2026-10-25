@@ -9,6 +9,8 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- A pretend PortAudio stream overrides its pointer-taking callback. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

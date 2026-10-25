@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
@@ -60,7 +61,7 @@ public sealed class Tray : IDisposable
     }
 
     /// <summary>The voices the menu lists, in the cards' order (the person's, saved).</summary>
-    internal static IEnumerable<EasyVocal.Core.Model.VoicePreset> MenuVoices(AppController controller) => controller.Settings.Voices.Where(v => !v.Hidden);
+    internal static List<VoicePreset> MenuVoices(AppController controller) => ItemOps.VisibleVoices(controller.Settings);
 
     /// <summary>Rebuilds the menu when what it shows changed (ON/OFF, the voices, the active one, the language).</summary>
     private void Rebuild()
@@ -68,7 +69,7 @@ public sealed class Tray : IDisposable
         if (disposed) return;
         var active = controller.ActiveVoice.Id;
         var key = controller.FilterEnabled + "|" + active + "|" + L.Language + "|" +
-                  string.Join(",", controller.Settings.Voices.Where(v => !v.Hidden).Select(v => v.Id + ":" + v.Name + ":" + v.Emoji));
+                  string.Join(",", MenuVoices(controller).Select(v => v.Id + ":" + v.Name + ":" + v.Emoji));
         if (key == menuKey) return;
         menuKey = key;
         menu.Items.Clear();

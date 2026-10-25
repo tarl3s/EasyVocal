@@ -18,11 +18,12 @@ public class WindowBehaviourTests
         public readonly string Data = Path.Combine(Path.GetTempPath(), "EV_UiWindows_" + Guid.NewGuid().ToString("N"));
         public readonly AppController Controller;
         public readonly MainWindow Main;
+        public readonly TestAudioDevices Devices = new(cablePresent: true);
 
         public Fixture()
         {
             Directory.CreateDirectory(Data);
-            Controller = new AppController(Data, TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default));
+            Controller = new AppController(Data, TestPlatform.Create(Devices, new FakeUpdaterPlatform(), SoundDecoders.Default));
             Main = new MainWindow(Controller);
             AppWindow.MainWindowSource = () => Main;
         }
@@ -161,6 +162,31 @@ public class WindowBehaviourTests
         Ui.Click(setup.InstallButton); // the "an installer runs" guard was let go
         Assert.Equal(2, calls);
         setup.Close();
+    }
+
+    [AvaloniaFact]
+    public void Setup_LevelBar_FollowsTheAudio_AndNeverOpensTheAudiosMicASecondTime()
+    {
+        using var f = new Fixture(); // the audio isn't started yet: nothing has the microphone
+        var setup = new SetupWindow(f.Controller, () => true);
+        _ = setup.ShowAsync(null);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Assert.False(setup.MeterFromEngine);
+        Assert.Equal(1, f.Devices.OpenMics); // the level bar's own
+
+        f.Controller.Start(); // the audio opens the same microphone
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Assert.True(setup.MeterFromEngine, "the bar now shows the audio's level");
+        Assert.Equal(1, f.Devices.OpenMics); // the audio's: the bar's own stream was closed
+
+        f.Devices.SetMic(false); // unplugged: the audio loses it, and opens it again by itself once it is back
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        f.Devices.SetMic(true);
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+        Assert.True(setup.MeterFromEngine, "the bar waits for the audio, never opens that microphone itself");
+        Assert.True(f.Devices.OpenMics <= 1, f.Devices.OpenMics + " microphone streams open");
+        setup.Close();
+        Assert.True(f.Devices.OpenMics <= 1);
     }
 
     [AvaloniaFact]
