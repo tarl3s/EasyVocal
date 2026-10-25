@@ -459,65 +459,43 @@ public class PactlTests(ITestOutputHelper output)
 
             using var speaker = backend.OpenSpeaker(call!.Id);
             using var input = new PulseMic(null, PactlVirtualMic.SourceName); // what a call app hears
+            var gate = new object();
             double energy = 0;
             int blocks = 0;
-            input.Stopped += why => { lock (output) output.WriteLine("the virtual microphone stopped: " + why?.Message); };
-            int monitorBlocks = 0;
-            using var monitor = new PulseMic(null, PactlVirtualMic.SinkName + ".monitor"); // for a failure: does the sink itself give sound?
-            monitor.Samples += (_, _) => Interlocked.Increment(ref monitorBlocks);
+            long firstAt = -1;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            input.Stopped += why => { lock (gate) output.WriteLine("the virtual microphone stopped: " + why?.Message); };
             input.Samples += (buffer, count) =>
             {
                 double sum = 0;
                 for (int i = 0; i < count; i++) sum += buffer[i] * buffer[i];
-                lock (output) { energy = Math.Max(energy, sum / Math.Max(1, count)); blocks++; }
+                lock (gate)
+                {
+                    if (firstAt < 0) firstAt = watch.ElapsedMilliseconds;
+                    energy = Math.Max(energy, sum / Math.Max(1, count));
+                    blocks++;
+                }
             };
             speaker.Start();
             input.Start();
-            monitor.Start();
+            // A null sink the server has just made gives its first audio only after a while (about 2 s on CI's
+            // PulseAudio, until the streams' latency settles): play until 1.5 s of tone came through, 10 s at most.
             var tone = new float[480];
-            for (int round = 0; round < 150; round++) // 1.5 s of a 440 Hz tone
+            int received = 0;
+            for (int round = 0; round < 1000 && received < 150; round++)
             {
                 for (int i = 0; i < tone.Length; i++) tone[i] = 0.5f * MathF.Sin(2 * MathF.PI * 440 * (round * 480 + i) / 48000f);
                 speaker.Write(tone);
                 await Task.Delay(10);
+                lock (gate) received = blocks;
             }
-            lock (output)
-            {
-                output.WriteLine($"{blocks} blocks from the virtual microphone, loudest mean square {energy:0.0000}");
-                if (blocks <= 20)
-                {
-                    output.WriteLine("monitor blocks: " + Volatile.Read(ref monitorBlocks));
-                    foreach (var priority in new[] { ThreadPriority.Normal, ThreadPriority.Highest })
-                        foreach (int bytes in new[] { 1920, 0 })
-                            output.WriteLine($"probe ({priority}, fragsize {bytes}): " + ProbeRead(PactlVirtualMic.SinkName + ".monitor", priority, bytes));
-                    // Opened here, read on another thread (as PulseMic does).
-                    var s = PulseSimple.Open(PulseSimple.Record, PactlVirtualMic.SinkName + ".monitor", "Probe", 1920);
-                    string got = "blocked";
-                    var reader = new Thread(() =>
-                    {
-                        var w = System.Diagnostics.Stopwatch.StartNew();
-                        int n = 0;
-                        var buf = new float[480];
-                        while (w.ElapsedMilliseconds < 500 && PulseSimple.Read(s, buf, out _) == 0) n++;
-                        got = n + " reads in " + w.ElapsedMilliseconds + " ms";
-                    }) { IsBackground = true };
-                    reader.Start();
-                    reader.Join(3000);
-                    output.WriteLine("opened here, read there: " + got);
-                    // A fresh PulseMic now.
-                    int fresh = 0;
-                    using (var again = new PulseMic(null, PactlVirtualMic.SinkName + ".monitor"))
-                    {
-                        again.Samples += (_, _) => Interlocked.Increment(ref fresh);
-                        again.Start();
-                        Thread.Sleep(500);
-                    }
-                    output.WriteLine("a new PulseMic in 500 ms: " + Volatile.Read(ref fresh) + " blocks; the first ones now: " + Volatile.Read(ref monitorBlocks) + " / " + blocks);
-                    output.WriteLine(PulseState());
-                }
-                Assert.True(blocks > 20, "the virtual microphone delivered audio");
-                Assert.True(energy > 0.01, "the tone played into EasyVocal-Output came out of EasyVocal-Microphone");
-            }
+            double loudest;
+            long first;
+            lock (gate) (received, loudest, first) = (blocks, energy, firstAt);
+            output.WriteLine($"{received} blocks from the virtual microphone (the first after {first} ms), loudest mean square {loudest:0.0000}");
+            if (received <= 20) output.WriteLine(PulseState());
+            Assert.True(received > 20, "the virtual microphone delivered audio");
+            Assert.True(loudest > 0.01, "the tone played into EasyVocal-Output came out of EasyVocal-Microphone");
         }
         finally
         {
@@ -525,28 +503,6 @@ public class PactlTests(ITestOutputHelper output)
         }
         Assert.DoesNotContain(backend.Outputs(), d => d.Id == PactlVirtualMic.SinkName);
         Assert.DoesNotContain(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName);
-    }
-
-    /// <summary>A failure's clue: one read of 10 ms on a new stream of its own thread.</summary>
-    private static string ProbeRead(string device, ThreadPriority priority, int blockBytes)
-    {
-        string result = "blocked";
-        var t = new Thread(() =>
-        {
-            try
-            {
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                var s = PulseSimple.Open(PulseSimple.Record, device, "Probe", blockBytes == 0 ? 1920 : blockBytes);
-                var buffer = new float[blockBytes == 0 ? 4800 : 480];
-                int r = PulseSimple.Read(s, buffer, out int error);
-                result = $"read {r} error {error} after {watch.ElapsedMilliseconds} ms";
-                PulseSimple.pa_simple_free(s);
-            }
-            catch (Exception ex) { result = ex.GetType().Name + ": " + ex.Message; }
-        }) { IsBackground = true, Priority = priority };
-        t.Start();
-        t.Join(3000);
-        return result;
     }
 
     /// <summary>What the server has (for a failure's output): its devices, streams and modules.</summary>

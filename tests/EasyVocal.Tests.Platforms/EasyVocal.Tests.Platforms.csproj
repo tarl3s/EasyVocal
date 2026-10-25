@@ -33,6 +33,9 @@
     <!-- The pretend update source and launcher (the update service against the real macOS/Linux updater platform), and the throwaway folders. -->
     <Compile Include="..\EasyVocal.Tests\Helpers\FakeUpdate.cs" Link="Helpers\FakeUpdate.cs" />
     <Compile Include="..\EasyVocal.Tests\Helpers\TestFolders.cs" Link="Helpers\TestFolders.cs" />
+    <!-- The voices measured the way the portable voice tests do (the real Linux sound path against the offline render). -->
+    <Compile Include="..\EasyVocal.Tests\Helpers\VoiceFeatures.cs" Link="Helpers\VoiceFeatures.cs" />
+    <Compile Include="..\EasyVocal.Tests\Helpers\Signals.cs" Link="Helpers\Signals.cs" />
   </ItemGroup>
 
   <ItemGroup>
