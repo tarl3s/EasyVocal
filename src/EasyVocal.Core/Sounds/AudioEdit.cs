@@ -144,7 +144,14 @@ public static class AudioEdit
         if (!(speed > 0)) throw new ArgumentOutOfRangeException(nameof(speed));
         int outLen = (int)Math.Round(x.Length / speed);
         const int N = 1536, Hop = N / 2, Tol = 384;
-        if (x.Length < 2 * N) return Resample(x, speed); // too short to stretch: a few ms, nobody hears the pitch
+        if (x.Length < 2 * N)
+        {
+            // Shorter than two frames: stretch it with silence after it, then keep its own share of the result.
+            if (x.Length == 0) return Array.Empty<float>();
+            var padded = new float[2 * N];
+            Array.Copy(x, padded, x.Length);
+            return FitLength(TimeStretch(padded, speed), outLen);
+        }
 
         var win = new double[N];
         for (int i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / N);

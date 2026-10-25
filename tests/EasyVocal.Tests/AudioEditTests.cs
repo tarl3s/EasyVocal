@@ -122,6 +122,19 @@ public class AudioEditTests
         Assert.InRange(Signals.EstimatePitch(y), want * 0.97, want * 1.03);
     }
 
+    [Theory]
+    [InlineData(12)]
+    [InlineData(-5)]
+    public void ShiftPitch_ShortClip_StillMovesThePitch(int semitones)
+    {
+        var x = Signals.Sine(300, 2800.0 / Sr); // under two WSOLA frames (3072 samples)
+        var y = AudioEdit.ShiftPitch(x, semitones);
+        Assert.Equal(x.Length, y.Length);
+        double want = 300 * Math.Pow(2, semitones / 12.0);
+        Assert.InRange(Signals.EstimatePitch(y), want * 0.95, want * 1.05);
+        Assert.Empty(AudioEdit.ShiftPitch(Array.Empty<float>(), semitones));
+    }
+
     // ---------- volume ----------
 
     [Fact]

@@ -318,11 +318,20 @@ public partial class AudioEditorWindow : Window
         Cursor = Cursors.Wait;
         try
         {
-            var (result, selStart, selCount) = await Task.Run(() => edit(input));
+            var (result, selStart, selCount, same) = await Task.Run(() =>
+            {
+                var (y, s, c) = edit(input);
+                return (y, s, c, y.AsSpan().SequenceEqual(input));
+            });
             if (result.Length == 0)
             {
                 Status(L.T("That would leave the sound empty."));
                 return;
+            }
+            if (same)
+            {
+                Status(L.T("That didn't change the sound."));
+                return; // no undo step for nothing
             }
             history.Push(new AudioState(result, false));
             Show(history.Current, selStart, selCount);
