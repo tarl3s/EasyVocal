@@ -3,3 +3,6 @@
 *.ogg binary
 *.flac binary
 *.wav binary
+
+# Shell scripts run on macOS/Linux: LF even in a Windows checkout.
+*.sh text eol=lf

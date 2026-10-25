@@ -461,6 +461,7 @@ public class PactlTests(ITestOutputHelper output)
             using var input = new PulseMic(null, PactlVirtualMic.SourceName); // what a call app hears
             double energy = 0;
             int blocks = 0;
+            input.Stopped += why => { lock (output) output.WriteLine("the virtual microphone stopped: " + why?.Message); };
             input.Samples += (buffer, count) =>
             {
                 double sum = 0;
@@ -479,6 +480,7 @@ public class PactlTests(ITestOutputHelper output)
             lock (output)
             {
                 output.WriteLine($"{blocks} blocks from the virtual microphone, loudest mean square {energy:0.0000}");
+                if (blocks <= 20) output.WriteLine(PulseState());
                 Assert.True(blocks > 20, "the virtual microphone delivered audio");
                 Assert.True(energy > 0.01, "the tone played into EasyVocal-Output came out of EasyVocal-Microphone");
             }
@@ -489,6 +491,25 @@ public class PactlTests(ITestOutputHelper output)
         }
         Assert.DoesNotContain(backend.Outputs(), d => d.Id == PactlVirtualMic.SinkName);
         Assert.DoesNotContain(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName);
+    }
+
+    /// <summary>What the server has (for a failure's output): its devices, streams and modules.</summary>
+    private static string PulseState()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var what in new[] { "sinks", "sources", "sink-inputs", "source-outputs", "modules" })
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("pactl", "list short " + what) { RedirectStandardOutput = true, RedirectStandardError = true };
+                using var p = System.Diagnostics.Process.Start(psi)!;
+                string text = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+                p.WaitForExit(5000);
+                sb.Append("pactl list short ").Append(what).Append(":\n").Append(text);
+            }
+            catch (Exception ex) { sb.Append(what).Append(": ").Append(ex.Message).Append('\n'); }
+        }
+        return sb.ToString();
     }
 
     [Fact]

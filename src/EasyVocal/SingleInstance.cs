@@ -268,10 +268,25 @@ public sealed class SingleInstance : IDisposable
     /// <summary>Connections read at the same time; while they are all busy the next one waits.</summary>
     private const int MaxClients = 3;
 
+    /// <summary>
+    /// Listens until <paramref name="ct"/>; done only once every pipe instance is closed (the connections still being
+    /// read stop with <paramref name="ct"/> too). On macOS/Linux an instance left open keeps the socket answering, and a
+    /// launch right after this one quit (an update's restart, the e2e relaunch) would take it for a running EasyVocal.
+    /// </summary>
     private async Task ListenAsync(CancellationToken ct)
     {
-        int failures = 0;
         using var slots = new SemaphoreSlim(MaxClients, MaxClients);
+        try { await ListenLoopAsync(slots, ct).ConfigureAwait(false); }
+        finally
+        {
+            for (int i = 0; i < MaxClients; i++)
+                await slots.WaitAsync(ReadTimeout + TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ListenLoopAsync(SemaphoreSlim slots, CancellationToken ct)
+    {
+        int failures = 0;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -343,6 +358,9 @@ public sealed class SingleInstance : IDisposable
         if (disposed) return;
         disposed = true;
         stop.Cancel();
+        // Closed before the lock is let go (see ListenAsync); a cancelled listener stops at once.
+        try { Listening?.Wait(TimeSpan.FromSeconds(2)); }
+        catch (Exception) { /* it logged its own trouble */ }
         showWait?.Unregister(null);
         showSignal?.Dispose();
         if (mutex != null)

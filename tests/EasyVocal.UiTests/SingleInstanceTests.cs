@@ -40,7 +40,8 @@ public class SingleInstanceTests : IDisposable
 
         shown.Reset();
         Assert.True(SingleInstance.WakeFirst(names));
-        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)), "a later wake reaches the handler");
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)), "a later wake reaches the handler (listener " + first.Listening?.Status +
+            ", socket there: " + (names.PipeFile is { } f && File.Exists(f)) + ", " + first.Listening?.Exception?.GetBaseException().Message + ")");
         Assert.True(SingleInstance.IsRunning(names));
     }
 

@@ -7,6 +7,7 @@
   <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-macos-x64.zip"><img alt="⬇ Baixar para macOS (Intel)" src="https://img.shields.io/badge/%E2%AC%87%20Baixar-macOS%20(Intel)-555555?style=for-the-badge&logo=apple&logoColor=white" height="48"></a>
   <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-linux-x64.tar.gz"><img alt="⬇ Baixar para Linux" src="https://img.shields.io/badge/%E2%AC%87%20Baixar-para%20Linux-e95420?style=for-the-badge&logo=linux&logoColor=white" height="48"></a>
 </p>
+<p align="center">O download começa sozinho — veja na sua pasta Downloads. Ou <a href="https://github.com/tarl3s/EasyVocal/releases/latest">escolha o seu arquivo na página de releases</a>.</p>
 <p align="center">Uns 40 MB cada, não precisa instalar mais nada. Windows 10 ou 11 · macOS 11 ou mais novo · Linux x64 com PipeWire ou PulseAudio.<br>
 <b>macOS e Linux são uma Prévia:</b> compilados e com testes automáticos, mas ainda não testados em Macs nem em
 desktops Linux de verdade. Por favor, <a href="https://github.com/tarl3s/EasyVocal/issues">avise se der problema</a>.</p>
