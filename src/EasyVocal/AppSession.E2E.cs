@@ -278,7 +278,8 @@ internal sealed partial class AppSession
             var phones = Phones();
             var mic = d.Mic;
             phones.Failing = true; // the stream stops working; no device is added or removed, so only the recovery timer helps
-            await WaitUntil(() => c.MonitorLost, 2000, "the engine to notice the headphones stopped");
+            // Noticed (MonitorLost), or already opened again: the 2 s recovery may come right after and end it in a few ms.
+            await WaitUntil(() => c.MonitorLost || !ReferenceEquals(Phones(), phones), 4000, "the engine to notice the headphones stopped");
             await WaitUntil(() => !ReferenceEquals(Phones(), phones) && !c.MonitorLost, 5000, "the headphones to be opened again while running");
             Expect(phones.Disposed && ReferenceEquals(d.Mic, mic) && c.State == EngineState.Running, "the failed headphones were closed; the mic and the call kept running");
             await ExpectCopy(Phones, "the reopened headphones get the voice");
