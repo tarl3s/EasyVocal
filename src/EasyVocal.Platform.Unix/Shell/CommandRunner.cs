@@ -36,6 +36,7 @@ public interface ICommandRunner
 /// <summary>The real one: <see cref="Process"/>, output in the C locale (English, so it can be read).</summary>
 public sealed class CommandRunner : ICommandRunner
 {
+    // Every await below says ConfigureAwait(false): the Linux backend calls RunAsync synchronously from the UI thread.
     public static CommandRunner Instance { get; } = new();
 
     public async Task<CommandResult> RunAsync(string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default,
@@ -73,9 +74,9 @@ public sealed class CommandRunner : ICommandRunner
             catch (OperationCanceledException)
             {
                 try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
-                return new CommandResult(-1, await Quietly(output), (ct.IsCancellationRequested ? "cancelled" : "timed out") + ": " + await Quietly(error));
+                return new CommandResult(-1, await Quietly(output).ConfigureAwait(false), (ct.IsCancellationRequested ? "cancelled" : "timed out") + ": " + await Quietly(error).ConfigureAwait(false));
             }
-            return new CommandResult(process.ExitCode, await Quietly(output), await Quietly(error));
+            return new CommandResult(process.ExitCode, await Quietly(output).ConfigureAwait(false), await Quietly(error).ConfigureAwait(false));
         }
     }
 
