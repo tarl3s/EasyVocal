@@ -33,14 +33,19 @@ public partial class MainWindow : AppWindow
     /// <summary>A grid button and the parts that change while it is shown.</summary>
     private sealed class Card
     {
-        public Card(Button button, Border outline)
+        public Card(Button button, Border outline, Border dropBefore, Border dropAfter)
         {
             Button = button;
             Outline = outline;
+            DropBefore = dropBefore;
+            DropAfter = dropAfter;
         }
 
         public Button Button { get; }
         public Border Outline { get; }
+        /// <summary>The bars that show where a dragged card would go: before or after this one.</summary>
+        public Border DropBefore { get; }
+        public Border DropAfter { get; }
     }
 
     public MainWindow(AppController controller)
@@ -250,6 +255,7 @@ public partial class MainWindow : AppWindow
                 if (v.Hidden) controller.SetVoiceHidden(id, false);
                 else controller.SelectVoice(id);
             };
+            AttachReorder(card, id, voice: true);
             voiceCards[id] = card;
             VoicePanel.Children.Add(card.Button);
         }
@@ -273,6 +279,7 @@ public partial class MainWindow : AppWindow
                 else if (controller.IsSoundBroken(id)) FireAndForget.Watch(AskDialog.TellAsync(this, L.T("This sound file couldn't be opened")), "A message");
                 else controller.ToggleSound(id);
             };
+            AttachReorder(card, id, voice: false);
             soundCards[id] = card;
             SoundPanel.Children.Add(card.Button);
         }
@@ -391,8 +398,14 @@ public partial class MainWindow : AppWindow
         outline.Classes.Add("pulse");
         grid.Children.Add(outline);
 
+        // Where a dragged card would land (MainWindow.Reorder.cs).
+        var before = DropBar(HorizontalAlignment.Left);
+        var after = DropBar(HorizontalAlignment.Right);
+        grid.Children.Add(before);
+        grid.Children.Add(after);
+
         button.Content = grid;
-        return new Card(button, outline);
+        return new Card(button, outline, before, after);
     }
 
     /// <summary>An emoji on a faint round plate, so dark emoji (🎵 🦇) still show on the dark card.</summary>
@@ -462,6 +475,7 @@ public partial class MainWindow : AppWindow
         menu.Items.Add(MenuItem(L.T("Edit…"), () => EditVoice(id)));
         menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetVoiceHotkey(id)));
         menu.Items.Add(MenuItem(L.T("Duplicate"), () => controller.DuplicateVoice(id)));
+        AddMoveItems(menu, id, voice: true);
         menu.Items.Add(new Separator());
         if (v.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetVoiceHidden(id, false)));
         else if (v.BuiltIn && ItemOps.CanHide(v)) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetVoiceHidden(id, true)));
@@ -477,6 +491,7 @@ public partial class MainWindow : AppWindow
         menu.Items.Add(MenuItem("✂  " + L.T("Edit audio…"), () => EditSoundAudio(id)));
         menu.Items.Add(MenuItem(L.T("Set hotkey…"), () => SetSoundHotkey(id)));
         menu.Items.Add(MenuItem(L.T("Duplicate"), () => controller.DuplicateSound(id)));
+        AddMoveItems(menu, id, voice: false);
         menu.Items.Add(new Separator());
         if (s.Hidden) menu.Items.Add(MenuItem(L.T("Unhide"), () => controller.SetSoundHidden(id, false)));
         else if (s.BuiltIn) menu.Items.Add(MenuItem(L.T("Hide"), () => controller.SetSoundHidden(id, true)));

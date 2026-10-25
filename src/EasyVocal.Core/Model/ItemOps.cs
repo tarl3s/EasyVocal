@@ -70,6 +70,23 @@ public static class ItemOps
     public static bool CanHide(VoicePreset v) => v.Id != BuiltInVoices.NormalId;
 
     /// <summary>
+    /// Moves the item <paramref name="id"/> to just before <paramref name="beforeId"/> (null = the end of the list): the
+    /// order the cards, the tray menu and the editor's lists show. False when nothing moved (unknown id, same place).
+    /// </summary>
+    public static bool Move<T>(List<T> items, Func<T, string> idOf, string id, string? beforeId)
+    {
+        int from = items.FindIndex(x => idOf(x) == id);
+        if (from < 0 || id == beforeId) return false;
+        int to = beforeId == null ? items.Count : items.FindIndex(x => idOf(x) == beforeId);
+        if (to < 0) return false;
+        if (to == from || to == from + 1) return false; // already there
+        var item = items[from];
+        items.RemoveAt(from);
+        items.Insert(to > from ? to - 1 : to, item);
+        return true;
+    }
+
+    /// <summary>
     /// A built-in voice is hidden (it can come back); the person's own is removed. The active voice falls back to
     /// Normal. Normal itself is never hidden.
     /// </summary>

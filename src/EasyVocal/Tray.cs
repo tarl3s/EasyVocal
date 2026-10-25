@@ -59,6 +59,9 @@ public sealed class Tray : IDisposable
         icon.Dispose();
     }
 
+    /// <summary>The voices the menu lists, in the cards' order (the person's, saved).</summary>
+    internal static IEnumerable<EasyVocal.Core.Model.VoicePreset> MenuVoices(AppController controller) => controller.Settings.Voices.Where(v => !v.Hidden);
+
     /// <summary>Rebuilds the menu when what it shows changed (ON/OFF, the voices, the active one, the language).</summary>
     private void Rebuild()
     {
@@ -75,9 +78,8 @@ public sealed class Tray : IDisposable
         menu.Items.Add(onOff);
         menu.Items.Add(new NativeMenuItemSeparator());
 
-        foreach (var v in controller.Settings.Voices)
+        foreach (var v in MenuVoices(controller))
         {
-            if (v.Hidden) continue;
             var id = v.Id;
             var item = new NativeMenuItem(v.Emoji + "  " + AppController.DisplayName(v)) { ToggleType = NativeMenuItemToggleType.Radio, IsChecked = id == active };
             item.Click += (_, _) => Safe(() => controller.SelectVoice(id));

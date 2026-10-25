@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -167,6 +168,56 @@ internal sealed partial class AppSession
             Expect(share < 0.5 * normalShare, "Robot moves the energy off the voice's harmonics");
             Expect(!HasMenu(main.VoiceCard(AppController.NormalVoiceId), L.T("Hide")) && HasMenu(main.VoiceCard("robot"), L.T("Hide")),
                 "Normal's card offers no Hide (other built-in voices do)");
+        });
+
+        await Step("2b card order: drag a voice card and a sound card, Move left / right, a click still picks; saved", async () =>
+        {
+            var voicesBefore = c.Settings.Voices.Select(v => v.Id).ToList();
+            var soundsBefore = c.Settings.Sounds.Select(s => s.Id).ToList();
+            string active = c.ActiveVoice.Id;
+            await Settle(main);
+            DragCard(main.VoiceCard("ghost"), main.VoiceCard("female"), after: false);
+            await Settle(main);
+            var ids = c.Settings.Voices.Select(v => v.Id).ToList();
+            Expect(ids.IndexOf("ghost") == ids.IndexOf("female") - 1 && c.ActiveVoice.Id == active, "a voice card dragged onto another's left half goes before it (and isn't clicked)");
+            Expect(main.VoicePanel.Children.IndexOf(main.VoiceCard("ghost")!) == main.VoicePanel.Children.IndexOf(main.VoiceCard("female")!) - 1,
+                "the cards show the new order");
+            Expect(c.Settings.Voices.Count == voicesBefore.Count && main.VoicePanel.Children[^1] is Border, "nothing lost, the AI card stays last");
+            Expect(Tray.MenuVoices(c).Select(v => v.Id).SequenceEqual(c.Settings.Voices.Where(v => !v.Hidden).Select(v => v.Id)), "the tray menu lists the voices in the same order");
+
+            ClickMenu(main.VoiceCard("ghost"), "→  " + L.T("Move right"));
+            await Settle(main);
+            ids = c.Settings.Voices.Select(v => v.Id).ToList();
+            Expect(ids.IndexOf("ghost") == ids.IndexOf("female") + 1, "Move right puts it after the next card");
+            ClickMenu(main.VoiceCard("ghost"), "←  " + L.T("Move left"));
+            await Settle(main);
+            ids = c.Settings.Voices.Select(v => v.Id).ToList();
+            Expect(ids.IndexOf("ghost") == ids.IndexOf("female") - 1, "Move left puts it back before it");
+
+            string first = soundsBefore[0], last = soundsBefore[^1];
+            main.Tabs.SelectedIndex = 1;
+            await Settle(main);
+            DragCard(main.SoundCard(last), main.SoundCard(first), after: false);
+            await Settle(main);
+            Expect(c.Settings.Sounds[0].Id == last && !c.IsPlaying(last) && !c.IsPlaying(first), "a sound card dragged to the front goes first (and plays nothing)");
+            Expect(main.SoundPanel.Children[^1] is Button add && main.SoundCard(last) != add, "the Add sound card stays last");
+            main.Tabs.SelectedIndex = 0;
+            await Settle(main);
+
+            var mouse = new TestMouse();
+            var robot = main.VoiceCard("robot")!;
+            var mid = new Point(robot.Bounds.Width / 2, robot.Bounds.Height / 2);
+            mouse.Press(robot, mid);
+            mouse.Move(robot, mid + new Point(2, 1), leftDown: true); // a hand that shakes a little: still a click
+            mouse.Release(robot, mid + new Point(2, 1));
+            await Settle(main);
+            Expect(c.ActiveVoice.Id == "robot" && c.Settings.Voices.Select(v => v.Id).Count(x => x == "robot") == 1, "a click without moving still picks the voice");
+
+            // Back to the order the later steps (and the relaunch) expect.
+            foreach (var id in voicesBefore) c.MoveVoice(id, null);
+            foreach (var id in soundsBefore) c.MoveSound(id, null);
+            Expect(c.Settings.Voices.Select(v => v.Id).SequenceEqual(voicesBefore) && c.Settings.Sounds.Select(s => s.Id).SequenceEqual(soundsBefore), "the order is put back");
+            if (c.ActiveVoice.Id != active) ClickVoice(main, active);
         });
 
         await Step("3  ON/OFF and mute: OFF sends the clean voice, mute silences the voice but not the sounds", async () =>
@@ -730,6 +781,18 @@ internal sealed partial class AppSession
         card?.ContextMenu?.Items.OfType<MenuItem>().Any(m => m.Header as string == header) == true;
 
     private static bool HasDevice(ComboBox box, string id) => box.Items.OfType<ComboBoxItem>().Any(i => i.Tag is DeviceInfo d && d.Id == id);
+
+    /// <summary>Drags <paramref name="card"/> with the mouse onto the left (or right) half of <paramref name="onto"/> and lets go.</summary>
+    private static void DragCard(Button? card, Button? onto, bool after)
+    {
+        Expect(card != null && onto != null, "both cards are on screen");
+        var mouse = new TestMouse();
+        mouse.Press(card!, new Point(card!.Bounds.Width / 2, card.Bounds.Height / 2));
+        var at = new Point(onto!.Bounds.Width * (after ? 0.75 : 0.25), onto.Bounds.Height / 2);
+        mouse.Move(onto, at, leftDown: true);
+        mouse.Move(onto, at + new Point(1, 0), leftDown: true);
+        mouse.Release(onto, at + new Point(1, 0));
+    }
 
     /// <summary>Picks an item of a card's menu (right-click or "⋯").</summary>
     private static void ClickMenu(Button? card, string header)

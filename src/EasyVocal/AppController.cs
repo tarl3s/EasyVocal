@@ -346,6 +346,22 @@ public sealed class AppController : IDisposable
         RaiseChanged();
     }
 
+    /// <summary>Puts a voice's card just before another's (null = after the last voice); saved, and shown everywhere.</summary>
+    public void MoveVoice(string id, string? beforeId)
+    {
+        if (!ItemOps.Move(Settings.Voices, v => v.Id, id, beforeId)) return;
+        Save();
+        RaiseChanged();
+    }
+
+    /// <summary>Puts a sound's card just before another's (null = after the last sound).</summary>
+    public void MoveSound(string id, string? beforeId)
+    {
+        if (!ItemOps.Move(Settings.Sounds, s => s.Id, id, beforeId)) return;
+        Save();
+        RaiseChanged();
+    }
+
     /// <summary>Hides or shows a voice. Hiding the active voice goes back to Normal; Normal itself can't be hidden.</summary>
     public void SetVoiceHidden(string id, bool hidden)
     {

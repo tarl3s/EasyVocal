@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
+using EasyVocal.Core.Storage;
 
 namespace EasyVocal.Tests;
 
@@ -333,6 +334,47 @@ public class ItemOpsTests : IDisposable
     [InlineData(null, "sound")]
     [InlineData("dots...", "dots")]
     public void SafeStem_MakesAFileName(string? name, string want) => Assert.Equal(want, ItemOps.SafeStem(name));
+
+    [Theory]
+    [InlineData("c", "a", "c a b d")] // before the first
+    [InlineData("a", "d", "b c a d")]
+    [InlineData("a", null, "b c d a")] // to the end
+    [InlineData("d", "b", "a d b c")]
+    [InlineData("b", "c", "a b c d")] // already there: nothing moves
+    [InlineData("b", "b", "a b c d")]
+    [InlineData("x", "a", "a b c d")] // unknown ids
+    [InlineData("a", "x", "a b c d")]
+    public void Move_PutsTheItemBeforeAnother(string id, string? before, string want)
+    {
+        var items = new List<string> { "a", "b", "c", "d" };
+        bool moved = ItemOps.Move(items, x => x, id, before);
+        Assert.Equal(want, string.Join(" ", items));
+        Assert.Equal(want != "a b c d", moved);
+    }
+
+    [Fact]
+    public void MovedVoicesAndSounds_KeepTheirOrder_AfterSaving()
+    {
+        var s = SettingsStore.Load(_dir);
+        Assert.True(ItemOps.Move(s.Voices, v => v.Id, "robot", "normal"));
+        Assert.True(ItemOps.Move(s.Sounds, x => x.Id, s.Sounds[^1].Id, s.Sounds[0].Id));
+        var voices = s.Voices.Select(v => v.Id).ToList();
+        var sounds = s.Sounds.Select(x => x.Id).ToList();
+        SettingsStore.Save(_dir, s);
+        var back = SettingsStore.Load(_dir);
+        Assert.Equal(voices, back.Voices.Select(v => v.Id));
+        Assert.Equal(sounds, back.Sounds.Select(x => x.Id));
+        Assert.Equal("robot", back.Voices[0].Id);
+
+        // A built-in the file doesn't have yet (new in a later version) goes after the one before it in the catalog.
+        var catalog = BuiltInVoices.All().Select(v => v.Id).ToList();
+        string newOne = catalog[^1], before = catalog[^2];
+        back.Voices.RemoveAll(v => v.Id == newOne);
+        SettingsStore.Save(_dir, back);
+        var again = SettingsStore.Load(_dir).Voices.Select(v => v.Id).ToList();
+        Assert.Equal(again.IndexOf(before) + 1, again.IndexOf(newOne));
+        Assert.Equal("robot", again[0]);
+    }
 
     [Fact]
     public void UseEditedFile_RemembersTheOriginalOnce_AndDropsOldEditedCopies()

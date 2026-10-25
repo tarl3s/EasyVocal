@@ -183,61 +183,83 @@ public static class SettingsStore
 
     // Built-ins: user-owned fields from the file, everything else from code. For voices that is Hidden and Hotkey
     // (editing a built-in voice saves a copy; Normal is never hidden, even by a hand-edited file); a built-in
-    // sound's name and emoji are labels the person may change in the sound editor, so they are theirs too. Missing
-    // built-ins are appended in catalog order, then user items in file order.
-    private static List<VoicePreset> MergeVoices(List<VoicePreset> fromFile)
-    {
-        var result = new List<VoicePreset>();
-        var catalogIds = new HashSet<string>();
-        foreach (var b in BuiltInVoices.All())
+    // sound's name and emoji are labels the person may change in the sound editor, so they are theirs too. The file's
+    // order is the person's (cards can be dragged); a built-in missing from it (new in this version) goes right after
+    // the built-in before it in the catalog.
+    private static List<VoicePreset> MergeVoices(List<VoicePreset> fromFile) =>
+        InFileOrder(fromFile, BuiltInVoices.All(), v => v.Id, (b, f) =>
         {
-            catalogIds.Add(b.Id);
-            var f = fromFile.FirstOrDefault(v => v != null && v.Id == b.Id);
-            if (f != null) { b.Hidden = f.Hidden && ItemOps.CanHide(b); b.Hotkey = f.Hotkey; }
-            result.Add(b);
-        }
-        foreach (var v in fromFile)
+            b.Hidden = f.Hidden && ItemOps.CanHide(b);
+            b.Hotkey = f.Hotkey;
+        }, v =>
         {
-            if (v == null || string.IsNullOrEmpty(v.Id) || catalogIds.Contains(v.Id)) continue;
             v.BuiltIn = false;
             v.Sliders = (v.Sliders ?? new VoiceSliders()).Clamp();
-            result.Add(v);
-        }
-        return result;
-    }
+        });
 
-    private static List<SoundItem> MergeSounds(List<SoundItem> fromFile)
-    {
-        var result = new List<SoundItem>();
-        var catalogIds = new HashSet<string>();
-        foreach (var b in StarterSounds.Items())
+    private static List<SoundItem> MergeSounds(List<SoundItem> fromFile) =>
+        InFileOrder(fromFile, StarterSounds.Items(), x => x.Id, (b, f) =>
         {
-            catalogIds.Add(b.Id);
-            var f = fromFile.FirstOrDefault(x => x != null && x.Id == b.Id);
-            if (f != null)
+            b.Hidden = f.Hidden;
+            b.Hotkey = f.Hotkey;
+            b.Volume = ClampVolume(f.Volume, b.Volume);
+            if (!string.IsNullOrWhiteSpace(f.Name)) b.Name = f.Name;
+            if (!string.IsNullOrWhiteSpace(f.Emoji)) b.Emoji = f.Emoji;
+            // Edited in the sound editor: it plays the edited copy; its own file stays the original.
+            if (!string.IsNullOrEmpty(f.OriginalFileName) && FileNames.IsPlain(f.FileName) && !PathCompare.Same(f.FileName, b.FileName))
             {
-                b.Hidden = f.Hidden;
-                b.Hotkey = f.Hotkey;
-                b.Volume = ClampVolume(f.Volume, b.Volume);
-                if (!string.IsNullOrWhiteSpace(f.Name)) b.Name = f.Name;
-                if (!string.IsNullOrWhiteSpace(f.Emoji)) b.Emoji = f.Emoji;
-                // Edited in the sound editor: it plays the edited copy; its own file stays the original.
-                if (!string.IsNullOrEmpty(f.OriginalFileName) && FileNames.IsPlain(f.FileName) && !PathCompare.Same(f.FileName, b.FileName))
-                {
-                    b.OriginalFileName = b.FileName;
-                    b.FileName = f.FileName;
-                }
+                b.OriginalFileName = b.FileName;
+                b.FileName = f.FileName;
             }
-            result.Add(b);
-        }
-        foreach (var x in fromFile)
+        }, x =>
         {
-            if (x == null || string.IsNullOrEmpty(x.Id) || catalogIds.Contains(x.Id)) continue;
             x.BuiltIn = false;
             x.Volume = ClampVolume(x.Volume, 0.8);
             if (x.OriginalFileName != null && (!FileNames.IsPlain(x.OriginalFileName) || PathCompare.Same(x.OriginalFileName, x.FileName)))
                 x.OriginalFileName = null;
-            result.Add(x);
+        });
+
+    /// <param name="catalog">The built-ins as the code makes them (fresh objects).</param>
+    /// <param name="fromBuiltIn">Copies the person's fields of a built-in from the file's entry.</param>
+    /// <param name="fixUser">Makes an item of the person's sane.</param>
+    private static List<T> InFileOrder<T>(List<T> fromFile, IEnumerable<T> catalog, Func<T, string?> idOf, Action<T, T> fromBuiltIn, Action<T> fixUser)
+        where T : class
+    {
+        var builtIns = new Dictionary<string, T>();
+        var order = new List<string>();
+        foreach (var b in catalog)
+        {
+            builtIns[idOf(b)!] = b;
+            order.Add(idOf(b)!);
+        }
+        var result = new List<T>();
+        var placed = new HashSet<string>();
+        foreach (var f in fromFile)
+        {
+            if (f == null || idOf(f) is not { Length: > 0 } id) continue;
+            if (builtIns.TryGetValue(id, out var b))
+            {
+                if (!placed.Add(id)) continue; // a built-in twice: the first one counts
+                fromBuiltIn(b, f);
+                result.Add(b);
+            }
+            else
+            {
+                fixUser(f);
+                result.Add(f);
+            }
+        }
+        for (int i = 0; i < order.Count; i++)
+        {
+            if (placed.Contains(order[i])) continue;
+            int at = 0; // after the nearest built-in before it in the catalog that is there (else first)
+            for (int k = i - 1; k >= 0; k--)
+            {
+                int found = result.FindIndex(x => idOf(x) == order[k]);
+                if (found >= 0) { at = found + 1; break; }
+            }
+            result.Insert(at, builtIns[order[i]]);
+            placed.Add(order[i]);
         }
         return result;
     }
