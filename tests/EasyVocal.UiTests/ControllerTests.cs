@@ -319,8 +319,13 @@ public class ControllerTests
             Thread.Sleep(200);
             ui.TickAll();
             Assert.Equal(3, mic.Creates); // well within twice the wait after a failure: not yet
-            Thread.Sleep(300);
-            ui.TickAll();
+            // ...and then it tries again (the recovery timer keeps ticking; a busy computer may be late to it).
+            for (int i = 0; i < 300 && mic.Creates < 4; i++)
+            {
+                Thread.Sleep(10);
+                ui.TickAll();
+                ui.Pump();
+            }
             Until(() => !c.PreparingVirtualMic && mic.Creates == 4, ui);
         }
         finally { TestFolders.Delete(data); }

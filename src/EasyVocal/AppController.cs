@@ -1060,6 +1060,8 @@ public sealed class AppController : IDisposable
     {
         var vm = Platform.VirtualMic;
         if (!vm.CanCreate) return;
+        // No other try until this one's result is in (it may finish at once, before its continuation runs on the UI thread).
+        nextVirtualMicTry = DateTime.MaxValue;
         var task = Task.Run(async () =>
         {
             try
