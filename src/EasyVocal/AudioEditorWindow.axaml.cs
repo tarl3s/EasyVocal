@@ -1,14 +1,14 @@
 using System.IO;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Input;
-using System.Windows.Threading;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
 using EasyVocal.Core.Text;
-using Microsoft.Win32;
 
 namespace EasyVocal;
 
@@ -18,7 +18,7 @@ namespace EasyVocal;
 /// remove silence). Nothing is saved here: <see cref="Result"/> is what the caller saves (a new WAV in the Sounds
 /// folder; the original file is never changed). Split is the exception: it adds two new sounds at once.
 /// </summary>
-public partial class AudioEditorWindow : Window
+public partial class AudioEditorWindow : AppWindow
 {
     private const int Sr = AudioFormat.SampleRate;
 
@@ -52,8 +52,7 @@ public partial class AudioEditorWindow : Window
         history = new AudioHistory(new AudioState(samples, isOriginal));
         if (isOriginal) originalSamples = samples;
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "audioEditor", controller);
+        Place("audioEditor", controller);
         Title = L.T("Edit audio") + " — " + this.soundName;
 
         PlayButton.Content = "▶  " + L.T("Play");
@@ -61,15 +60,15 @@ public partial class AudioEditorWindow : Window
         UndoButton.Content = "↶  " + L.T("Undo");
         RedoButton.Content = "↷  " + L.T("Redo");
         FillChoices();
-        ExportButton.ToolTip = L.T("Save this sound as a file anywhere on your PC");
 
         Wave.Samples = samples;
         Wave.SelectionChanged += UpdateAll;
         Wave.ViewChanged += UpdateScroll;
-        playTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(30) };
+        playTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(30) };
         playTimer.Tick += (_, _) => UpdatePlayhead();
         controller.PreviewEnded += OnPreviewEnded;
         Root.SizeChanged += (_, _) => FitTools();
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         Closed += (_, _) =>
         {
             closing.Cancel();
@@ -77,7 +76,7 @@ public partial class AudioEditorWindow : Window
             playTimer.Stop();
             if (playOffset >= 0) controller.StopPreview();
         };
-        Loaded += (_, _) =>
+        Opened += (_, _) =>
         {
             FitTools();
             Wave.Focus();
@@ -157,7 +156,7 @@ public partial class AudioEditorWindow : Window
     private void UpdateScroll()
     {
         double max = Math.Max(0, Current.Length - Wave.VisibleSamples);
-        WaveScroll.Visibility = max > 0 ? Visibility.Visible : Visibility.Collapsed;
+        WaveScroll.IsVisible = max > 0;
         WaveScroll.Minimum = 0;
         WaveScroll.Maximum = max;
         WaveScroll.ViewportSize = Wave.VisibleSamples;
@@ -169,17 +168,17 @@ public partial class AudioEditorWindow : Window
         FitButton.IsEnabled = Wave.CanZoomOut;
     }
 
-    private void WaveScroll_Scroll(object sender, ScrollEventArgs e) => Wave.ScrollTo(WaveScroll.Value);
+    private void WaveScroll_Scroll(object? sender, ScrollEventArgs e) => Wave.ScrollTo(WaveScroll.Value);
 
     /// <summary>The tools never squeeze the wave below ~120 px: past that they scroll.</summary>
     private void FitTools()
     {
         // On a short screen the how-to line gives its room to the wave and the tools (the tooltips still explain).
-        HintText.Visibility = Root.ActualHeight < 470 ? Visibility.Collapsed : Visibility.Visible;
+        HintText.IsVisible = Root.Bounds.Height >= 470;
         double others = 0;
-        foreach (UIElement child in Root.Children)
-            if (child != ToolsScroll && child != Wave && child.Visibility == Visibility.Visible) others += child.DesiredSize.Height;
-        ToolsScroll.MaxHeight = Math.Max(70, Root.ActualHeight - others - 120);
+        foreach (var child in Root.Children)
+            if (child != ToolsScroll && child != Wave && child.IsVisible) others += child.DesiredSize.Height;
+        ToolsScroll.MaxHeight = Math.Max(70, Root.Bounds.Height - others - 120);
     }
 
     private void Status(string text) => BusyText.Text = text;
@@ -221,36 +220,36 @@ public partial class AudioEditorWindow : Window
         Wave.Playhead = playOffset >= 0 && played >= 0 ? playOffset + played : -1;
     }
 
-    private void PlayButton_Click(object sender, RoutedEventArgs e)
+    private void PlayButton_Click(object? sender, RoutedEventArgs e)
     {
         // From the cursor when it is placed inside the sound, else from the start.
         int from = !Wave.HasSelection && Wave.CursorPosition < Current.Length ? Wave.CursorPosition : 0;
         Play(from, Current.Length - from);
     }
 
-    private void PlayPartButton_Click(object sender, RoutedEventArgs e) => Play(Wave.SelectionStart, Wave.SelectionLength);
+    private void PlayPartButton_Click(object? sender, RoutedEventArgs e) => Play(Wave.SelectionStart, Wave.SelectionLength);
 
-    private void StopButton_Click(object sender, RoutedEventArgs e) => StopPlaying();
+    private void StopButton_Click(object? sender, RoutedEventArgs e) => StopPlaying();
 
     // ---------- undo, zoom ----------
 
-    private void UndoButton_Click(object sender, RoutedEventArgs e)
+    private void UndoButton_Click(object? sender, RoutedEventArgs e)
     {
         if (busy || !history.Undo()) return;
         Show(history.Current);
     }
 
-    private void RedoButton_Click(object sender, RoutedEventArgs e)
+    private void RedoButton_Click(object? sender, RoutedEventArgs e)
     {
         if (busy || !history.Redo()) return;
         Show(history.Current);
     }
 
-    private void ZoomInButton_Click(object sender, RoutedEventArgs e) => ZoomAroundSelection(2);
+    private void ZoomInButton_Click(object? sender, RoutedEventArgs e) => ZoomAroundSelection(2);
 
-    private void ZoomOutButton_Click(object sender, RoutedEventArgs e) => ZoomAroundSelection(0.5);
+    private void ZoomOutButton_Click(object? sender, RoutedEventArgs e) => ZoomAroundSelection(0.5);
 
-    private void FitButton_Click(object sender, RoutedEventArgs e)
+    private void FitButton_Click(object? sender, RoutedEventArgs e)
     {
         Wave.Fit();
         UpdateAll();
@@ -261,19 +260,20 @@ public partial class AudioEditorWindow : Window
     {
         double focus = Wave.HasSelection ? Wave.SelectionStart + Wave.SelectionLength / 2.0 : Wave.CursorPosition;
         double x = (focus - Wave.ViewStart) / Wave.SamplesPerPixel;
-        Wave.Zoom(factor, x >= 0 && x <= Wave.ActualWidth ? x : null);
+        Wave.Zoom(factor, x >= 0 && x <= Wave.Bounds.Width ? x : null);
         UpdateAll();
     }
 
     // ---------- keyboard ----------
 
-    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
-        base.OnPreviewKeyDown(e);
         if (busy || e.Handled) return;
-        bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-        bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
-        if (Keyboard.FocusedElement is ComboBox or TextBox) return; // their own keys
+        // Ctrl on Windows and Linux, Command on a Mac.
+        bool ctrl = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0;
+        bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
+        var focused = FocusManager?.GetFocusedElement();
+        if (focused is ComboBox or TextBox) return; // their own keys
         switch (e.Key)
         {
             case Key.Z when ctrl && shift:
@@ -289,7 +289,7 @@ public partial class AudioEditorWindow : Window
                 Wave.Select(0, Current.Length);
                 e.Handled = true;
                 break;
-            case Key.Space when Keyboard.FocusedElement is not ButtonBase:
+            case Key.Space when focused is not Button:
                 if (playOffset >= 0) StopPlaying();
                 else if (Wave.HasSelection) PlayPartButton_Click(this, e);
                 else PlayButton_Click(this, e);
@@ -317,7 +317,7 @@ public partial class AudioEditorWindow : Window
         busy = true;
         Status(L.T("Working…"));
         UpdateAll();
-        Cursor = Cursors.Wait;
+        Cursor = new Cursor(StandardCursorType.Wait);
         try
         {
             var (result, selStart, selCount, same) = await Task.Run(() =>
@@ -380,21 +380,21 @@ public partial class AudioEditorWindow : Window
         });
     }
 
-    private async void CutButton_Click(object sender, RoutedEventArgs e)
+    private async void CutButton_Click(object? sender, RoutedEventArgs e)
     {
         int start = Wave.SelectionStart, count = Wave.SelectionLength;
         if (count <= 0) return;
         await Edit(x => (AudioEdit.Cut(x, start, count), start, 0));
     }
 
-    private async void TrimButton_Click(object sender, RoutedEventArgs e)
+    private async void TrimButton_Click(object? sender, RoutedEventArgs e)
     {
         int start = Wave.SelectionStart, count = Wave.SelectionLength;
         if (count <= 0) return;
         await Edit(x => (AudioEdit.Trim(x, start, count), 0, 0));
     }
 
-    private async void SplitButton_Click(object sender, RoutedEventArgs e)
+    private async void SplitButton_Click(object? sender, RoutedEventArgs e)
     {
         int at = Wave.CursorPosition;
         var x = Current;
@@ -430,16 +430,16 @@ public partial class AudioEditorWindow : Window
     /// <summary>A split added two sounds (for the tests).</summary>
     internal bool SplitDone { get; private set; }
 
-    private async void SpeedButton_Click(object sender, RoutedEventArgs e)
+    private async void SpeedButton_Click(object? sender, RoutedEventArgs e)
     {
         double speed = Picked(SpeedBox, 1.5);
         bool keep = Picked(SpeedModeBox, true);
         await EditRange(p => AudioEdit.ChangeSpeed(p, speed, keep));
     }
 
-    private async void HigherButton_Click(object sender, RoutedEventArgs e) => await Pitch(+1);
+    private async void HigherButton_Click(object? sender, RoutedEventArgs e) => await Pitch(+1);
 
-    private async void LowerButton_Click(object sender, RoutedEventArgs e) => await Pitch(-1);
+    private async void LowerButton_Click(object? sender, RoutedEventArgs e) => await Pitch(-1);
 
     private Task Pitch(int sign)
     {
@@ -447,29 +447,29 @@ public partial class AudioEditorWindow : Window
         return EditRange(p => AudioEdit.ShiftPitch(p, sign * steps));
     }
 
-    private async void LouderButton_Click(object sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, AudioEdit.LouderFactor));
+    private async void LouderButton_Click(object? sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, AudioEdit.LouderFactor));
 
-    private async void QuieterButton_Click(object sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, 1 / AudioEdit.LouderFactor));
+    private async void QuieterButton_Click(object? sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Gain(p, 1 / AudioEdit.LouderFactor));
 
-    private async void NormalizeButton_Click(object sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Normalize(p));
+    private async void NormalizeButton_Click(object? sender, RoutedEventArgs e) => await EditRange(p => AudioEdit.Normalize(p));
 
-    private async void FadeInButton_Click(object sender, RoutedEventArgs e) => await Fade(fadeIn: true);
+    private async void FadeInButton_Click(object? sender, RoutedEventArgs e) => await Fade(fadeIn: true);
 
-    private async void FadeOutButton_Click(object sender, RoutedEventArgs e) => await Fade(fadeIn: false);
+    private async void FadeOutButton_Click(object? sender, RoutedEventArgs e) => await Fade(fadeIn: false);
 
     // With nothing picked a fade covers the first or last half second, not the whole sound.
     private Task Fade(bool fadeIn) => EditPart((x, s, c) => AudioEdit.OnRange(x, s, c, fadeIn ? AudioEdit.FadeIn : AudioEdit.FadeOut),
         Wave.HasSelection ? null : AudioEdit.DefaultFadeRange(Current.Length, fadeIn));
 
-    private async void ReverseButton_Click(object sender, RoutedEventArgs e) => await EditRange(AudioEdit.Reverse);
+    private async void ReverseButton_Click(object? sender, RoutedEventArgs e) => await EditRange(AudioEdit.Reverse);
 
-    private async void EchoLightButton_Click(object sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Light);
+    private async void EchoLightButton_Click(object? sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Light);
 
-    private async void EchoStrongButton_Click(object sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Strong);
+    private async void EchoStrongButton_Click(object? sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Strong);
 
     private Task Echo(AudioEdit.EchoStrength strength) => EditPart((x, s, c) => AudioEdit.EchoRange(x, s, c, strength));
 
-    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    private async void VoiceButton_Click(object? sender, RoutedEventArgs e)
     {
         if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
         await EditPart((x, s, c) => AudioEdit.ApplyVoiceRange(x, s, c, sliders));
@@ -490,7 +490,7 @@ public partial class AudioEditorWindow : Window
         });
     }
 
-    private async void SilenceButton_Click(object sender, RoutedEventArgs e)
+    private async void SilenceButton_Click(object? sender, RoutedEventArgs e)
     {
         var (start, count) = AudioEdit.SoundBounds(Current);
         if (count == 0 || (start == 0 && count == Current.Length))
@@ -503,7 +503,7 @@ public partial class AudioEditorWindow : Window
 
     // ---------- back to original, export, save ----------
 
-    private async void OriginalButton_Click(object sender, RoutedEventArgs e)
+    private async void OriginalButton_Click(object? sender, RoutedEventArgs e)
     {
         if (busy || history.Current.IsOriginal) return;
         StopPlaying();
@@ -539,21 +539,31 @@ public partial class AudioEditorWindow : Window
         UpdateAll();
     }
 
-    private async void ExportButton_Click(object sender, RoutedEventArgs e)
+    private async void ExportButton_Click(object? sender, RoutedEventArgs e)
     {
         StopPlaying();
         bool mp3 = Mp3 != null;
-        var dialog = new SaveFileDialog
+        var types = new List<FilePickerFileType> { new(L.T("WAV sound")) { Patterns = new[] { "*.wav" } } };
+        if (mp3) types.Add(new FilePickerFileType(L.T("MP3 sound")) { Patterns = new[] { "*.mp3" } });
+        try
         {
-            Title = L.T("Save a copy as…"),
-            FileName = ItemOps.SafeStem(soundName),
-            Filter = L.T("WAV sound") + "|*.wav" + (mp3 ? "|" + L.T("MP3 sound") + "|*.mp3" : ""),
-            DefaultExt = ".wav",
-            AddExtension = true,
-            OverwritePrompt = true,
-        };
-        if (dialog.ShowDialog(this) != true) return;
-        await Export(dialog.FileName);
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = L.T("Save a copy as…"),
+                SuggestedFileName = ItemOps.SafeStem(soundName),
+                DefaultExtension = "wav",
+                FileTypeChoices = types,
+                ShowOverwritePrompt = true,
+            });
+            if (file?.TryGetLocalPath() is not { } path) return;
+            if (!Path.HasExtension(path)) path += ".wav";
+            await Export(path);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("The save dialog failed", ex);
+            Status(L.T("We couldn't save that file."));
+        }
     }
 
     /// <summary>This computer's MP3 encoder when it has a working one, else null (only WAV is offered).</summary>
@@ -590,12 +600,12 @@ public partial class AudioEditorWindow : Window
         }
     }
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    private void SaveButton_Click(object? sender, RoutedEventArgs e)
     {
         if (busy || !history.Changed) return;
         StopPlaying();
         Result = history.Current;
-        DialogResult = true;
+        Accept();
     }
 
     // ---------- for the smoke test ----------
@@ -620,15 +630,16 @@ public partial class AudioEditorWindow : Window
         var samples = controller.SoundSamples(item.Id);
         if (samples == null)
         {
-            AskDialog.Tell(owner, controller.IsSoundBroken(item.Id)
+            await AskDialog.TellAsync(owner, controller.IsSoundBroken(item.Id)
                 ? L.T("This sound file couldn't be opened")
                 : L.T("This sound is still loading. Try again in a moment."));
             return;
         }
         bool edited = !string.IsNullOrEmpty(item.OriginalFileName);
         var editor = new AudioEditorWindow(controller, AppController.DisplayName(item), item.Emoji, item.Volume, samples,
-            isOriginal: !edited, originalPath: edited ? controller.SoundPath(item.OriginalFileName) : null, soundId: item.Id) { Owner = owner };
-        if (editor.ShowDialog() != true || editor.Result is not { } result) return;
+            isOriginal: !edited, originalPath: edited ? controller.SoundPath(item.OriginalFileName) : null, soundId: item.Id);
+        await editor.ShowAsync(owner);
+        if (!editor.Accepted || editor.Result is not { } result) return;
         await SaveResultAsync(owner, controller, item.Id, result);
     }
 
@@ -644,7 +655,7 @@ public partial class AudioEditorWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             AppLog.Error("Saving an edited sound failed", ex);
-            AskDialog.Tell(owner, L.T("We couldn't save the edited sound."));
+            await AskDialog.TellAsync(owner, L.T("We couldn't save the edited sound."));
             return false;
         }
     }

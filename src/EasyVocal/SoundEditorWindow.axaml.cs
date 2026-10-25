@@ -1,11 +1,12 @@
 using System.IO;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
 using EasyVocal.Core.Text;
-using Microsoft.Win32;
 
 namespace EasyVocal;
 
@@ -14,7 +15,7 @@ namespace EasyVocal;
 /// headphones, "✂ Edit audio…" and a hotkey. A file that can't be opened shows a friendly reason and adds nothing.
 /// Audio edits wait for Save like everything else: Save writes the edited copy (the original file is kept).
 /// </summary>
-public partial class SoundEditorWindow : Window
+public partial class SoundEditorWindow : AppWindow
 {
     private readonly AppController controller;
     /// <summary>Stops a decode still running when the window closes.</summary>
@@ -26,7 +27,8 @@ public partial class SoundEditorWindow : Window
     private float[]? fileSamples;      // the decoded file, what the mixer gets until an edited copy is saved
     private string? newFilePath;       // a file the person picked (to copy into the Sounds folder on Save)
     private string? pendingHotkey;
-    private bool nameTouched, settingName, loadingFile, previewing, saving;
+    private string nameSet = "";
+    private bool nameTouched, loadingFile, previewing, saving;
     private int loadTicket;
 
     private enum AudioChange { None, Edited, Restored }
@@ -41,25 +43,27 @@ public partial class SoundEditorWindow : Window
         this.editing = editing;
         itemId = editing?.Id ?? ItemOps.NewId();
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "soundEditor", controller);
+        Place("soundEditor", controller);
 
         SetName(editing != null ? AppController.DisplayName(editing) : "");
         nameTouched = editing != null;
         emojiGrid = new EmojiGrid(editing?.Emoji ?? "🔊");
         EmojiHost.Content = emojiGrid;
         VolumeSlider.Value = editing?.Volume ?? 0.8;
+        ShowVolume();
         pendingHotkey = editing?.Hotkey;
         FileText.Text = editing != null ? editing.FileName : L.T("No file chosen yet");
         if (editing is { BuiltIn: true })
         {
-            ChooseButton.Visibility = Visibility.Collapsed; // a built-in keeps its own file
-            DropHint.Visibility = Visibility.Collapsed;
+            ChooseButton.IsVisible = false; // a built-in keeps its own file
+            DropHint.IsVisible = false;
         }
         UpdatePreviewButton();
         UpdateHotkeyButton();
         UpdateSave();
 
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
         controller.PreviewEnded += OnPreviewEnded;
         Closing += (_, e) => e.Cancel |= saving; // the edited copy is being written: Save closes the window when done
         Closed += (_, _) =>
@@ -68,7 +72,7 @@ public partial class SoundEditorWindow : Window
             controller.PreviewEnded -= OnPreviewEnded;
             controller.StopPreview();
         };
-        Loaded += (_, _) =>
+        Opened += (_, _) =>
         {
             if (droppedPath != null) _ = LoadFileAsync(droppedPath);
             else if (editing != null) _ = LoadFileAsync(controller.SoundPath(editing.FileName), existing: true);
@@ -77,34 +81,38 @@ public partial class SoundEditorWindow : Window
 
     // ---------- the file ----------
 
-    private void ChooseButton_Click(object sender, RoutedEventArgs e)
+    private async void ChooseButton_Click(object? sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
+        try
         {
-            Title = L.T("Choose file…"),
-            Filter = L.T("Sound and video files") + "|" + SoundLoader.DialogPattern,
-            CheckFileExists = true,
-        };
-        if (dialog.ShowDialog(this) == true) _ = LoadFileAsync(dialog.FileName);
-    }
-
-    protected override void OnPreviewDragOver(DragEventArgs e)
-    {
-        base.OnPreviewDragOver(e);
-        if (!CanTakeFile) return;
-        if (e.Data.GetDataPresent(DataFormats.FileDrop))
-        {
-            e.Effects = DragDropEffects.Copy;
-            e.Handled = true;
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = L.T("Choose file…"),
+                AllowMultiple = false,
+                FileTypeFilter = new[]
+                {
+                    new FilePickerFileType(L.T("Sound and video files")) { Patterns = SoundLoader.Extensions.Select(x => "*" + x).ToArray() },
+                },
+            });
+            if (files.Count > 0 && files[0].TryGetLocalPath() is { } path) await LoadFileAsync(path);
         }
+        catch (Exception ex) { AppLog.Error("The file picker failed", ex); }
     }
 
-    protected override void OnPreviewDrop(DragEventArgs e)
+    private void OnDragOver(object? sender, DragEventArgs e)
     {
-        base.OnPreviewDrop(e);
-        if (!CanTakeFile || e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } files) return;
+        if (!CanTakeFile || !e.DataTransfer.Contains(DataFormat.File)) return;
+        e.DragEffects = DragDropEffects.Copy;
         e.Handled = true;
-        _ = LoadFileAsync(files[0]);
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        if (!CanTakeFile) return;
+        var path = e.DataTransfer.TryGetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().FirstOrDefault();
+        if (path == null) return;
+        e.Handled = true;
+        _ = LoadFileAsync(path);
     }
 
     private bool CanTakeFile => editing is not { BuiltIn: true };
@@ -158,33 +166,35 @@ public partial class SoundEditorWindow : Window
     private void ShowStatus(string text, bool error)
     {
         StatusText.Text = text;
-        StatusText.Foreground = (Brush)FindResource(error ? "Danger" : "TextDim");
-        StatusText.Visibility = Visibility.Visible;
+        StatusText.Foreground = Res.Brush(error ? "Danger" : "TextDim");
+        StatusText.IsVisible = true;
     }
 
-    private void HideStatus() => StatusText.Visibility = Visibility.Collapsed;
+    private void HideStatus() => StatusText.IsVisible = false;
 
     // ---------- name, volume ----------
 
+    /// <summary>Puts a name in the box that the person didn't type (the file's name, the sound's name).</summary>
     private void SetName(string text)
     {
-        settingName = true;
+        nameSet = text;
         NameBox.Text = text;
-        settingName = false;
     }
 
-    private void NameBox_TextChanged(object sender, TextChangedEventArgs e)
+    // TextChanged may come after the change (Avalonia raises it once the text settled): a name we set is told apart by its text.
+    private void NameBox_TextChanged(object? sender, TextChangedEventArgs e)
     {
-        if (!settingName) nameTouched = true;
+        if ((NameBox.Text ?? "") != nameSet) nameTouched = true;
         UpdateSave();
     }
 
-    private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
-        VolumeText.Text = Math.Round(e.NewValue * 100) + "%";
+    private void VolumeSlider_ValueChanged(object? sender, RangeBaseValueChangedEventArgs e) => ShowVolume();
+
+    private void ShowVolume() => VolumeText.Text = Math.Round(VolumeSlider.Value * 100) + "%";
 
     // ---------- preview ----------
 
-    private void PreviewButton_Click(object sender, RoutedEventArgs e)
+    private void PreviewButton_Click(object? sender, RoutedEventArgs e)
     {
         if (previewing)
         {
@@ -215,7 +225,7 @@ public partial class SoundEditorWindow : Window
 
     // ---------- edit audio ----------
 
-    private void EditAudioButton_Click(object sender, RoutedEventArgs e)
+    private async void EditAudioButton_Click(object? sender, RoutedEventArgs e)
     {
         if (samples == null) return;
         if (previewing)
@@ -227,8 +237,9 @@ public partial class SoundEditorWindow : Window
         bool neverEdited = newFilePath != null || string.IsNullOrEmpty(editing?.OriginalFileName);
         bool isOriginal = audioChange == AudioChange.Restored || (audioChange == AudioChange.None && neverEdited);
         var editor = new AudioEditorWindow(controller, ShownName, emojiGrid.Selected, VolumeSlider.Value, samples,
-            isOriginal, isOriginal ? null : OriginalPath(), editing?.Id) { Owner = this };
-        if (editor.ShowDialog() != true || editor.Result is not { } result) return;
+            isOriginal, isOriginal ? null : OriginalPath(), editing?.Id);
+        await editor.ShowAsync(this);
+        if (!editor.Accepted || editor.Result is not { } result) return;
         samples = result.Samples;
         audioChange = !result.IsOriginal ? AudioChange.Edited : neverEdited ? AudioChange.None : AudioChange.Restored;
         UpdateFileText();
@@ -257,13 +268,12 @@ public partial class SoundEditorWindow : Window
 
     // ---------- hotkey ----------
 
-    private void HotkeyButton_Click(object sender, RoutedEventArgs e)
+    private async void HotkeyButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (HotkeyCaptureDialog.Pick(this, controller, "sound:" + itemId, ShownName, pendingHotkey, out var result))
-        {
-            pendingHotkey = result;
-            UpdateHotkeyButton();
-        }
+        var pick = await HotkeyCaptureDialog.PickAsync(this, controller, "sound:" + itemId, ShownName, pendingHotkey);
+        if (!pick.Ok) return;
+        pendingHotkey = pick.Hotkey;
+        UpdateHotkeyButton();
     }
 
     private void UpdateHotkeyButton() =>
@@ -274,10 +284,10 @@ public partial class SoundEditorWindow : Window
     private void UpdateSave() =>
         SaveButton.IsEnabled = !saving && !loadingFile && !string.IsNullOrWhiteSpace(NameBox.Text) && (editing != null || samples != null);
 
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
+    private async void SaveButton_Click(object? sender, RoutedEventArgs e)
     {
-        var name = NameBox.Text.Trim();
-        if (name.Length == 0) return;
+        var name = (NameBox.Text ?? "").Trim();
+        if (name.Length == 0 || saving) return;
         saving = true;
         UpdateSave();
         try
@@ -333,17 +343,17 @@ public partial class SoundEditorWindow : Window
             // the sound keeps playing its (unedited) file.
             if (audioChange == AudioChange.Edited && samples != null) await SaveEditedAudio(samples);
 
-            // Windows could still refuse the key (an app grabbed it since we checked): don't keep it.
+            // The system could still refuse the key (an app grabbed it since we checked): don't keep it.
             if (pendingHotkey != null && controller.RefusedActions.Contains("sound:" + itemId))
             {
                 var item = editing ?? controller.Settings.Sounds.First(s => s.Id == itemId);
                 item.Hotkey = editing != null ? previousHotkey : null;
                 controller.Save();
                 controller.RebuildHotkeys();
-                AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", pendingHotkey));
+                await AskDialog.TellAsync(this, L.F("Another app is already using {0}. Pick a different one.", pendingHotkey));
             }
             saving = false; // lets the window close
-            DialogResult = true;
+            Accept();
         }
         finally
         {

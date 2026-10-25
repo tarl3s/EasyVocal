@@ -1,0 +1,58 @@
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.SoundEditorWindow"
+               Title="{loc:T 'Sound'}" Width="520" SizeToContent="Height" MinWidth="400" MinHeight="320"
+               ShowInTaskbar="False" WindowStartupLocation="CenterOwner" DragDrop.AllowDrop="True">
+    <Grid RowDefinitions="*,Auto">
+        <ScrollViewer x:Name="FormScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="20,16,20,8">
+                <TextBlock Text="{loc:T 'Sound file'}" Classes="label" />
+                <Border Margin="0,6,0,0" Padding="12,10" CornerRadius="8" Background="{StaticResource Bg1}"
+                        BorderBrush="{StaticResource Border}" BorderThickness="1">
+                    <DockPanel>
+                        <Button x:Name="ChooseButton" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center"
+                                Content="{loc:T 'Choose file…'}" Click="ChooseButton_Click" />
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="FileText" TextTrimming="CharacterEllipsis" />
+                            <TextBlock x:Name="DropHint" Text="{loc:T 'You can also drag a sound or video file onto this window.'}"
+                                       Classes="dim small" Margin="0,2,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+                <TextBlock x:Name="StatusText" IsVisible="False" TextWrapping="Wrap" Margin="0,8,0,0" />
+
+                <TextBlock Text="{loc:T 'Name'}" Classes="label" Margin="0,16,0,0" />
+                <TextBox x:Name="NameBox" MaxLength="30" Margin="0,6,0,0" TextChanged="NameBox_TextChanged" />
+
+                <TextBlock Text="{loc:T 'Emoji'}" Classes="label" Margin="0,14,0,0" />
+                <Border Background="{StaticResource Bg1}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8"
+                        Padding="8,8,4,4" Margin="0,6,0,0">
+                    <ContentControl x:Name="EmojiHost" />
+                </Border>
+
+                <TextBlock Text="{loc:T 'Volume'}" Classes="label" Margin="0,14,0,0" />
+                <DockPanel Margin="0,4,0,0">
+                    <TextBlock x:Name="VolumeText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center" />
+                    <Slider x:Name="VolumeSlider" Minimum="0" Maximum="1" SmallChange="0.02" LargeChange="0.1" VerticalAlignment="Center"
+                            ValueChanged="VolumeSlider_ValueChanged" />
+                </DockPanel>
+
+                <WrapPanel Margin="0,16,0,0">
+                    <Button x:Name="PreviewButton" Margin="0,0,8,8" Click="PreviewButton_Click" IsEnabled="False"
+                            ToolTip.Tip="{loc:T 'Hear it on your headphones only'}" />
+                    <Button x:Name="EditAudioButton" Margin="0,0,8,8" Click="EditAudioButton_Click" IsEnabled="False"
+                            ToolTip.Tip="{loc:T 'Cut it, speed it up, change the pitch, add effects…'}" />
+                    <Button x:Name="HotkeyButton" Margin="0,0,8,8" Click="HotkeyButton_Click" />
+                </WrapPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <DockPanel Grid.Row="1" Margin="20,8,20,16" LastChildFill="False">
+            <Button x:Name="CancelButton" DockPanel.Dock="Right" Margin="8,0,0,0" MinWidth="80" Content="{loc:T 'Cancel'}"
+                    IsCancel="True" Click="CancelClick" />
+            <Button x:Name="SaveButton" DockPanel.Dock="Right" MinWidth="80" Theme="{StaticResource AccentButton}" Content="{loc:T 'Save'}"
+                    Click="SaveButton_Click" />
+        </DockPanel>
+    </Grid>
+</loc:AppWindow>

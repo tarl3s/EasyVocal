@@ -1,0 +1,106 @@
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.MainWindow"
+               Title="EasyVocal" Width="560" Height="620" MinWidth="440" MinHeight="400"
+               WindowStartupLocation="CenterScreen" DragDrop.AllowDrop="True">
+    <Grid Margin="16,14,16,12" RowDefinitions="Auto,Auto,Auto,*">
+
+        <!-- Top bar: name, ON/OFF, mic level, mute, hear me, settings -->
+        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+            <TextBlock Text="EasyVocal" FontSize="18" FontWeight="Bold" Foreground="{StaticResource Accent}"
+                       VerticalAlignment="Center" Margin="0,0,12,0" />
+            <ToggleButton x:Name="OnOffButton" Grid.Column="1" MinWidth="76" Padding="14,6" FontWeight="SemiBold"
+                          Click="OnOffButton_Click" ToolTip.Tip="{loc:T 'Turn the voice filter on or off. Off sends your normal voice.'}" />
+            <Border x:Name="MeterTrack" Grid.Column="2" Height="8" CornerRadius="4" Background="{StaticResource Bg2}"
+                    Margin="12,0" VerticalAlignment="Center" ToolTip.Tip="{loc:T 'Your microphone level'}">
+                <Border x:Name="MeterBar" HorizontalAlignment="Left" Width="0" CornerRadius="4" Background="{StaticResource MeterFill}" />
+            </Border>
+            <ToggleButton x:Name="MuteButton" Grid.Column="3" Theme="{StaticResource DangerToggle}" Padding="10,6"
+                          Margin="0,0,6,0" Click="MuteButton_Click" ToolTip.Tip="{loc:T 'Mute your microphone'}">
+                <TextBlock Text="🔇" Classes="emoji" />
+            </ToggleButton>
+            <ToggleButton x:Name="HearMeButton" Grid.Column="4" Padding="12,6" Margin="0,0,6,0" Click="HearMeButton_Click"
+                          ToolTip.Tip="{loc:T 'Hear your own voice in your headphones, to try the voices'}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="🎧" Classes="emoji" Margin="0,0,6,0" />
+                    <TextBlock Text="{loc:T 'Hear me'}" />
+                </StackPanel>
+            </ToggleButton>
+            <Button x:Name="SettingsButton" Grid.Column="5" Theme="{StaticResource FlatButton}" FontSize="18" Padding="6,2"
+                    Click="SettingsButton_Click" ToolTip.Tip="{loc:T 'Settings'}">
+                <TextBlock Text="⚙" Classes="emoji" />
+            </Button>
+        </Grid>
+
+        <!-- Shown while the audio isn't running -->
+        <Border x:Name="Banner" Grid.Row="1" IsVisible="False" Margin="0,12,0,0" Padding="12,8" CornerRadius="8"
+                Background="{StaticResource Bg2}" BorderBrush="{StaticResource Danger}" BorderThickness="1">
+            <DockPanel>
+                <Button x:Name="FixButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
+                        VerticalAlignment="Center" Content="{loc:T 'Fix'}" Click="FixButton_Click" />
+                <Button x:Name="MicButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
+                        VerticalAlignment="Center" Content="{loc:T 'Choose microphone'}" Click="MicButton_Click" />
+                <TextBlock x:Name="BannerText" TextWrapping="Wrap" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+        <TextBlock x:Name="HotkeyNote" Grid.Row="2" IsVisible="False" Margin="0,8,0,0" TextWrapping="Wrap"
+                   Foreground="{StaticResource Warn}" />
+
+        <TabControl x:Name="Tabs" Grid.Row="3" Margin="0,14,0,0">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🎭" Classes="emoji" Margin="0,0,6,0" />
+                        <TextBlock Text="{loc:T 'Voices'}" />
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid RowDefinitions="*,Auto" TextElement.Foreground="{StaticResource Text}" TextElement.FontWeight="Normal"
+                      TextElement.FontSize="13">
+                    <ScrollViewer x:Name="VoiceScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <WrapPanel x:Name="VoicePanel" />
+                    </ScrollViewer>
+                    <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False">
+                        <CheckBox x:Name="ShowHiddenVoices" DockPanel.Dock="Right" Content="{loc:T 'Show hidden items'}"
+                                  Click="ShowHidden_Click" />
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🔊" Classes="emoji" Margin="0,0,6,0" />
+                        <TextBlock Text="{loc:T 'Sounds'}" />
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid RowDefinitions="*,Auto" TextElement.Foreground="{StaticResource Text}" TextElement.FontWeight="Normal"
+                      TextElement.FontSize="13">
+                    <ScrollViewer x:Name="SoundScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <WrapPanel x:Name="SoundPanel" />
+                    </ScrollViewer>
+                    <DockPanel Grid.Row="1" Margin="0,8,0,0">
+                        <CheckBox x:Name="ShowHiddenSounds" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
+                                  Content="{loc:T 'Show hidden items'}" Click="ShowHidden_Click" />
+                        <!-- On a narrow window the switch goes under Stop all instead of over Show hidden items. -->
+                        <WrapPanel VerticalAlignment="Center">
+                            <Button x:Name="StopAllButton" Margin="0,0,12,0" Click="StopAllButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="■" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:T 'Stop all sounds'}" />
+                                </StackPanel>
+                            </Button>
+                            <CheckBox x:Name="SoundsUseVoiceBox" Margin="0,4" VerticalAlignment="Center" Click="SoundsUseVoice_Click"
+                                      ToolTip.Tip="{loc:T 'Your sounds go through the voice filter too: switch voices while a sound plays and it changes.'}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="🎭" Classes="emoji" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:T 'Sounds use the voice'}" />
+                                </StackPanel>
+                            </CheckBox>
+                        </WrapPanel>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</loc:AppWindow>

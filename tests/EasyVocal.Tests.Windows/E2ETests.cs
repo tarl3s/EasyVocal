@@ -54,15 +54,15 @@ public class E2ETests
         }
     }
 
-    /// <summary>src/EasyVocal/bin/&lt;same configuration&gt;/&lt;same framework&gt;/EasyVocal.exe, found from this test's folder.</summary>
+    /// <summary>src/EasyVocal/bin/&lt;same configuration&gt;/net8.0/EasyVocal.exe (the app is portable net8.0), found from this test's folder.</summary>
     private static string? FindAppExe()
     {
         var tfmDir = new DirectoryInfo(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
-        string tfm = tfmDir.Name, config = tfmDir.Parent?.Name ?? "Debug";
+        string config = tfmDir.Parent?.Name ?? "Debug";
         for (var dir = tfmDir; dir != null; dir = dir.Parent)
         {
             if (!File.Exists(Path.Combine(dir.FullName, "EasyVocal.sln"))) continue;
-            var exe = Path.Combine(dir.FullName, "src", "EasyVocal", "bin", config, tfm, "EasyVocal.exe");
+            var exe = Path.Combine(dir.FullName, "src", "EasyVocal", "bin", config, "net8.0", "EasyVocal.exe");
             return File.Exists(exe) ? exe : null;
         }
         return null;

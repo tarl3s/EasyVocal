@@ -141,7 +141,7 @@ public class LocalizerTests
             {
                 foreach (Match m in CodeLiteral.Matches(File.ReadAllText(file))) yield return Unescape(m.Groups[1].Value);
             }
-            else if (ext == ".xaml")
+            else if (ext is ".axaml" or ".xaml")
             {
                 foreach (Match m in XamlLiteral.Matches(File.ReadAllText(file)))
                 {
@@ -160,8 +160,8 @@ public class LocalizerTests
             if (Path.GetFileName(file) == "SoundLoader.cs")
                 foreach (Match m in MessageConst.Matches(code)) yield return Unescape(m.Groups[1].Value);
         }
-        // Sentences written in Core or a platform project and shown through L.T (the virtual mic's setup texts…).
-        foreach (var project in Directory.EnumerateDirectories(Path.Combine(root, "src"), "EasyVocal.*"))
+        // Sentences written in Core, a platform project or the app's test platform and shown through L.T (the virtual mic's setup texts…).
+        foreach (var project in Directory.EnumerateDirectories(Path.Combine(root, "src"), "EasyVocal*"))
             foreach (var file in Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories))
             {
                 if (file.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)) continue;

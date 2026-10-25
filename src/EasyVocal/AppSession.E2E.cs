@@ -1,10 +1,8 @@
 using System.Diagnostics;
 using System.IO;
-using System.Reflection;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Threading;
+using Avalonia.Controls;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
@@ -18,22 +16,23 @@ namespace EasyVocal;
 /// (<see cref="TestAudioDevices"/>): a microphone that plays a known vowel in real time, and headphones and VB-CABLE
 /// that record what they get. It clicks the real buttons and cards, opens the real dialogs, and checks the recorded
 /// audio. VB-CABLE is missing at first and "installed" during the run. Its last step quits the normal way, starts a
-/// second run (<c>--e2e-relaunch</c>) on the same folder that checks everything came back, and waits for it.
+/// second run (<c>--e2e-relaunch</c>) on the same folder that checks everything came back, and waits for it (in the
+/// headless UI tests that second run is a new session in the same process).
 /// Each step is logged PASS/FAIL to <c>%TEMP%\easyvocal_e2e.log</c> and <c>&lt;data&gt;\e2e.log</c>; exit code 0 only
 /// when every step of both runs passed.
 /// </summary>
-public partial class App
+internal sealed partial class AppSession
 {
-    private const int Sr = AudioFormat.SampleRate;
     private static readonly string E2ETempLog = Path.Combine(Path.GetTempPath(), "easyvocal_e2e.log");
     private static readonly int LimiterLag = new Limiter(Sr).LatencySamples;
-    private static readonly MethodInfo ButtonOnClick =
-        typeof(ButtonBase).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     private TestAudioDevices? e2eDevices;
     private string e2eData = "";
     private int e2ePassed, e2eFailed;
     private Timer? e2eWatchdog;
+
+    /// <summary>Steps that passed / failed so far (the headless host reports them).</summary>
+    internal (int Passed, int Failed) E2EResult => (e2ePassed, e2eFailed);
 
     /// <summary>A failed check: the step stops and is logged FAIL with this text.</summary>
     private sealed class E2EFailure(string message) : Exception(message);
@@ -46,15 +45,19 @@ public partial class App
             TryDeleteFile(E2ETempLog);
             TryDeleteFile(Path.Combine(dataFolder, "e2e.log"));
         }
-        // Never hang: a dialog that wouldn't close must not keep the test (and dotnet test) waiting forever.
-        int limit = relaunch ? 60 : 110;
-        e2eWatchdog = new Timer(_ =>
+        // Never hang: a dialog that wouldn't close must not keep the test (and dotnet test) waiting forever. A test
+        // host has its own timeout (and exiting would take it down too).
+        int limit = relaunch ? 60 : 130;
+        if (!options.Hosted)
         {
-            E2ELog($"FAIL watchdog: the {(relaunch ? "relaunched " : "")}e2e run took longer than {limit} s");
-            Environment.Exit(1);
-        }, null, TimeSpan.FromSeconds(limit), Timeout.InfiniteTimeSpan);
+            e2eWatchdog = new Timer(_ =>
+            {
+                E2ELog($"FAIL watchdog: the {(relaunch ? "relaunched " : "")}e2e run took longer than {limit} s");
+                Environment.Exit(1);
+            }, null, TimeSpan.FromSeconds(limit), Timeout.InfiniteTimeSpan);
+        }
 
-        Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, async () =>
+        Dispatcher.UIThread.Post(async () =>
         {
             try
             {
@@ -68,16 +71,17 @@ public partial class App
                 E2ELog("FAIL the e2e run stopped: " + ex);
                 Environment.ExitCode = 1;
                 e2eWatchdog?.Dispose();
-                if (!quitting) Quit(ask: false);
+                if (!quitting) await QuitAsync(ask: false);
+                else shutdown(1);
             }
-        });
+        }, DispatcherPriority.Background);
     }
 
     // ---------- the first run ----------
 
     private async Task E2EFirstRun()
     {
-        E2ELog("EasyVocal e2e test (language " + L.Language + ", data " + e2eData + ")");
+        E2ELog("EasyVocal e2e test (language " + L.Language + ", data " + e2eData + (options.Hosted ? ", headless" : "") + ")");
         var (c, main, d) = await E2EStarted(EngineState.NoVirtualCable);
         double normalShare = 1; // measured in step 1 (the clean vowel is all harmonics)
         string? hotkey = null;
@@ -86,18 +90,18 @@ public partial class App
         await Step("9  no VB-CABLE: monitor-only, banner, Hear me preview, sounds refused, headphones back, cable attaches", async () =>
         {
             Expect(c.State == EngineState.NoVirtualCable && c.MonitorOnly, "the session runs without the virtual microphone (monitor only)");
-            Expect(main.Banner.Visibility == Visibility.Visible
+            Expect(main.Banner.IsVisible
                    && main.BannerText.Text == L.T("Virtual microphone not found. You can still try the voices with 🎧 Hear me.")
-                   && main.FixButton.Visibility == Visibility.Visible, "the banner says the virtual microphone is missing and offers Fix");
+                   && main.FixButton.IsVisible, "the banner says the virtual microphone is missing and offers Fix");
             Expect(d.Latest(TestAudioDevices.CableId) == null, "nothing was opened as the call device");
             // The banner's Fix: setup lists, watches and opens the same devices as the engine (its level bar listens to the test mic).
             await Modal(w => w is SetupWindow, () => Click(main.FixButton), async w =>
             {
                 var setup = (SetupWindow)w;
-                Expect(setup.CableMissingPanel.Visibility == Visibility.Visible, "setup sees that VB-CABLE is missing");
+                Expect(setup.CableMissingPanel.IsVisible, "setup sees that VB-CABLE is missing");
                 Expect(HasDevice(setup.MicBox, TestAudioDevices.MicId), "setup lists the test microphone");
-                await WaitUntil(() => setup.MeterBar.Width > 0.3 * setup.MeterTrack.ActualWidth, 3000, "setup's level bar to move with the voice");
-                Note(Inv($"setup's level bar {setup.MeterBar.Width:0}/{setup.MeterTrack.ActualWidth:0} px on the test microphone"));
+                await WaitUntil(() => setup.MeterBar.Width > 0.3 * setup.MeterTrack.Bounds.Width, 3000, "setup's level bar to move with the voice");
+                Note(Inv($"setup's level bar {setup.MeterBar.Width:0}/{setup.MeterTrack.Bounds.Width:0} px on the test microphone"));
             }, "the setup window");
             Expect(c.State == EngineState.NoVirtualCable && c.MonitorOnly, "closing setup leaves the session as it was");
             await WaitUntil(() => c.IsSoundLoaded("airhorn"), 8000, "the starter sounds to load");
@@ -121,7 +125,7 @@ public partial class App
             var mic = d.Mic;
             d.SetCable(true); // "installed"
             await WaitUntil(() => c.State == EngineState.Running, 8000, "VB-CABLE to be attached");
-            await WaitUntil(() => main.Banner.Visibility != Visibility.Visible, 3000, "the banner to go away");
+            await WaitUntil(() => !main.Banner.IsVisible, 3000, "the banner to go away");
             Expect(ReferenceEquals(d.Mic, mic), "attaching the cable kept the microphone running");
             await ExpectCopy(Call, "the call gets the voice once VB-CABLE is there");
             Click(main.HearMeButton);
@@ -135,9 +139,9 @@ public partial class App
             normalShare = E2ESignal.HarmonicShare(got);
             Note(Inv($"call RMS {E2ESignal.Rms(got):0.000} (mic {E2ESignal.Rms(sent):0.000}), on the 150 Hz harmonics {normalShare:P0}"));
             await WaitUntil(() => c.InputLevel > 0.35f, 3000, "the input level to show the voice");
-            await WaitUntil(() => main.MeterBar.Width > 0.5 * main.MeterTrack.ActualWidth, 3000, "the level meter to fill");
+            await WaitUntil(() => main.MeterBar.Width > 0.5 * main.MeterTrack.Bounds.Width, 3000, "the level meter to fill");
             await WaitUntil(() => c.InputLevel < 0.01f, 3000, "the input level to fall in the pause");
-            Note(Inv($"meter {main.MeterBar.Width:0}/{main.MeterTrack.ActualWidth:0} px while speaking"));
+            Note(Inv($"meter {main.MeterBar.Width:0}/{main.MeterTrack.Bounds.Width:0} px while speaking"));
             await Modal(w => w is SettingsWindow, () => Click(main.SettingsButton), w =>
             {
                 var settings = (SettingsWindow)w;
@@ -281,13 +285,13 @@ public partial class App
                     dialog.Simulate(mods, vk);
                     if (!dialog.SaveButton.IsEnabled) continue;
                     Click(dialog.SaveButton);
-                    if (!dialog.IsVisible || dialog.DialogResult == true) return Task.CompletedTask;
+                    if (!dialog.IsVisible || dialog.Accepted) return Task.CompletedTask;
                     Note("taken by another app: " + dialog.KeyText.Text);
                 }
                 throw new E2EFailure("no free hotkey could be saved");
             }, "the hotkey dialog");
             hotkey = chipmunk.Hotkey;
-            Note("hotkey: " + hotkey);
+            Note("hotkey: " + hotkey + (options.Hosted ? " (in-memory hotkeys)" : " (registered with the system)"));
             Expect(hotkey != null && !c.RefusedActions.Contains("voice:chipmunk") && c.RegisteredHotkeyCount == 1, "the hotkey is saved and registered");
             Expect(HasText(main.VoiceCard("chipmunk"), hotkey!), "the card shows its hotkey");
             Expect(c.ActiveVoice.Id == "normal", "Normal is still the active voice");
@@ -363,12 +367,12 @@ public partial class App
             Expect(at1k > 0.25, "the custom sound is heard on the call");
             ClickSound(main, tone.Id);
             Expect(!c.IsPlaying(tone.Id), "a second click stops it");
-            await Modal(w => w.GetType() == typeof(Window) && ReferenceEquals(w.Owner, main), () => ClickMenu(main.SoundCard(tone.Id), L.T("Delete…")), w =>
+            await Modal(w => w is AskDialog && ReferenceEquals(w.Owner, main), () => ClickMenu(main.SoundCard(tone.Id), L.T("Delete…")), w =>
             {
                 Click(FindButton(w, L.T("Delete")));
                 return Task.CompletedTask;
             }, "the delete question");
-            Expect(c.Settings.Sounds.All(s => s.Id != tone.Id), "the sound is removed");
+            await WaitUntil(() => c.Settings.Sounds.All(s => s.Id != tone.Id), 2000, "the sound to be removed");
             Expect(!File.Exists(file), "its file is deleted from the Sounds folder");
             Expect(main.SoundCard(tone.Id) == null, "its card is gone");
         });
@@ -381,15 +385,15 @@ public partial class App
             var mic = d.Mic;
             d.SetMic(false);
             await WaitUntil(() => c.State == EngineState.MicLost, 3000, "the engine to report the lost microphone");
-            await WaitUntil(() => main.Banner.Visibility == Visibility.Visible && main.BannerText.Text == L.T("Microphone disconnected — reconnecting…"), 2000,
+            await WaitUntil(() => main.Banner.IsVisible && main.BannerText.Text == L.T("Microphone disconnected — reconnecting…"), 2000,
                 "the 'Microphone disconnected' banner");
-            Expect(main.MicButton.Visibility == Visibility.Visible, "the banner offers to choose a microphone");
+            Expect(main.MicButton.IsVisible, "the banner offers to choose a microphone");
             Expect(!c.IsPlaying("airhorn"), "the sounds were stopped");
             await Task.Delay(2500); // a recovery attempt or two while it is unplugged
             Expect(c.State == EngineState.MicLost, "still lost while the microphone is unplugged");
             d.SetMic(true);
             await WaitUntil(() => c.State == EngineState.Running, 8000, "the audio to run again");
-            await WaitUntil(() => main.Banner.Visibility != Visibility.Visible, 3000, "the banner to go away");
+            await WaitUntil(() => !main.Banner.IsVisible, 3000, "the banner to go away");
             Expect(!ReferenceEquals(d.Mic, mic), "the microphone was opened again");
             await ExpectCopy(Call, "the call gets the voice again");
         });
@@ -400,26 +404,27 @@ public partial class App
             string SoundInCable() => L.T("Your PC's sound is going into the virtual cable, so you can't hear it.");
             int calls = d.SetDefaultCalls.Length;
 
-            // Windows' default playback device and microphone become the cable (nothing EasyVocal did).
+            // The system's default playback device and microphone become the cable (nothing EasyVocal did).
             d.SetWindowsDefaults(TestAudioDevices.CableId, TestAudioDevices.CableMicId);
-            await WaitUntil(() => c.SoundGoesToCable && main.Banner.Visibility == Visibility.Visible && main.BannerText.Text == SoundInCable(), 4000,
+            await WaitUntil(() => c.SoundGoesToCable && main.Banner.IsVisible && main.BannerText.Text == SoundInCable(), 4000,
                 "the 'sound is going into the virtual cable' banner");
-            Expect(main.FixButton.Visibility == Visibility.Visible, "the banner offers Fix");
+            Expect(main.FixButton.IsVisible, "the banner offers Fix");
             Expect(d.SetDefaultCalls.Length == calls, "nothing is changed before Fix is pressed");
             await Task.Delay(700); // past the device-change settle: a restart would have happened by now
             Expect(c.State == EngineState.Running && c.MonitorInUse == TestAudioDevices.HeadphonesId,
-                "the headphones are still the real ones while Windows' default is the cable");
+                "the headphones are still the real ones while the system's default is the cable");
             Click(main.HearMeButton);
             await ExpectCopy(Phones, "Hear me still plays on the real headphones");
             Click(main.HearMeButton);
 
             Click(main.FixButton);
+            await WaitUntil(() => d.SetDefaultCalls.Length >= calls + 2, 2000, "Fix to set the defaults");
             var fixedTo = d.SetDefaultCalls.Skip(calls).ToArray();
             Note("Fix set the defaults to: " + string.Join(", ", fixedTo));
             Expect(fixedTo.Contains(TestAudioDevices.HeadphonesId) && fixedTo.Contains(TestAudioDevices.MicId) && fixedTo.Length == 2,
-                "Fix makes the real headphones and the real microphone Windows' defaults");
+                "Fix makes the real headphones and the real microphone the system's defaults");
             await WaitUntil(() => d.DefaultOutput == TestAudioDevices.HeadphonesId && d.DefaultInput == TestAudioDevices.MicId
-                                  && !c.SoundGoesToCable && main.Banner.Visibility != Visibility.Visible, 3000, "the banner to go away after Fix");
+                                  && !c.SoundGoesToCable && !main.Banner.IsVisible, 3000, "the banner to go away after Fix");
 
             // The install: setup remembers the defaults, the (fake) installer adds the cable and takes them, EasyVocal puts them back.
             d.SetCable(false);
@@ -429,7 +434,7 @@ public partial class App
             {
                 var setup = (SetupWindow)w;
                 Click(setup.InstallButton);
-                await WaitUntil(() => setup.CableReadyPanel.Visibility == Visibility.Visible, 5000, "setup to see the installed cable");
+                await WaitUntil(() => setup.CableReadyPanel.IsVisible, 5000, "setup to see the installed cable");
                 await WaitUntil(() => d.SetDefaultCalls.Length >= calls + 2 && d.DefaultOutput == TestAudioDevices.HeadphonesId && d.DefaultInput == TestAudioDevices.MicId, 5000,
                     "the (fake) installer to take the defaults and EasyVocal to put back the ones the person had");
                 var restored = d.SetDefaultCalls.Skip(calls).ToArray();
@@ -439,7 +444,7 @@ public partial class App
                 Expect(c.Settings.PreCableOutputId == TestAudioDevices.HeadphonesId && c.Settings.PreCableInputId == TestAudioDevices.MicId,
                     "the defaults from before the install are remembered in the settings (for a cable that shows up after a restart)");
             }, "the setup window (install)");
-            await WaitUntil(() => c.State == EngineState.Running && main.Banner.Visibility != Visibility.Visible, 8000, "the audio to run with the new cable");
+            await WaitUntil(() => c.State == EngineState.Running && !main.Banner.IsVisible, 8000, "the audio to run with the new cable");
             await ExpectCopy(Call, "the call gets the voice through the installed cable");
         });
 
@@ -454,33 +459,40 @@ public partial class App
             File.WriteAllLines(Path.Combine(e2eData, "e2e-expect.txt"), new[] { "voice=" + myVoice, "sound=" + keep.Id, "hotkey=" + hotkey });
         });
 
-        E2EQuitAndRelaunch();
+        await E2EQuitAndRelaunch();
     }
 
     /// <summary>
     /// Quits through the tray's Quit (the question is answered with "Don't ask again" ticked), then runs the second
-    /// process on the same folder and waits for it. Synchronous on purpose: once the app shuts down, nothing awaited
-    /// would come back.
+    /// run on the same folder and waits for it, then ends the app with both runs' result.
     /// </summary>
-    private void E2EQuitAndRelaunch()
+    private async Task E2EQuitAndRelaunch()
     {
         bool answered = false;
-        var watcher = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(40) };
+        var watcher = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
         watcher.Tick += (_, _) =>
         {
-            var ask = Windows.OfType<Window>().FirstOrDefault(w => w.GetType() == typeof(Window) && w.IsLoaded && w.IsVisible);
+            var ask = AppWindow.OpenWindows.OfType<AskDialog>().FirstOrDefault(w => w.IsVisible);
             if (ask == null) return;
             watcher.Stop();
-            Click(FindChild<CheckBox>(ask, _ => true) ?? throw new E2EFailure("the quit question has no 'Don't ask again'"));
-            Click(FindButton(ask, L.T("Quit")));
-            answered = true;
+            try
+            {
+                Click(ask.CheckBox ?? throw new E2EFailure("the quit question has no 'Don't ask again'"));
+                var quit = FindButton(ask, L.T("Quit"));
+                answered = true; // before the click: closing the question may run the rest of the quit right away
+                Click(quit);
+            }
+            catch (Exception ex)
+            {
+                E2ELog("FAIL answering the quit question: " + ex.Message);
+                ask.Close();
+            }
         };
         watcher.Start();
         bool quitOk = false;
         try
         {
-            Quit(ask: true); // what the tray's Quit does
-            quitOk = answered && quitting && controller == null;
+            quitOk = await QuitAsync(ask: true, end: false) && answered && quitting && controller == null; // what the tray's Quit does
         }
         catch (Exception ex)
         {
@@ -489,11 +501,12 @@ public partial class App
         watcher.Stop();
         Record11("11 quit the normal way: the question, 'Don't ask again', everything closed", quitOk);
 
-        int code = RunRelaunch();
+        int code = await RunRelaunchAsync();
         Record11("11 relaunch on the same folder: settings, custom voice and sound, hotkeys back (exit code " + code + ")", code == 0);
         E2ELog(e2eFailed == 0 ? $"E2E test passed: {e2ePassed} steps (the relaunched run included)" : $"E2E test FAILED: {e2eFailed} of {e2ePassed + e2eFailed} steps");
         Environment.ExitCode = e2eFailed == 0 ? 0 : 1;
         e2eWatchdog?.Dispose();
+        shutdown(Environment.ExitCode);
     }
 
     private void Record11(string name, bool ok)
@@ -502,20 +515,30 @@ public partial class App
         E2ELog((ok ? "PASS " : "FAIL ") + name);
     }
 
-    private int RunRelaunch()
+    private async Task<int> RunRelaunchAsync()
     {
         try
         {
+            if (options.RelaunchHosted is { } hosted)
+                return await hosted(new SessionOptions(AppArgs.Parse(new[] { "--data", e2eData, "--e2e-relaunch" }), e2eData) { Hosted = true });
             var exe = Environment.ProcessPath ?? throw new InvalidOperationException("no process path");
             var info = new ProcessStartInfo(exe) { UseShellExecute = false };
             info.ArgumentList.Add("--data");
             info.ArgumentList.Add(e2eData);
             info.ArgumentList.Add("--e2e-relaunch");
             using var p = Process.Start(info)!;
-            if (p.WaitForExit(70_000)) return p.ExitCode;
-            p.Kill(entireProcessTree: true);
-            E2ELog("FAIL the relaunched run did not finish in 70 s");
-            return -1;
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(70));
+            try
+            {
+                await p.WaitForExitAsync(limit.Token);
+                return p.ExitCode;
+            }
+            catch (OperationCanceledException)
+            {
+                p.Kill(entireProcessTree: true);
+                E2ELog("FAIL the relaunched run did not finish in 70 s");
+                return -1;
+            }
         }
         catch (Exception ex)
         {
@@ -570,7 +593,7 @@ public partial class App
         E2ELog(e2eFailed == 0 ? $"Relaunch passed: {e2ePassed} step(s)" : $"Relaunch FAILED: {e2eFailed} step(s)");
         Environment.ExitCode = e2eFailed == 0 ? 0 : 1;
         e2eWatchdog?.Dispose();
-        Quit(ask: false); // the question was checked in the first run ("Don't ask again" is checked above)
+        await QuitAsync(ask: false); // the question was checked in the first run ("Don't ask again" is checked above)
     }
 
     // ---------- steps, checks, log ----------
@@ -579,7 +602,7 @@ public partial class App
     private async Task<(AppController, MainWindow, TestAudioDevices)> E2EStarted(EngineState state)
     {
         var d = e2eDevices ?? throw new E2EFailure("no test devices");
-        await WaitUntil(() => controller != null && window is { IsLoaded: true } && controller.State == state, 10000, "the audio to start (" + state + ")");
+        await WaitUntil(() => controller != null && window is { IsVisible: true } && controller.State == state, 10000, "the audio to start (" + state + ")");
         return (controller!, window!, d);
     }
 
@@ -601,6 +624,7 @@ public partial class App
         {
             e2eFailed++;
             E2ELog($"FAIL {name}: {(ex is E2EFailure ? ex.Message : ex.ToString())}");
+            AppWindow.CloseAllExcept(window); // a dialog the step left open would block the next one
         }
     }
 
@@ -610,7 +634,7 @@ public partial class App
         if (!d.MicPresent) d.SetMic(true);
         if (!d.HeadphonesPresent) d.SetHeadphones(true);
         if (!d.CablePresent) d.SetCable(true);
-        await WaitUntil(() => controller is { State: EngineState.Running, MonitorLost: false } && window!.Banner.Visibility != Visibility.Visible,
+        await WaitUntil(() => controller is { State: EngineState.Running, MonitorLost: false } && !window!.Banner.IsVisible,
             10000, "the audio to run with every device plugged in");
     }
 
@@ -653,37 +677,43 @@ public partial class App
     // ---------- clicking like a person ----------
 
     /// <summary>The same as a mouse click: <c>OnClick</c> (a toggle button flips first, then Click runs).</summary>
-    private static void Click(ButtonBase? button)
+    private static void Click(Button? button)
     {
         Expect(button != null, "the button exists");
-        Expect(button!.IsEnabled, "the button '" + button.Content + "' is enabled");
-        ButtonOnClick.Invoke(button, null);
+        Expect(button!.IsEffectivelyEnabled, "the button '" + button.Content + "' is enabled");
+        Ui.Click(button);
+    }
+
+    /// <summary>On screen: attached to a window and not hidden by itself or a parent.</summary>
+    private static bool Shown(Control? c) => c != null && c.IsEffectivelyVisible && c.GetVisualRoot() != null;
+
+    private static void ShowTab(MainWindow main, int index)
+    {
+        main.Tabs.SelectedIndex = index;
+        main.UpdateLayout();
     }
 
     private static void ClickVoice(MainWindow main, string id)
     {
-        main.Tabs.SelectedIndex = 0;
-        main.UpdateLayout();
+        ShowTab(main, 0);
         var card = main.VoiceCard(id);
-        Expect(card is { IsVisible: true }, "the voice card " + id + " is on screen");
+        Expect(Shown(card), "the voice card " + id + " is on screen");
         Click(card);
     }
 
     private static void ClickSound(MainWindow main, string id)
     {
-        main.Tabs.SelectedIndex = 1;
-        main.UpdateLayout();
+        ShowTab(main, 1);
         var card = main.SoundCard(id);
-        Expect(card is { IsVisible: true }, "the sound card " + id + " is on screen");
+        Expect(Shown(card), "the sound card " + id + " is on screen");
         Click(card);
     }
 
     /// <summary>The Sounds tab's "🎭 Sounds use the voice" switch, clicked where a person finds it.</summary>
     private static void ClickSoundsUseVoice(MainWindow main)
     {
-        main.Tabs.SelectedIndex = 1;
-        main.UpdateLayout();
-        Expect(main.SoundsUseVoiceBox.IsVisible, "the switch is on the Sounds tab");
+        ShowTab(main, 1);
+        Expect(Shown(main.SoundsUseVoiceBox), "the switch is on the Sounds tab");
         Click(main.SoundsUseVoiceBox);
     }
 
@@ -697,76 +727,50 @@ public partial class App
     {
         var item = card?.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault(m => m.Header as string == header);
         Expect(item != null, "the card menu has '" + header + "'");
-        item!.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, item));
+        Ui.Click(item!);
     }
 
     /// <summary>
-    /// Opens a dialog with <paramref name="open"/> (which may block in ShowDialog), runs <paramref name="whileOpen"/>
-    /// once it is on screen, closes it if it is still open, and rethrows what failed inside.
+    /// Opens a dialog with <paramref name="open"/>, runs <paramref name="whileOpen"/> once it is on screen, closes it
+    /// if it is still open, and rethrows what failed inside.
     /// </summary>
-    private async Task Modal(Func<Window, bool> match, Action open, Func<Window, Task> whileOpen, string what)
+    private static async Task Modal(Func<AppWindow, bool> match, Action open, Func<AppWindow, Task> whileOpen, string what)
     {
-        var done = new TaskCompletionSource<Exception?>();
-        var watcher = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(40) };
-        bool seen = false;
-        watcher.Tick += async (_, _) =>
+        var before = AppWindow.OpenWindows;
+        try { open(); }
+        catch (Exception ex) { throw new E2EFailure(what + " failed to open: " + ex.Message); }
+        AppWindow? w = null;
+        var watch = Stopwatch.StartNew();
+        while (w == null)
         {
-            if (seen) return;
-            var w = Windows.OfType<Window>().FirstOrDefault(x => !ReferenceEquals(x, window) && x.IsLoaded && x.IsVisible && match(x));
-            if (w == null) return;
-            seen = true;
-            watcher.Stop();
-            Exception? error = null;
-            try
-            {
-                await Task.Delay(300); // let it draw (and an editor load its file)
-                w.UpdateLayout();
-                await whileOpen(w);
-            }
-            catch (Exception ex) { error = ex; }
-            finally
-            {
-                if (w.IsVisible) w.Close();
-                done.TrySetResult(error);
-            }
-        };
-        watcher.Start();
+            if (watch.ElapsedMilliseconds > 15000) throw new E2EFailure(what + " never appeared");
+            await Task.Delay(40);
+            w = AppWindow.OpenWindows.FirstOrDefault(x => !before.Contains(x) && x.IsVisible && match(x));
+        }
         try
         {
-            open();
+            await Task.Delay(300); // let it draw (and an editor load its file)
+            w.UpdateLayout();
+            await whileOpen(w);
         }
-        catch (Exception ex)
+        catch (E2EFailure) { throw; }
+        catch (Exception ex) { throw new E2EFailure(what + ": " + ex); }
+        finally
         {
-            watcher.Stop();
-            throw new E2EFailure(what + " failed to open: " + ex.Message);
+            if (w.IsVisible) w.Close();
+            await Task.Delay(50); // the dialog's ShowAsync continues
         }
-        var first = await Task.WhenAny(done.Task, Task.Delay(15000));
-        watcher.Stop();
-        if (first != done.Task) throw new E2EFailure(what + " never appeared");
-        if (done.Task.Result is { } failure) throw failure as E2EFailure ?? new E2EFailure(what + ": " + failure);
     }
 
-    private static Button FindButton(DependencyObject root, string content) =>
-        FindChild<Button>(root, b => b.Content as string == content) ?? throw new E2EFailure("no '" + content + "' button");
+    private static Button FindButton(Window root, string content) =>
+        Ui.Find<Button>(root, b => b.Content as string == content) ?? throw new E2EFailure("no '" + content + "' button");
 
-    private static T? FindChild<T>(DependencyObject root, Func<T, bool> match) where T : DependencyObject
+    private static bool HasText(Control? root, string text) =>
+        root != null && Ui.Find<TextBlock>(root, t => t.Text == text) != null;
+
+    private static IReadOnlyList<Slider> Sliders(FilterEditorWindow editor)
     {
-        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
-        {
-            if (child is T t && match(t)) return t;
-            if (FindChild(child, match) is { } found) return found;
-        }
-        return null;
-    }
-
-    private static bool HasText(DependencyObject? root, string text) =>
-        root != null && FindChild<TextBlock>(root, t => t.Text == text) != null;
-
-    private static List<Slider> Sliders(FilterEditorWindow editor)
-    {
-        var list = new List<Slider>();
-        foreach (var child in editor.SliderPanel.Children)
-            if (child is Grid g) list.AddRange(g.Children.OfType<Slider>());
+        var list = editor.Sliders;
         Expect(list.Count == 9, "the filter editor has its nine sliders");
         return list;
     }
@@ -783,6 +787,7 @@ public partial class App
             Expect(editor.NameBox.Text == Path.GetFileNameWithoutExtension(fileName), "the name starts as the file's name");
             editor.NameBox.Text = name;
             Click(editor.SaveButton);
+            await WaitUntil(() => !editor.IsVisible, 5000, "the sound editor to save and close");
         }, "the sound editor");
         var sound = c.Settings.Sounds.FirstOrDefault(s => s.Name == name);
         Expect(sound is { BuiltIn: false }, "the sound '" + name + "' is added");
@@ -799,10 +804,9 @@ public partial class App
         if (c.HearMe) Click(main.HearMeButton);
         if (c.ActiveVoice.Id != AppController.NormalVoiceId) ClickVoice(main, AppController.NormalVoiceId);
         if (!c.FilterEnabled) Click(main.OnOffButton);
-        main.Tabs.SelectedIndex = 1;
-        main.UpdateLayout();
+        ShowTab(main, 1);
         Click(main.StopAllButton);
-        main.Tabs.SelectedIndex = 0;
+        ShowTab(main, 0);
         Expect(!c.MicMuted && !c.HearMe && c.FilterEnabled && c.ActiveVoice.Id == AppController.NormalVoiceId, "back to the starting point");
         await Task.Delay(100);
     }

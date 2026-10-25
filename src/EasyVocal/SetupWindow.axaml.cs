@@ -1,20 +1,22 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Documents;
-using System.Windows.Media;
-using System.Windows.Shapes;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Documents;
+using Path = Avalonia.Controls.Shapes.Path;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Threading;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
 
 /// <summary>
-/// First run (and the banner's "Fix" button): 1. the virtual microphone (VB-CABLE) with a one-click install,
+/// First run (and the banner's "Fix" button): 1. the virtual microphone (VB-CABLE on Windows) with a one-click install,
 /// 2. which real microphone to use, with a live level bar, 3. how to choose the virtual microphone in Discord,
 /// WhatsApp or any other app (drawn here, no screenshots), and "Start with Windows". "Done" marks the setup as done.
 /// </summary>
-public partial class SetupWindow : Window
+public partial class SetupWindow : AppWindow
 {
     /// <summary>What a call app must pick as its microphone (VB-CABLE's recording end on Windows).</summary>
     private string CallAppDevice => controller.Platform.VirtualMic.CallAppDeviceName;
@@ -34,22 +36,23 @@ public partial class SetupWindow : Window
     private double meterShown, progressValue;
     private bool loadingMics, installing, waiting, cableWasReady, closed;
 
-    /// <param name="cableProbe">Tells whether the virtual microphone is installed; null = look at the Windows devices (tests pass their own).</param>
+    /// <param name="cableProbe">Tells whether the virtual microphone is installed; null = look at the system's devices (tests pass their own).</param>
     public SetupWindow(AppController controller, Func<bool>? cableProbe = null)
     {
         this.controller = controller;
         this.cableProbe = cableProbe ?? (() => controller.Platform.VirtualMic.Find(controller.Devices.Outputs()) != null);
         InitializeComponent();
         CableExplanation.Text = L.T(MicTexts.Explanation);
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "setup", controller);
+        InstallButton.IsVisible = controller.Platform.VirtualMic.CanInstall;
+        Place("setup", controller);
 
         BuildGuides();
         StartBox.IsChecked = controller.Settings.SetupDone ? controller.Settings.StartWithWindows : true;
+        ProgressTrack.SizeChanged += (_, _) => SetProgress(progressValue);
 
-        meterTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(33) };
+        meterTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
         meterTimer.Tick += (_, _) => UpdateMeter();
-        waitTimer = new DispatcherTimer(DispatcherPriority.Normal, Dispatcher) { Interval = TimeSpan.FromSeconds(1) };
+        waitTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
         waitTimer.Tick += (_, _) => WaitTick();
 
         cableWasReady = this.cableProbe(); // already there when the window opened: no audio restart needed
@@ -60,22 +63,21 @@ public partial class SetupWindow : Window
     }
 
     /// <summary>Shows the window and waits for it. True when the person pressed Done.</summary>
-    public static bool Open(AppController controller, Window? owner)
+    public static async Task<bool> OpenAsync(AppController controller, Window? owner)
     {
         var window = new SetupWindow(controller);
-        if (owner is { IsVisible: true }) window.Owner = owner;
-        else window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        return window.ShowDialog() == true;
+        await window.ShowAsync(owner);
+        return window.Accepted;
     }
 
     // ---------- 1. virtual microphone ----------
 
-    /// <summary>Shows the ready tick or the Install button for what Windows has now.</summary>
+    /// <summary>Shows the ready tick or the Install button for what the system has now.</summary>
     private bool RefreshCable()
     {
         bool ready = cableProbe();
-        CableReadyPanel.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
-        CableMissingPanel.Visibility = ready ? Visibility.Collapsed : Visibility.Visible;
+        CableReadyPanel.IsVisible = ready;
+        CableMissingPanel.IsVisible = !ready;
         if (!ready) return false;
         waiting = false;
         waitTimer.Stop();
@@ -90,19 +92,17 @@ public partial class SetupWindow : Window
     internal void SetStatus(string text, bool problem)
     {
         CableStatus.Text = text;
-        CableStatus.Foreground = (Brush)FindResource(problem ? "Warn" : "Text");
-        CableStatus.Visibility = Visibility.Visible;
+        CableStatus.Foreground = Res.Brush(problem ? "Warn" : "Text");
+        CableStatus.IsVisible = true;
     }
 
     private void SetProgress(double value)
     {
         progressValue = Math.Clamp(value, 0, 1);
-        ProgressFill.Width = ProgressTrack.ActualWidth * progressValue;
+        ProgressFill.Width = ProgressTrack.Bounds.Width * progressValue;
     }
 
-    private void ProgressTrack_SizeChanged(object sender, SizeChangedEventArgs e) => SetProgress(progressValue);
-
-    private async void InstallButton_Click(object sender, RoutedEventArgs e)
+    private async void InstallButton_Click(object? sender, RoutedEventArgs e)
     {
         if (installing) return;
         installing = true;
@@ -110,11 +110,11 @@ public partial class SetupWindow : Window
         waitTimer.Stop();
         InstallButton.IsEnabled = false;
         DoneButton.IsEnabled = false; // finishing now would leave the installer running behind a closed window
-        ProgressTrack.Visibility = Visibility.Visible;
+        ProgressTrack.IsVisible = true;
         SetProgress(0);
         SetStatus(L.T(MicTexts.Downloading), false);
         cancelInstall = new CancellationTokenSource();
-        // VB-CABLE may make itself Windows' default playback device and microphone: what the person has now is put back.
+        // VB-CABLE may make itself the system's default playback device and microphone: what the person has now is put back.
         controller.RememberDefaultsBeforeCable();
         InstallResult result;
         try
@@ -134,7 +134,7 @@ public partial class SetupWindow : Window
         DoneButton.IsEnabled = true;
         if (result.Status != InstallStatus.Installed)
         {
-            ProgressTrack.Visibility = Visibility.Collapsed;
+            ProgressTrack.IsVisible = false;
             switch (result.Status)
             {
                 case InstallStatus.DeclinedPermission:
@@ -143,11 +143,11 @@ public partial class SetupWindow : Window
                 case InstallStatus.Cancelled:
                     break;
                 case InstallStatus.NotVerified:
-                    AppLog.Info("VB-CABLE installer not run: " + result.Detail);
+                    AppLog.Info("Virtual mic installer not run: " + result.Detail);
                     ShowNotVerifiedFallback();
                     break;
                 default:
-                    AppLog.Info("VB-CABLE install failed: " + result.Detail);
+                    AppLog.Info("Virtual mic install failed: " + result.Detail);
                     ShowOfficialPageFallback();
                     break;
             }
@@ -155,7 +155,7 @@ public partial class SetupWindow : Window
         }
 
         if (RefreshCable()) return;
-        // The installer closed but Windows may take a moment to list the new devices (or needs a restart).
+        // The installer closed but the system may take a moment to list the new devices (or needs a restart).
         waiting = true;
         waitUntil = DateTime.UtcNow + WaitForDevice;
         SetProgress(1);
@@ -165,6 +165,7 @@ public partial class SetupWindow : Window
 
     private void OnInstallProgress(double value)
     {
+        if (closed) return;
         SetProgress(value);
         if (value >= 1) SetStatus(L.T(MicTexts.InstallerPrompt), false);
     }
@@ -176,7 +177,7 @@ public partial class SetupWindow : Window
         if (open) controller.Platform.VirtualMic.OpenPage();
     }
 
-    /// <summary>The downloaded installer isn't signed by VB-Audio: it was not run. Open the official page and say so.</summary>
+    /// <summary>The downloaded installer isn't signed by its maker: it was not run. Open the official page and say so.</summary>
     internal void ShowNotVerifiedFallback(bool open = true)
     {
         SetStatus(L.T(MicTexts.NotVerified), true);
@@ -191,15 +192,15 @@ public partial class SetupWindow : Window
         if (DateTime.UtcNow < waitUntil) return;
         waiting = false;
         waitTimer.Stop();
-        ProgressTrack.Visibility = Visibility.Collapsed;
+        ProgressTrack.IsVisible = false;
         ShowRestartMessage();
     }
 
     internal void ShowRestartMessage() =>
         SetStatus(L.T("Restart your PC to finish installing, then open EasyVocal again."), true);
 
-    // Windows audio thread.
-    private void OnDevicesChanged() => Dispatcher.BeginInvoke(() =>
+    // The system's audio thread.
+    private void OnDevicesChanged() => Dispatcher.UIThread.Post(() =>
     {
         if (closed) return;
         RefreshCable();
@@ -208,7 +209,7 @@ public partial class SetupWindow : Window
 
     // ---------- 2. microphone ----------
 
-    /// <summary>Lists the real microphones (VB-CABLE's own end is never offered) and keeps the choice; restarts the level bar.</summary>
+    /// <summary>Lists the real microphones (the virtual mic's own end is never offered) and keeps the choice; restarts the level bar.</summary>
     private void FillMics()
     {
         var inputs = controller.Devices.Inputs();
@@ -222,7 +223,7 @@ public partial class SetupWindow : Window
         {
             // The same list as Settings: a chosen mic that is unplugged shows as "Device not connected", not "Automatic".
             DeviceBox.Fill(MicBox, L.T("Automatic (Windows default)"), mics, controller.Settings.MicDeviceId);
-            NoMicText.Visibility = mics.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            NoMicText.IsVisible = mics.Count == 0;
         }
         finally
         {
@@ -239,7 +240,7 @@ public partial class SetupWindow : Window
         if (id != null) meter = new MicMeter(controller.Devices, id); // an unplugged choice can't be opened: the bar just stays empty
     }
 
-    private void MicBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void MicBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (loadingMics || MicBox.SelectedItem is not ComboBoxItem) return;
         var id = DeviceBox.IdOf(MicBox);
@@ -254,7 +255,7 @@ public partial class SetupWindow : Window
     private void UpdateMeter()
     {
         meterShown = meter == null ? 0 : MicMeter.NextFill(meterShown, meter.TakeLevel());
-        MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
+        MeterBar.Width = Math.Max(0, MeterTrack.Bounds.Width * meterShown);
     }
 
     // ---------- 3. the per-app guide (drawn, not screenshots) ----------
@@ -275,11 +276,10 @@ public partial class SetupWindow : Window
 
     private void AddGuide(string tabName, string rowLabel, string path, string tip)
     {
-        var res = Application.Current.Resources;
         var mock = new Border
         {
-            Background = (Brush)res["Bg2"],
-            BorderBrush = (Brush)res["Border"],
+            Background = Res.Brush("Bg2"),
+            BorderBrush = Res.Brush("Border"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12),
@@ -289,24 +289,24 @@ public partial class SetupWindow : Window
         {
             Text = rowLabel,
             FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)res["TextDim"],
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Res.Brush("TextDim"),
             Margin = new Thickness(0, 0, 0, 6),
         });
         var fakeBox = new Border
         {
-            Background = (Brush)res["Bg0"],
-            BorderBrush = (Brush)res["Accent"],
+            Background = Res.Brush("Bg0"),
+            BorderBrush = Res.Brush("Accent"),
             BorderThickness = new Thickness(1.5),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(10, 7, 10, 7),
         };
-        var fakeRow = new Grid();
-        fakeRow.Children.Add(new TextBlock { Text = CallAppDevice, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 24, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+        var fakeRow = new Panel();
+        fakeRow.Children.Add(new TextBlock { Text = CallAppDevice, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 24, 0), TextTrimming = TextTrimming.CharacterEllipsis });
         fakeRow.Children.Add(new Path
         {
             Data = Geometry.Parse("M0,0 L4,4 L8,0"),
-            Stroke = (Brush)res["TextDim"],
+            Stroke = Res.Brush("TextDim"),
             StrokeThickness = 1.5,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
@@ -316,30 +316,34 @@ public partial class SetupWindow : Window
         mock.Child = mockContent;
 
         var line1 = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
-        line1.Inlines.Add(new Run(path + " "));
-        line1.Inlines.Add(new Run(CallAppDevice) { FontWeight = FontWeights.Bold, Foreground = (Brush)res["Accent"] });
-        var line2 = new TextBlock { Text = tip, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), Foreground = (Brush)res["TextDim"] };
+        line1.Inlines = new InlineCollection
+        {
+            new Run(path + " "),
+            new Run(CallAppDevice) { FontWeight = FontWeight.Bold, Foreground = Res.Brush("Accent") },
+        };
+        var line2 = new TextBlock { Text = tip, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0), Foreground = Res.Brush("TextDim") };
 
         var panel = new StackPanel();
         panel.Children.Add(mock);
         panel.Children.Add(line1);
         panel.Children.Add(line2);
         // The selected tab sets a bold dark-on-green look that its content would inherit.
-        TextElement.SetForeground(panel, (Brush)res["Text"]);
-        TextElement.SetFontWeight(panel, FontWeights.Normal);
+        TextElement.SetForeground(panel, Res.Brush("Text"));
+        TextElement.SetFontWeight(panel, FontWeight.Normal);
+        TextElement.SetFontSize(panel, 13);
 
         GuideTabs.Items.Add(new TabItem { Header = tabName, Content = panel });
     }
 
     // ---------- done ----------
 
-    private void DoneButton_Click(object sender, RoutedEventArgs e)
+    private async void DoneButton_Click(object? sender, RoutedEventArgs e)
     {
         controller.Settings.SetupDone = true;
         if (!controller.SetStartWithWindows(StartBox.IsChecked == true))
-            AskDialog.Tell(this, L.T("Windows would not let EasyVocal start with it. You can try again in Settings."));
+            await AskDialog.TellAsync(this, L.T("Windows would not let EasyVocal start with it. You can try again in Settings."));
         controller.Save();
-        DialogResult = true;
+        Accept();
     }
 
     protected override void OnClosed(EventArgs e)

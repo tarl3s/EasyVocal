@@ -1,42 +1,28 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Layout;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
 
 /// <summary>A themed yes/no question, optionally with a checkbox (e.g. "Don't ask again"), and a plain message.</summary>
-public static class AskDialog
+public sealed class AskDialog : AppWindow
 {
-    /// <summary>A themed message with one OK button. The text is already translated.</summary>
-    public static void Tell(Window? owner, string message) => Ask(owner, message, L.T("OK"), null, null, out _);
+    /// <summary>The person's answer: <see cref="Yes"/> = the first button; <see cref="Checked"/> = the checkbox was ticked.</summary>
+    public readonly record struct Answer(bool Yes, bool Checked);
 
-    /// <summary>True when the person picked <paramref name="yes"/>. Texts are already translated; no <paramref name="no"/> = a single button.</summary>
-    public static bool Ask(Window? owner, string message, string yes, string? no, string? checkText, out bool isChecked)
+    private readonly CheckBox? check;
+
+    private AskDialog(string message, string yes, string? no, string? checkText)
     {
-        var res = Application.Current.Resources;
-        var window = new Window
-        {
-            Title = "EasyVocal",
-            SizeToContent = SizeToContent.WidthAndHeight,
-            ResizeMode = ResizeMode.NoResize,
-            Background = (Brush)res["Bg0"],
-            Foreground = (Brush)res["Text"],
-            FontFamily = new FontFamily("Segoe UI"),
-            FontSize = 13,
-            ShowInTaskbar = owner == null,
-            Topmost = owner == null,
-            WindowStartupLocation = owner != null ? WindowStartupLocation.CenterOwner : WindowStartupLocation.CenterScreen,
-        };
-        if (owner != null) window.Owner = owner;
-        DarkTitleBar.Use(window);
-        WindowPlacer.Use(window, "ask", null);
-        if (owner == null && Application.Current.MainWindow?.Icon != null) window.Icon = Application.Current.MainWindow.Icon;
+        Title = "EasyVocal";
+        SizeToContent = SizeToContent.WidthAndHeight;
+        CanResize = false;
+        Place("ask", null);
 
         var root = new StackPanel { Margin = new Thickness(20) };
-        root.Children.Add(new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, MaxWidth = 380 });
-
-        CheckBox? check = null;
+        root.Children.Add(new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 380 });
         if (checkText != null)
         {
             check = new CheckBox { Content = checkText, Margin = new Thickness(0, 14, 0, 0) };
@@ -44,13 +30,14 @@ public static class AskDialog
         }
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
-        var yesButton = new Button { Content = yes, MinWidth = 90, Style = (Style)res["AccentButton"] };
-        yesButton.Click += (_, _) => window.DialogResult = true;
+        var yesButton = new Button { Content = yes, MinWidth = 90, Theme = Res.Theme("AccentButton") };
+        yesButton.Click += (_, _) => Accept();
         buttons.Children.Add(yesButton);
         Button focus = yesButton;
         if (no != null)
         {
             var noButton = new Button { Content = no, MinWidth = 90, Margin = new Thickness(8, 0, 0, 0), IsCancel = true, IsDefault = true };
+            noButton.Click += CancelClick;
             buttons.Children.Add(noButton);
             focus = noButton; // the safe answer is the default
         }
@@ -60,11 +47,21 @@ public static class AskDialog
             yesButton.IsCancel = true;
         }
         root.Children.Add(buttons);
-        window.Content = root;
-        window.Loaded += (_, _) => focus.Focus();
+        Content = root;
+        Opened += (_, _) => focus.Focus(NavigationMethod.Tab);
+    }
 
-        bool result = window.ShowDialog() == true;
-        isChecked = check?.IsChecked == true;
-        return result;
+    /// <summary>The buttons, for the tests.</summary>
+    internal CheckBox? CheckBox => check;
+
+    /// <summary>A themed message with one OK button. The text is already translated.</summary>
+    public static Task TellAsync(Window? owner, string message) => AskAsync(owner, message, L.T("OK"), null, null);
+
+    /// <summary>Asks and waits. Texts are already translated; no <paramref name="no"/> = a single button.</summary>
+    public static async Task<Answer> AskAsync(Window? owner, string message, string yes, string? no, string? checkText)
+    {
+        var dialog = new AskDialog(message, yes, no, checkText);
+        await dialog.ShowAsync(owner);
+        return new Answer(dialog.Accepted, dialog.check?.IsChecked == true);
     }
 }

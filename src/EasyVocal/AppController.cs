@@ -2,8 +2,8 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Threading;
+
+
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
@@ -19,7 +19,7 @@ namespace EasyVocal;
 /// <summary>
 /// The one object windows talk to: owns the settings, the audio engine, the soundboard mixer and the global
 /// hotkeys. Every member belongs to the UI thread; what the engine, the mixer and Windows' device notifications
-/// report from their own threads is posted here with <see cref="Dispatcher.BeginInvoke(Delegate, object[])"/>
+/// report from their own threads is posted here with <see cref="IUiDispatcher.Post"/>
 /// (never <c>Invoke</c>: the engine may be joining one of those threads while the UI waits on it).
 /// </summary>
 public sealed class AppController : IDisposable
@@ -32,13 +32,13 @@ public sealed class AppController : IDisposable
     /// <summary>After VB-CABLE shows up, how long a default it takes is put back to what the person had.</summary>
     private static readonly TimeSpan RestoreWindow = TimeSpan.FromSeconds(60);
 
-    private readonly Dispatcher ui;
+    private readonly IUiDispatcher ui;
     private readonly VoiceChain chain = new(AudioFormat.SampleRate);
     private readonly SoundMixer mixer = new();
     private readonly AudioEngine engine;
     private readonly SettingsFile settingsFile;
     private readonly IAudioBackend devices;
-    private readonly DispatcherTimer saveTimer, recoverTimer, deviceTimer;
+    private readonly IUiTimer saveTimer, recoverTimer, deviceTimer;
     private IGlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
     private HashSet<string> refusedActions = new();
@@ -59,9 +59,10 @@ public sealed class AppController : IDisposable
 
     /// <param name="dataFolder">Where settings.json and the Sounds folder live (normally <see cref="SettingsStore.DefaultFolder"/>).</param>
     /// <param name="platform">The system's devices, startup entry and virtual mic (the tests swap in their own devices and a throwaway startup entry).</param>
-    public AppController(string dataFolder, PlatformServices platform)
+    /// <param name="ui">The UI thread (null = Avalonia's).</param>
+    public AppController(string dataFolder, PlatformServices platform, IUiDispatcher? ui = null)
     {
-        ui = Dispatcher.CurrentDispatcher;
+        this.ui = ui ?? AvaloniaUiDispatcher.Instance;
         Platform = platform;
         devices = platform.Audio;
         Startup = platform.Startup;
@@ -75,12 +76,9 @@ public sealed class AppController : IDisposable
             AppLog.Info("settings.json could not be read (another program holds it?): using defaults and not saving this session");
         engine = new AudioEngine(MakeInput, MakeCallOutput, MakeMonitor, chain, mixer);
 
-        saveTimer = new DispatcherTimer(DispatcherPriority.Background, ui) { Interval = SaveDelay };
-        saveTimer.Tick += (_, _) => SaveNow();
-        recoverTimer = new DispatcherTimer(DispatcherPriority.Background, ui) { Interval = RecoverEvery };
-        recoverTimer.Tick += (_, _) => Recover();
-        deviceTimer = new DispatcherTimer(DispatcherPriority.Background, ui) { Interval = DeviceSettle };
-        deviceTimer.Tick += (_, _) => DevicesSettled();
+        saveTimer = this.ui.CreateTimer(SaveDelay, SaveNow);
+        recoverTimer = this.ui.CreateTimer(RecoverEvery, Recover);
+        deviceTimer = this.ui.CreateTimer(DeviceSettle, DevicesSettled);
     }
 
     public string DataFolder { get; }
@@ -618,7 +616,7 @@ public sealed class AppController : IDisposable
             if (MonitorId(devices.Outputs()) is not { } id) return false;
             var output = devices.OpenSpeaker(id);
             SoundPreview? mine = null;
-            mine = new SoundPreview(output, samples, (float)volume, () => ui.BeginInvoke(() =>
+            mine = new SoundPreview(output, samples, (float)volume, () => ui.Post(() =>
             {
                 if (!ReferenceEquals(preview, mine)) return; // stopped, or replaced by a newer preview
                 preview = null;
@@ -725,7 +723,7 @@ public sealed class AppController : IDisposable
             catch (OperationCanceledException) { return false; } // quitting
             catch (Exception ex) { AppLog.Info($"Sound '{load.Id}' skipped ({load.FileName}): {ex.Message}"); }
         }
-        ui.BeginInvoke(() =>
+        ui.Post(() =>
         {
             if (disposed || !soundLoads.IsCurrent(load.Id, load.Ticket) || FindSound(load.Id) == null) return;
             bool cardChanged;
@@ -765,7 +763,7 @@ public sealed class AppController : IDisposable
     private void OnHotkeyPressed(string action)
     {
         if (ui.CheckAccess()) OnHotkey(action);
-        else ui.BeginInvoke(() => OnHotkey(action));
+        else ui.Post(() => OnHotkey(action));
     }
 
     /// <summary>Registers every hotkey of <see cref="HotkeyMap.All"/> again; the ones the system refuses go to <see cref="HotkeyProblems"/>.</summary>
@@ -1137,7 +1135,7 @@ public sealed class AppController : IDisposable
     }
 
     // Windows audio thread.
-    private void OnDevicesChanged() => ui.BeginInvoke(() =>
+    private void OnDevicesChanged() => ui.Post(() =>
     {
         if (disposed) return;
         deviceTimer.Stop();
@@ -1194,7 +1192,7 @@ public sealed class AppController : IDisposable
     }
 
     // Any thread.
-    private void OnEngineStateChanged(EngineState state) => ui.BeginInvoke(() =>
+    private void OnEngineStateChanged(EngineState state) => ui.Post(() =>
     {
         if (disposed) return;
         AppLog.Info("Engine: " + state);
@@ -1205,7 +1203,7 @@ public sealed class AppController : IDisposable
     private void OnPlayingChanged(string id, bool playing)
     {
         if (Interlocked.Exchange(ref changePosted, 1) == 1) return;
-        ui.BeginInvoke(() =>
+        ui.Post(() =>
         {
             Volatile.Write(ref changePosted, 0);
             if (!disposed) RaiseChanged();

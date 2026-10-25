@@ -1,4 +1,4 @@
-using System.Windows.Controls;
+using Avalonia.Controls;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Text;
 

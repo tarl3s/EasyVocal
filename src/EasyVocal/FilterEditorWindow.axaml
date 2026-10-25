@@ -1,0 +1,51 @@
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.FilterEditorWindow"
+               Title="{loc:T 'Voice filter'}" Width="500" SizeToContent="Height" MinWidth="420" MinHeight="360"
+               ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid RowDefinitions="*,Auto">
+        <ScrollViewer x:Name="FormScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="20,16,20,8">
+                <TextBlock Text="{loc:T 'Name'}" Classes="label" />
+                <TextBox x:Name="NameBox" MaxLength="30" Margin="0,6,0,0" TextChanged="NameBox_TextChanged" />
+
+                <TextBlock Text="{loc:T 'Emoji'}" Classes="label" Margin="0,14,0,0" />
+                <Border Background="{StaticResource Bg1}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8"
+                        Padding="8,8,4,4" Margin="0,6,0,0">
+                    <ContentControl x:Name="EmojiHost" />
+                </Border>
+
+                <TextBlock Text="{loc:T 'Start from'}" Classes="label" Margin="0,14,0,0" />
+                <ComboBox x:Name="StartBox" Margin="0,6,0,0" SelectionChanged="StartBox_SelectionChanged" />
+
+                <DockPanel Margin="0,18,0,0">
+                    <ToggleButton x:Name="HearToggle" DockPanel.Dock="Right" Padding="12,6" Click="HearToggle_Click"
+                                  ToolTip.Tip="{loc:T 'Hear your own voice in your headphones, to try the voices'}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🎧" Classes="emoji" Margin="0,0,6,0" />
+                            <TextBlock Text="{loc:T 'Hear me'}" />
+                        </StackPanel>
+                    </ToggleButton>
+                    <TextBlock Text="{loc:T 'Your voice'}" Classes="label" VerticalAlignment="Center" />
+                </DockPanel>
+                <TextBlock Text="{loc:T 'Use headphones — speakers can echo back into the mic.'}" Classes="dim small"
+                           TextWrapping="Wrap" Margin="0,4,0,0" />
+                <StackPanel x:Name="SliderPanel" Margin="0,2,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <DockPanel Grid.Row="1" Margin="20,8,20,16" LastChildFill="False">
+            <Button x:Name="ResetButton" DockPanel.Dock="Left" Click="ResetButton_Click"
+                    ToolTip.Tip="{loc:T 'Put the sliders back where they started'}">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="↺" Margin="0,0,6,0" />
+                    <TextBlock Text="{loc:T 'Reset'}" />
+                </StackPanel>
+            </Button>
+            <Button x:Name="CancelButton" DockPanel.Dock="Right" Margin="8,0,0,0" MinWidth="80" Content="{loc:T 'Cancel'}"
+                    IsCancel="True" Click="CancelClick" />
+            <Button x:Name="SaveButton" DockPanel.Dock="Right" MinWidth="80" Theme="{StaticResource AccentButton}" Click="SaveButton_Click" />
+        </DockPanel>
+    </Grid>
+</loc:AppWindow>

@@ -1,14 +1,12 @@
-<Window x:Class="EasyVocal.AudioEditorWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="clr-namespace:EasyVocal"
-        Title="{loc:T 'Edit audio'}" Width="900" Height="640" MinWidth="560" MinHeight="440"
-        ShowInTaskbar="False" WindowStartupLocation="CenterOwner" Icon="Assets/EasyVocal.ico"
-        Background="{StaticResource Bg0}" Foreground="{StaticResource Text}"
-        FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True">
-    <Window.Resources>
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.AudioEditorWindow"
+               Title="{loc:T 'Edit audio'}" Width="900" Height="640" MinWidth="560" MinHeight="440"
+               ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <loc:AppWindow.Styles>
         <!-- One group of tools: a title over its buttons. -->
-        <Style x:Key="ToolGroup" TargetType="Border">
+        <Style Selector="Border.toolGroup">
             <Setter Property="Background" Value="{StaticResource Bg1}" />
             <Setter Property="BorderBrush" Value="{StaticResource Border}" />
             <Setter Property="BorderThickness" Value="1" />
@@ -16,59 +14,50 @@
             <Setter Property="Padding" Value="10,8,6,4" />
             <Setter Property="Margin" Value="0,0,8,8" />
         </Style>
-        <Style x:Key="ToolTitle" TargetType="TextBlock">
+        <Style Selector="TextBlock.toolTitle">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="{StaticResource TextDim}" />
             <Setter Property="Margin" Value="0,0,0,6" />
         </Style>
-        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Style Selector="Button">
             <Setter Property="Margin" Value="0,0,4,4" />
             <Setter Property="Padding" Value="10,5" />
         </Style>
-        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+        <Style Selector="ComboBox">
             <Setter Property="Margin" Value="0,0,4,4" />
             <Setter Property="MinWidth" Value="90" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-    </Window.Resources>
+    </loc:AppWindow.Styles>
 
-    <Grid x:Name="Root" Margin="16,12,16,14">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" MinHeight="110" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Grid x:Name="Root" Margin="16,12,16,14" RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
 
         <!-- Play, undo, zoom -->
         <WrapPanel x:Name="TopBar">
-            <Button x:Name="PlayButton" Click="PlayButton_Click" ToolTip="{loc:T 'Hear the whole sound on your headphones only (Space)'}" />
-            <Button x:Name="PlayPartButton" Click="PlayPartButton_Click" ToolTip="{loc:T 'Hear only the part you picked'}" />
-            <Button x:Name="StopButton" Click="StopButton_Click" ToolTip="{loc:T 'Stop'}">
+            <Button x:Name="PlayButton" Click="PlayButton_Click" ToolTip.Tip="{loc:T 'Hear the whole sound on your headphones only (Space)'}" />
+            <Button x:Name="PlayPartButton" Click="PlayPartButton_Click" ToolTip.Tip="{loc:T 'Hear only the part you picked'}" />
+            <Button x:Name="StopButton" Click="StopButton_Click" ToolTip.Tip="{loc:T 'Stop'}">
                 <TextBlock Text="■" />
             </Button>
             <Border Width="1" Margin="6,2,10,6" Background="{StaticResource Border}" />
-            <Button x:Name="UndoButton" Click="UndoButton_Click" ToolTip="{loc:T 'Undo (Ctrl+Z)'}" />
-            <Button x:Name="RedoButton" Click="RedoButton_Click" ToolTip="{loc:T 'Redo (Ctrl+Y)'}" />
+            <Button x:Name="UndoButton" Click="UndoButton_Click" ToolTip.Tip="{loc:T 'Undo (Ctrl+Z)'}" />
+            <Button x:Name="RedoButton" Click="RedoButton_Click" ToolTip.Tip="{loc:T 'Redo (Ctrl+Y)'}" />
             <Border Width="1" Margin="6,2,10,6" Background="{StaticResource Border}" />
-            <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click" ToolTip="{loc:T 'Zoom out (Ctrl + mouse wheel)'}">
-                <TextBlock Text="🔍−" FontFamily="{StaticResource EmojiFont}" />
+            <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click" ToolTip.Tip="{loc:T 'Zoom out (Ctrl + mouse wheel)'}">
+                <TextBlock Text="🔍−" Classes="emoji" />
             </Button>
-            <Button x:Name="ZoomInButton" Click="ZoomInButton_Click" ToolTip="{loc:T 'Zoom in (Ctrl + mouse wheel)'}">
-                <TextBlock Text="🔍+" FontFamily="{StaticResource EmojiFont}" />
+            <Button x:Name="ZoomInButton" Click="ZoomInButton_Click" ToolTip.Tip="{loc:T 'Zoom in (Ctrl + mouse wheel)'}">
+                <TextBlock Text="🔍+" Classes="emoji" />
             </Button>
-            <Button x:Name="FitButton" Click="FitButton_Click" Content="{loc:T 'Whole sound'}" ToolTip="{loc:T 'Show the whole sound'}" />
+            <Button x:Name="FitButton" Click="FitButton_Click" Content="{loc:T 'Whole sound'}" ToolTip.Tip="{loc:T 'Show the whole sound'}" />
         </WrapPanel>
 
-        <TextBlock x:Name="HintText" Grid.Row="1" Margin="0,4,0,8" TextWrapping="Wrap" Foreground="{StaticResource TextDim}" FontSize="12"
+        <TextBlock x:Name="HintText" Grid.Row="1" Margin="0,4,0,8" TextWrapping="Wrap" Classes="dim small"
                    Text="{loc:T 'Drag on the wave to pick a part. Changes apply to that part, or to the whole sound when nothing is picked.'}" />
 
-        <loc:WaveformView x:Name="Wave" Grid.Row="2" />
-        <ScrollBar x:Name="WaveScroll" Grid.Row="3" Orientation="Horizontal" Margin="0,4,0,0" Visibility="Collapsed"
+        <loc:WaveformView x:Name="Wave" Grid.Row="2" MinHeight="100" />
+        <ScrollBar x:Name="WaveScroll" Grid.Row="3" Orientation="Horizontal" Margin="0,4,0,0" IsVisible="False"
                    Scroll="WaveScroll_Scroll" />
 
         <DockPanel Grid.Row="4" Margin="0,6,0,8">
@@ -80,27 +69,27 @@
         <!-- The tools -->
         <ScrollViewer x:Name="ToolsScroll" Grid.Row="5" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <WrapPanel x:Name="Tools">
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Cut and split'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Cut and split'}" />
                         <WrapPanel>
-                            <Button x:Name="CutButton" Click="CutButton_Click" ToolTip="{loc:T 'Delete the part you picked (Delete)'}">
+                            <Button x:Name="CutButton" Click="CutButton_Click" ToolTip.Tip="{loc:T 'Delete the part you picked (Delete)'}">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="✂" Margin="0,0,6,0" />
                                     <TextBlock Text="{loc:T 'Cut'}" />
                                 </StackPanel>
                             </Button>
                             <Button x:Name="TrimButton" Click="TrimButton_Click" Content="{loc:T 'Keep only this'}"
-                                    ToolTip="{loc:T 'Keep only the part you picked'}" />
+                                    ToolTip.Tip="{loc:T 'Keep only the part you picked'}" />
                             <Button x:Name="SplitButton" Click="SplitButton_Click" Content="{loc:T 'Split at cursor'}"
-                                    ToolTip="{loc:T 'Make two new sounds: what comes before the cursor and what comes after'}" />
+                                    ToolTip.Tip="{loc:T 'Make two new sounds: what comes before the cursor and what comes after'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Speed'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Speed'}" />
                         <WrapPanel>
                             <ComboBox x:Name="SpeedBox" MinWidth="76" />
                             <ComboBox x:Name="SpeedModeBox" MinWidth="150" />
@@ -109,64 +98,64 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Pitch'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Pitch'}" />
                         <WrapPanel>
                             <ComboBox x:Name="PitchBox" MinWidth="110" />
                             <Button x:Name="HigherButton" Click="HigherButton_Click" Content="{loc:T '▲ Higher'}"
-                                    ToolTip="{loc:T 'Higher voice, same speed'}" />
+                                    ToolTip.Tip="{loc:T 'Higher voice, same speed'}" />
                             <Button x:Name="LowerButton" Click="LowerButton_Click" Content="{loc:T '▼ Lower'}"
-                                    ToolTip="{loc:T 'Deeper voice, same speed'}" />
+                                    ToolTip.Tip="{loc:T 'Deeper voice, same speed'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Volume'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Volume'}" />
                         <WrapPanel>
                             <Button x:Name="LouderButton" Click="LouderButton_Click" Content="{loc:T 'Louder'}" />
                             <Button x:Name="QuieterButton" Click="QuieterButton_Click" Content="{loc:T 'Quieter'}" />
                             <Button x:Name="NormalizeButton" Click="NormalizeButton_Click" Content="{loc:T 'As loud as possible'}"
-                                    ToolTip="{loc:T 'Makes it as loud as it can be without distorting (normalize)'}" />
+                                    ToolTip.Tip="{loc:T 'Makes it as loud as it can be without distorting (normalize)'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Effects'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Effects'}" />
                         <WrapPanel>
                             <Button x:Name="FadeInButton" Click="FadeInButton_Click" Content="{loc:T 'Fade in'}"
-                                    ToolTip="{loc:T 'Start from silence (the part you picked, or the first half second)'}" />
+                                    ToolTip.Tip="{loc:T 'Start from silence (the part you picked, or the first half second)'}" />
                             <Button x:Name="FadeOutButton" Click="FadeOutButton_Click" Content="{loc:T 'Fade out'}"
-                                    ToolTip="{loc:T 'End in silence (the part you picked, or the last half second)'}" />
+                                    ToolTip.Tip="{loc:T 'End in silence (the part you picked, or the last half second)'}" />
                             <Button x:Name="ReverseButton" Click="ReverseButton_Click" Content="{loc:T 'Reverse'}"
-                                    ToolTip="{loc:T 'Play it backwards'}" />
+                                    ToolTip.Tip="{loc:T 'Play it backwards'}" />
                             <Button x:Name="EchoLightButton" Click="EchoLightButton_Click" Content="{loc:T 'Light echo'}" />
                             <Button x:Name="EchoStrongButton" Click="EchoStrongButton_Click" Content="{loc:T 'Strong echo'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Voice'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Voice'}" />
                         <WrapPanel>
                             <ComboBox x:Name="VoiceBox" MinWidth="140" MaxWidth="220" />
                             <Button x:Name="VoiceButton" Click="VoiceButton_Click" Content="{loc:T 'Apply voice'}"
-                                    ToolTip="{loc:T 'Run it through one of your voices'}" />
+                                    ToolTip.Tip="{loc:T 'Run it through one of your voices'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ToolGroup}">
+                <Border Classes="toolGroup">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource ToolTitle}" Text="{loc:T 'Clean up'}" />
+                        <TextBlock Classes="toolTitle" Text="{loc:T 'Clean up'}" />
                         <WrapPanel>
                             <Button x:Name="SilenceButton" Click="SilenceButton_Click" Content="{loc:T 'Remove silence'}"
-                                    ToolTip="{loc:T 'Cut the quiet bits at the start and at the end'}" />
+                                    ToolTip.Tip="{loc:T 'Cut the quiet bits at the start and at the end'}" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>
@@ -174,26 +163,23 @@
         </ScrollViewer>
 
         <!-- Save -->
-        <Grid Grid.Row="6" Margin="0,6,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+        <Grid Grid.Row="6" Margin="0,6,0,0" ColumnDefinitions="*,Auto">
             <WrapPanel VerticalAlignment="Center">
-                <Button x:Name="OriginalButton" Click="OriginalButton_Click" ToolTip="{loc:T 'Go back to the sound as it was before any change'}">
+                <Button x:Name="OriginalButton" Click="OriginalButton_Click" ToolTip.Tip="{loc:T 'Go back to the sound as it was before any change'}">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="↩" Margin="0,0,6,0" />
                         <TextBlock Text="{loc:T 'Back to original'}" />
                     </StackPanel>
                 </Button>
                 <Button x:Name="ExportButton" Click="ExportButton_Click" Content="{loc:T 'Save a copy as…'}"
-                        ToolTip="{loc:T 'Save this sound as a file anywhere on your PC'}" />
+                        ToolTip.Tip="{loc:T 'Save this sound as a file anywhere on your PC'}" />
             </WrapPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
-                <Button x:Name="SaveButton" MinWidth="80" Style="{StaticResource AccentButton}" Margin="8,0,0,4" Padding="12,6"
+                <Button x:Name="SaveButton" MinWidth="80" Theme="{StaticResource AccentButton}" Margin="8,0,0,4" Padding="12,6"
                         Content="{loc:T 'Save'}" Click="SaveButton_Click" />
-                <Button x:Name="CancelButton" MinWidth="80" Margin="8,0,0,4" Padding="12,6" Content="{loc:T 'Cancel'}" IsCancel="True" />
+                <Button x:Name="CancelButton" MinWidth="80" Margin="8,0,0,4" Padding="12,6" Content="{loc:T 'Cancel'}"
+                        IsCancel="True" Click="CancelClick" />
             </StackPanel>
         </Grid>
     </Grid>
-</Window>
+</loc:AppWindow>

@@ -1,0 +1,31 @@
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.HotkeyCaptureDialog"
+               Title="{loc:T 'Set hotkey'}" Width="440" SizeToContent="Height" CanResize="False"
+               ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="20">
+        <TextBlock x:Name="ItemText" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+        <TextBlock Text="{loc:T 'Press the key or combination…'}" Classes="dim" Margin="0,4,0,12" />
+
+        <Border Background="{StaticResource Bg1}" BorderBrush="{StaticResource Border}" BorderThickness="1" CornerRadius="8" Height="64">
+            <TextBlock x:Name="KeyText" FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+
+        <TextBlock x:Name="ProblemText" IsVisible="False" TextWrapping="Wrap" Foreground="{StaticResource Danger}" Margin="0,10,0,0" />
+        <Border x:Name="TypingNote" IsVisible="False" Margin="0,10,0,0" Padding="10,8" CornerRadius="6"
+                Background="{StaticResource Bg2}" BorderBrush="{StaticResource Warn}" BorderThickness="1">
+            <TextBlock x:Name="TypingNoteText" TextWrapping="Wrap" Foreground="{StaticResource Warn}" />
+        </Border>
+
+        <TextBlock Text="{loc:T 'Press Esc to cancel.'}" Classes="dim small" Margin="0,12,0,0" />
+
+        <DockPanel Margin="0,14,0,0" LastChildFill="False">
+            <Button x:Name="RemoveButton" DockPanel.Dock="Left" Content="{loc:T 'Remove hotkey'}" Click="RemoveButton_Click" />
+            <Button x:Name="CancelButton" DockPanel.Dock="Right" Margin="8,0,0,0" MinWidth="80" Content="{loc:T 'Cancel'}"
+                    Click="CancelClick" />
+            <Button x:Name="SaveButton" DockPanel.Dock="Right" MinWidth="80" Theme="{StaticResource AccentButton}" Content="{loc:T 'Save'}"
+                    IsEnabled="False" Click="SaveButton_Click" />
+        </DockPanel>
+    </StackPanel>
+</loc:AppWindow>

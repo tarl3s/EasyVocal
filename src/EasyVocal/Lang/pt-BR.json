@@ -298,5 +298,6 @@
   "Big room": "Sala grande",
   "Huge": "Enorme",
   "Sounds use the voice": "Sons usam a voz",
-  "Your sounds go through the voice filter too: switch voices while a sound plays and it changes.": "Seus sons também passam pelo filtro de voz: troque de voz enquanto um som toca e ele muda junto."
+  "Your sounds go through the voice filter too: switch voices while a sound plays and it changes.": "Seus sons também passam pelo filtro de voz: troque de voz enquanto um som toca e ele muda junto.",
+  "EasyVocal sends your voice to calls through a virtual microphone.": "O EasyVocal envia a sua voz para as chamadas por um microfone virtual."
 }

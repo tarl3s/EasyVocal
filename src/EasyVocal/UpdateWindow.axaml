@@ -1,0 +1,39 @@
+<loc:AppWindow xmlns="https://github.com/avaloniaui"
+               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+               xmlns:loc="using:EasyVocal"
+               x:Class="EasyVocal.UpdateWindow"
+               Title="{loc:T 'Update EasyVocal'}" Width="500" SizeToContent="Height" MinWidth="400" MinHeight="300"
+               ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid Margin="20,16,20,16" RowDefinitions="Auto,Auto,*,Auto,Auto">
+        <DockPanel>
+            <TextBlock Text="🎉" Classes="emoji" FontSize="20" VerticalAlignment="Center" Margin="0,0,10,0" DockPanel.Dock="Left" />
+            <TextBlock x:Name="Headline" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+        </DockPanel>
+
+        <TextBlock Grid.Row="1" Text="{loc:T 'What’s new'}" Classes="dim" Margin="0,14,0,6" />
+
+        <Border Grid.Row="2" Background="{StaticResource Bg1}" BorderBrush="{StaticResource Border}" BorderThickness="1"
+                CornerRadius="8" MinHeight="60">
+            <ScrollViewer x:Name="NotesScroll" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="NotesPanel" Margin="12,10,12,10" />
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <Border x:Name="ProgressTrack" Height="8" CornerRadius="4" Background="{StaticResource Bg2}" IsVisible="False">
+                <Border x:Name="ProgressFill" HorizontalAlignment="Left" Width="0" CornerRadius="4" Background="{StaticResource Accent}" />
+            </Border>
+            <TextBlock x:Name="StatusText" IsVisible="False" TextWrapping="Wrap" Margin="0,6,0,0" />
+        </StackPanel>
+
+        <DockPanel Grid.Row="4" Margin="0,14,0,0" LastChildFill="False">
+            <Button x:Name="SkipButton" DockPanel.Dock="Left" Theme="{StaticResource FlatButton}" Foreground="{StaticResource Accent}"
+                    Padding="2,4" Click="SkipButton_Click">
+                <TextBlock Text="{loc:T 'Skip this version'}" TextDecorations="Underline" />
+            </Button>
+            <Button x:Name="UpdateButton" DockPanel.Dock="Right" MinWidth="110" Margin="8,0,0,0" Theme="{StaticResource AccentButton}"
+                    Content="{loc:T 'Update now'}" IsDefault="True" Click="UpdateButton_Click" />
+            <Button x:Name="LaterButton" DockPanel.Dock="Right" MinWidth="90" Content="{loc:T 'Later'}" Click="LaterButton_Click" />
+        </DockPanel>
+    </Grid>
+</loc:AppWindow>

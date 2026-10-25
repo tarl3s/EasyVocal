@@ -1,8 +1,10 @@
 using System.Globalization;
-using System.Windows;
-using System.Windows.Input;
-using System.Windows.Media;
 using System.Runtime.CompilerServices;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Sounds;
 
@@ -14,7 +16,7 @@ namespace EasyVocal;
 /// size changes), the selection, the cursor and the playhead. Drag to select, click to place the cursor (Shift+click
 /// extends the selection), Ctrl+wheel zooms around the mouse, the wheel scrolls.
 /// </summary>
-public sealed class WaveformView : FrameworkElement
+public sealed class WaveformView : Control
 {
     private const int Sr = AudioFormat.SampleRate;
     public const double RulerHeight = 20;
@@ -40,38 +42,28 @@ public sealed class WaveformView : FrameworkElement
     private bool dragging;
     private Point dragFrom;
 
-    private readonly Brush waveBrush, selectionBrush, rulerBrush, textBrush, cursorBrush, playheadBrush, backBrush, borderBrush, centreBrush;
-    private readonly Pen wavePen, cursorPen, playheadPen, tickPen, borderPen, centrePen, selEdgePen;
-    private readonly Typeface typeface = new("Segoe UI");
+    private readonly IBrush waveBrush, selectionBrush, rulerBrush, textBrush, backBrush;
+    private readonly IPen wavePen, cursorPen, playheadPen, tickPen, borderPen, centrePen, selEdgePen;
+    private readonly Typeface typeface;
 
     public WaveformView()
     {
         Focusable = true;
         ClipToBounds = true;
-        Cursor = Cursors.IBeam;
-        var res = Application.Current.Resources;
-        waveBrush = (Brush)res["Accent"];
-        textBrush = (Brush)res["TextDim"];
-        cursorBrush = (Brush)res["Text"];
-        playheadBrush = (Brush)res["Warn"];
-        backBrush = (Brush)res["Bg1"];
-        rulerBrush = (Brush)res["Bg2"];
-        borderBrush = (Brush)res["Border"];
-        centreBrush = (Brush)res["Bg3"];
-        selectionBrush = Frozen(new SolidColorBrush(Color.FromArgb(0x4A, 0x4A, 0xDE, 0x80)));
-        wavePen = Frozen(new Pen(waveBrush, 1));
-        cursorPen = Frozen(new Pen(cursorBrush, 1.5));
-        playheadPen = Frozen(new Pen(playheadBrush, 2));
-        tickPen = Frozen(new Pen(textBrush, 1));
-        borderPen = Frozen(new Pen(borderBrush, 1));
-        centrePen = Frozen(new Pen(centreBrush, 1));
-        selEdgePen = Frozen(new Pen(waveBrush, 1));
-    }
-
-    private static T Frozen<T>(T f) where T : Freezable
-    {
-        f.Freeze();
-        return f;
+        Cursor = new Cursor(StandardCursorType.Ibeam);
+        waveBrush = Res.Brush("Accent");
+        textBrush = Res.Brush("TextDim");
+        backBrush = Res.Brush("Bg1");
+        rulerBrush = Res.Brush("Bg2");
+        selectionBrush = Res.Brush("Selection");
+        typeface = new Typeface(Res.Font("UiFont"));
+        wavePen = new ImmutablePen(waveBrush.ToImmutable(), 1);
+        cursorPen = new ImmutablePen(Res.Brush("Text").ToImmutable(), 1.5);
+        playheadPen = new ImmutablePen(Res.Brush("Warn").ToImmutable(), 2);
+        tickPen = new ImmutablePen(textBrush.ToImmutable(), 1);
+        borderPen = new ImmutablePen(Res.Brush("Border").ToImmutable(), 1);
+        centrePen = new ImmutablePen(Res.Brush("Bg3").ToImmutable(), 1);
+        selEdgePen = new ImmutablePen(waveBrush.ToImmutable(), 1);
     }
 
     /// <summary>The selection or the cursor moved (by the mouse).</summary>
@@ -139,7 +131,7 @@ public sealed class WaveformView : FrameworkElement
 
     public double ViewStart => viewStart;
     public double SamplesPerPixel => samplesPerPixel;
-    private double Columns => Math.Max(1, ActualWidth);
+    private double Columns => Math.Max(1, Bounds.Width);
     /// <summary>How many samples the view shows.</summary>
     public double VisibleSamples => Columns * samplesPerPixel;
     public double FitSamplesPerPixel => Math.Max(MinSamplesPerPixel, samples.Length / Columns);
@@ -200,9 +192,9 @@ public sealed class WaveformView : FrameworkElement
         ViewChanged?.Invoke();
     }
 
-    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    protected override void OnSizeChanged(SizeChangedEventArgs e)
     {
-        base.OnRenderSizeChanged(sizeInfo);
+        base.OnSizeChanged(e);
         if (fitted) Fit();
         else SetView(viewStart, Math.Min(samplesPerPixel, FitSamplesPerPixel));
     }
@@ -213,14 +205,14 @@ public sealed class WaveformView : FrameworkElement
 
     private double XOf(double sample) => (sample - viewStart) / samplesPerPixel;
 
-    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
-        base.OnMouseLeftButtonDown(e);
-        if (samples.Length == 0) return;
+        base.OnPointerPressed(e);
+        if (samples.Length == 0 || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         Focus();
         dragFrom = e.GetPosition(this);
         int at = SampleAt(dragFrom.X);
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+        if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
         {
             int from = HasSelection ? (at < SelectionStart + SelectionLength / 2 ? SelectionStart + SelectionLength : SelectionStart) : CursorPosition;
             dragAnchor = from;
@@ -232,21 +224,22 @@ public sealed class WaveformView : FrameworkElement
             dragAnchor = at;
             dragging = false;
         }
-        CaptureMouse();
+        e.Pointer.Capture(this);
         e.Handled = true;
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    protected override void OnPointerMoved(PointerEventArgs e)
     {
-        base.OnMouseMove(e);
-        if (dragAnchor < 0 || e.LeftButton != MouseButtonState.Pressed) return;
+        base.OnPointerMoved(e);
+        if (dragAnchor < 0 || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
         var p = e.GetPosition(this);
         if (!dragging && Math.Abs(p.X - dragFrom.X) < 3) return;
         dragging = true;
         // Dragging past an edge scrolls the view along.
+        double w = Bounds.Width;
         if (p.X < 0) ScrollTo(viewStart + p.X * samplesPerPixel);
-        else if (p.X > ActualWidth) ScrollTo(viewStart + (p.X - ActualWidth) * samplesPerPixel);
-        ExtendTo(SampleAt(Math.Clamp(p.X, 0, ActualWidth)));
+        else if (p.X > w) ScrollTo(viewStart + (p.X - w) * samplesPerPixel);
+        ExtendTo(SampleAt(Math.Clamp(p.X, 0, w)));
     }
 
     private void ExtendTo(int at)
@@ -259,49 +252,51 @@ public sealed class WaveformView : FrameworkElement
         SelectionChanged?.Invoke();
     }
 
-    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
-        base.OnMouseLeftButtonUp(e);
+        base.OnPointerReleased(e);
         if (dragAnchor < 0) return;
-        ReleaseMouseCapture();
+        e.Pointer.Capture(null);
         if (!dragging) PlaceCursor(dragAnchor);
         dragAnchor = -1;
         dragging = false;
         e.Handled = true;
     }
 
-    protected override void OnLostMouseCapture(MouseEventArgs e)
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
-        base.OnLostMouseCapture(e);
+        base.OnPointerCaptureLost(e);
         dragAnchor = -1;
         dragging = false;
     }
 
-    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
-        base.OnMouseWheel(e);
+        base.OnPointerWheelChanged(e);
         if (samples.Length == 0) return;
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) Zoom(e.Delta > 0 ? 1.5 : 1 / 1.5, e.GetPosition(this).X);
-        else if (!fitted) ScrollTo(viewStart - Math.Sign(e.Delta) * VisibleSamples * 0.1);
+        double delta = e.Delta.Y != 0 ? e.Delta.Y : e.Delta.X;
+        if (delta == 0) return;
+        if ((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0) Zoom(delta > 0 ? 1.5 : 1 / 1.5, e.GetPosition(this).X);
+        else if (!fitted) ScrollTo(viewStart - Math.Sign(delta) * VisibleSamples * 0.1);
         e.Handled = true;
     }
 
     // ---------- drawing ----------
 
-    protected override void OnRender(DrawingContext dc)
+    public override void Render(DrawingContext dc)
     {
-        double w = ActualWidth, h = ActualHeight;
+        double w = Bounds.Width, h = Bounds.Height;
         if (w < 2 || h < RulerHeight + 10) return;
         var waveRect = new Rect(0, RulerHeight, w, h - RulerHeight);
-        dc.DrawRectangle(rulerBrush, null, new Rect(0, 0, w, RulerHeight));
-        dc.DrawRectangle(backBrush, null, waveRect);
+        dc.FillRectangle(rulerBrush, new Rect(0, 0, w, RulerHeight));
+        dc.FillRectangle(backBrush, waveRect);
 
         if (HasSelection)
         {
             double x0 = Math.Max(0, XOf(SelectionStart)), x1 = Math.Min(w, XOf(SelectionStart + SelectionLength));
             if (x1 > x0)
             {
-                dc.DrawRectangle(selectionBrush, null, new Rect(x0, RulerHeight, Math.Max(1, x1 - x0), waveRect.Height));
+                dc.FillRectangle(selectionBrush, new Rect(x0, RulerHeight, Math.Max(1, x1 - x0), waveRect.Height));
                 dc.DrawLine(selEdgePen, new Point(x0 + 0.5, RulerHeight), new Point(x0 + 0.5, h));
                 dc.DrawLine(selEdgePen, new Point(x1 - 0.5, RulerHeight), new Point(x1 - 0.5, h));
             }
@@ -340,11 +335,11 @@ public sealed class WaveformView : FrameworkElement
                 double y0 = mid - Math.Clamp(hi, -1f, 1f) * half;
                 double y1 = mid - Math.Clamp(lo, -1f, 1f) * half;
                 if (y1 - y0 < 1) { y0 -= 0.5; y1 += 0.5; }
-                g.BeginFigure(new Point(c + 0.5, y0), false, false);
-                g.LineTo(new Point(c + 0.5, y1), true, false);
+                g.BeginFigure(new Point(c + 0.5, y0), false);
+                g.LineTo(new Point(c + 0.5, y1));
+                g.EndFigure(false);
             }
         }
-        geo.Freeze();
         dc.DrawGeometry(null, wavePen, geo);
     }
 
@@ -395,14 +390,13 @@ public sealed class WaveformView : FrameworkElement
         foreach (var s in TickSteps)
             if (s * pxPerSecond >= 80) { step = s; break; }
         double first = Math.Floor(viewStart / Sr / step) * step;
-        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         for (double t = first; ; t += step)
         {
             double x = XOf(t * Sr);
             if (x > w) break;
             if (x < -60) continue;
             dc.DrawLine(tickPen, new Point(x + 0.5, RulerHeight - 6), new Point(x + 0.5, RulerHeight));
-            var text = new FormattedText(Time(t), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, 11, textBrush, dpi);
+            var text = new FormattedText(Time(t), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, typeface, 11, textBrush);
             dc.DrawText(text, new Point(x + 3, 2));
         }
         // Small ticks between the labels.

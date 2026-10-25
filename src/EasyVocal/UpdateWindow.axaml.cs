@@ -1,17 +1,18 @@
 using System.Diagnostics;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Media;
 using EasyVocal.Core.Text;
 
 namespace EasyVocal;
 
 /// <summary>
 /// "EasyVocal X is available": the release notes, <b>Update now</b> (downloads with a progress bar and Cancel, checks
-/// the zip, then closes with <see cref="PreparedExe"/> set — <see cref="UpdateCoordinator"/> hands over to the helper
+/// the download, then closes with <see cref="PreparedExe"/> set — <see cref="UpdateCoordinator"/> hands over to the helper
 /// and quits), <b>Later</b>, and <b>Skip this version</b> (saved in the settings).
 /// </summary>
-public partial class UpdateWindow : Window
+public partial class UpdateWindow : AppWindow
 {
     private readonly AppController controller;
     private readonly UpdateService service;
@@ -31,8 +32,7 @@ public partial class UpdateWindow : Window
         this.asset = asset;
         this.canInstall = canInstall;
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "update", controller);
+        Place("update", controller);
         Headline.Text = L.F("EasyVocal {0} is available (you have {1})", release.Version, service.Current);
         FillNotes(ReleaseNotes.ToLines(release.Notes));
         if (!canInstall)
@@ -40,26 +40,13 @@ public partial class UpdateWindow : Window
             UpdateButton.IsEnabled = false;
             ShowStatus(L.T("This EasyVocal runs from its source code, so it doesn't update itself."), problem: false);
         }
+        ProgressTrack.SizeChanged += (_, _) => SetProgress(progressValue);
         Closing += (_, _) => download?.Cancel(); // the service removes what it had downloaded
         Closed += (_, _) => closed = true;
     }
 
-    /// <summary>The checked new EasyVocal.exe, once Update now finished downloading; null otherwise.</summary>
+    /// <summary>The checked new EasyVocal, once Update now finished downloading; null otherwise.</summary>
     public string? PreparedExe { get; private set; }
-
-    /// <summary>Shows the window and waits. Without a visible owner (EasyVocal is in the tray) it comes up on its own.</summary>
-    public void ShowFor(Window? owner)
-    {
-        if (owner is { IsVisible: true }) Owner = owner;
-        else
-        {
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            ShowInTaskbar = true;
-            Topmost = true; // Windows won't always let a background app take the focus
-            Loaded += (_, _) => Topmost = false;
-        }
-        ShowDialog();
-    }
 
     /// <summary>A sentence for the person about why an update stopped.</summary>
     internal static string ProblemText(UpdateProblem problem) => problem switch
@@ -77,7 +64,7 @@ public partial class UpdateWindow : Window
         NotesPanel.Children.Clear();
         if (lines.Count == 0)
         {
-            NotesPanel.Children.Add(new TextBlock { Text = L.T("No notes for this version."), Foreground = (Brush)FindResource("TextDim") });
+            NotesPanel.Children.Add(new TextBlock { Text = L.T("No notes for this version."), Foreground = Res.Brush("TextDim") });
             return;
         }
         foreach (var line in lines)
@@ -90,13 +77,13 @@ public partial class UpdateWindow : Window
                 case NoteKind.Heading:
                     NotesPanel.Children.Add(new TextBlock
                     {
-                        Text = line.Text, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap,
+                        Text = line.Text, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap,
                         Margin = new Thickness(0, NotesPanel.Children.Count == 0 ? 0 : 4, 0, 2),
                     });
                     break;
                 case NoteKind.Bullet:
                     var row = new DockPanel { Margin = new Thickness(4, 1, 0, 1) };
-                    var dot = new TextBlock { Text = "•", Margin = new Thickness(0, 0, 8, 0), Foreground = (Brush)FindResource("Accent") };
+                    var dot = new TextBlock { Text = "•", Margin = new Thickness(0, 0, 8, 0), Foreground = Res.Brush("Accent") };
                     DockPanel.SetDock(dot, Dock.Left);
                     row.Children.Add(dot);
                     row.Children.Add(new TextBlock { Text = line.Text, TextWrapping = TextWrapping.Wrap });
@@ -109,7 +96,7 @@ public partial class UpdateWindow : Window
         }
     }
 
-    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
+    private async void UpdateButton_Click(object? sender, RoutedEventArgs e)
     {
         if (download != null || !canInstall) return;
         if (!service.CanSelfUpdate())
@@ -163,13 +150,13 @@ public partial class UpdateWindow : Window
         }
     }
 
-    private void LaterButton_Click(object sender, RoutedEventArgs e)
+    private void LaterButton_Click(object? sender, RoutedEventArgs e)
     {
         if (download != null) download.Cancel(); // while downloading this button is Cancel
         else Close();
     }
 
-    private void SkipButton_Click(object sender, RoutedEventArgs e)
+    private void SkipButton_Click(object? sender, RoutedEventArgs e)
     {
         controller.Settings.SkippedUpdateVersion = release.Version.ToString();
         controller.Save();
@@ -182,23 +169,21 @@ public partial class UpdateWindow : Window
         UpdateButton.IsEnabled = !busy && canInstall;
         SkipButton.IsEnabled = !busy;
         LaterButton.Content = busy ? L.T("Cancel") : L.T("Later");
-        ProgressTrack.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        ProgressTrack.IsVisible = busy;
     }
 
     private void ShowStatus(string text, bool problem)
     {
         StatusText.Text = text;
-        StatusText.Foreground = (Brush)FindResource(problem ? "Warn" : "TextDim");
-        StatusText.Visibility = Visibility.Visible;
+        StatusText.Foreground = Res.Brush(problem ? "Warn" : "TextDim");
+        StatusText.IsVisible = true;
     }
 
     private void SetProgress(double value)
     {
         progressValue = Math.Clamp(value, 0, 1);
-        ProgressFill.Width = ProgressTrack.ActualWidth * progressValue;
+        ProgressFill.Width = ProgressTrack.Bounds.Width * progressValue;
     }
-
-    private void ProgressTrack_SizeChanged(object sender, SizeChangedEventArgs e) => SetProgress(progressValue);
 
     private static void OpenPage(string url)
     {

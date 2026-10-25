@@ -1,5 +1,6 @@
-using System.Windows;
-using System.Windows.Input;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Text;
 
@@ -7,9 +8,9 @@ namespace EasyVocal;
 
 /// <summary>
 /// "Press the key or combination…": shows the press live, refuses a hotkey another voice, sound or action already
-/// uses, warns about keys that would stop typing in other apps, and checks Windows will give the key to us.
+/// uses, warns about keys that would stop typing in other apps, and checks the system will give the key to us.
 /// </summary>
-public partial class HotkeyCaptureDialog : Window
+public partial class HotkeyCaptureDialog : AppWindow
 {
     private readonly AppController controller;
     private readonly string actionId;
@@ -21,33 +22,34 @@ public partial class HotkeyCaptureDialog : Window
         this.controller = controller;
         this.actionId = actionId;
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "hotkey", null); // kept on screen; it opens over its owner every time
+        Place("hotkey", null); // kept on screen; it opens over its owner every time
         ItemText.Text = L.F("Hotkey for {0}", itemName);
-        RemoveButton.Visibility = string.IsNullOrEmpty(current) ? Visibility.Collapsed : Visibility.Visible;
+        RemoveButton.IsVisible = !string.IsNullOrEmpty(current);
         if (Hotkey.TryParse(current, out var key)) captured = key;
         Refresh();
-        Loaded += (_, _) => Focus();
+        // Before any button sees the key (a hotkey may be Space or a letter).
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
     }
 
     /// <summary>The chosen hotkey as saved in settings ("Ctrl+1"); null when the person removed it.</summary>
     public string? Result { get; private set; }
 
+    /// <summary>What <see cref="PickAsync"/> gives back: <see cref="Ok"/> when a hotkey was saved or removed (<see cref="Hotkey"/> null = removed).</summary>
+    public readonly record struct Pick(bool Ok, string? Hotkey);
+
     /// <summary>
-    /// Opens the dialog. True when the person saved or removed a hotkey (<paramref name="result"/> null = removed).
-    /// The app's own hotkeys are let go while it is open (they would swallow the press) and taken back afterwards.
+    /// Opens the dialog and waits. The app's own hotkeys are let go while it is open (they would swallow the press)
+    /// and taken back afterwards.
     /// </summary>
-    public static bool Pick(Window? owner, AppController controller, string actionId, string itemName, string? current, out string? result)
+    public static async Task<Pick> PickAsync(Window? owner, AppController controller, string actionId, string itemName, string? current)
     {
         controller.SuspendHotkeys();
         try
         {
             var dialog = new HotkeyCaptureDialog(controller, actionId, itemName, current);
-            if (owner != null) dialog.Owner = owner;
-            else dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            bool ok = dialog.ShowDialog() == true;
-            result = ok ? dialog.Result : null;
-            return ok;
+            await dialog.ShowAsync(owner);
+            return dialog.Accepted ? new Pick(true, dialog.Result) : new Pick(false, null);
         }
         finally
         {
@@ -62,49 +64,36 @@ public partial class HotkeyCaptureDialog : Window
     /// <summary>For the smoke and e2e tests: the same as pressing the combination.</summary>
     internal void Simulate(HotkeyMods mods, int virtualKey) => Capture(mods, virtualKey);
 
-    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
-        base.OnPreviewKeyDown(e);
-        var key = e.Key switch
+        var mods = KeyMap.Mods(e.KeyModifiers);
+        if (e.Key == Key.Escape && mods == HotkeyMods.None)
         {
-            Key.System => e.SystemKey,
-            Key.ImeProcessed => e.ImeProcessedKey,
-            _ => e.Key,
-        };
-        var mods = CurrentMods();
-        if (key == Key.Escape && mods == HotkeyMods.None)
-        {
-            DialogResult = false;
             e.Handled = true;
+            Close();
             return;
         }
-        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+        if (KeyMap.IsModifier(e.Key))
         {
-            KeyText.Text = Hotkey.ModsPrefix(mods) + "…"; // only modifiers so far
+            KeyText.Text = Hotkey.ModsPrefix(mods | KeyMap.ModOf(e.Key)) + "…"; // only modifiers so far
             showingMods = true;
             e.Handled = true;
             return;
         }
-        if (Capture(mods, KeyInterop.VirtualKeyFromKey(key))) e.Handled = true;
+        if (Capture(mods, KeyMap.VirtualKey(e.Key))) e.Handled = true;
     }
 
-    protected override void OnPreviewKeyUp(KeyEventArgs e)
+    private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
     {
-        base.OnPreviewKeyUp(e);
-        if (!showingMods || CurrentMods() != HotkeyMods.None) return;
+        if (!showingMods) return;
+        var left = KeyMap.Mods(e.KeyModifiers) & ~KeyMap.ModOf(e.Key);
+        if (left != HotkeyMods.None)
+        {
+            KeyText.Text = Hotkey.ModsPrefix(left) + "…";
+            return;
+        }
         showingMods = false;
         Refresh();
-    }
-
-    private static HotkeyMods CurrentMods()
-    {
-        var m = Keyboard.Modifiers;
-        var mods = HotkeyMods.None;
-        if ((m & ModifierKeys.Control) != 0) mods |= HotkeyMods.Ctrl;
-        if ((m & ModifierKeys.Alt) != 0) mods |= HotkeyMods.Alt;
-        if ((m & ModifierKeys.Shift) != 0) mods |= HotkeyMods.Shift;
-        if ((m & ModifierKeys.Windows) != 0) mods |= HotkeyMods.Win;
-        return mods;
     }
 
     /// <summary>True when the press is a hotkey we can use (the event is then handled).</summary>
@@ -113,14 +102,15 @@ public partial class HotkeyCaptureDialog : Window
         var key = Hotkey.FromKeyEvent(mods, virtualKey);
         if (key == null) return false; // Enter, Tab… are left to the buttons
         captured = key;
+        showingMods = false;
         Refresh();
         return true;
     }
 
     private void Refresh()
     {
-        ProblemText.Visibility = Visibility.Collapsed;
-        TypingNote.Visibility = Visibility.Collapsed;
+        ProblemText.IsVisible = false;
+        TypingNote.IsVisible = false;
         if (captured is not { } key)
         {
             KeyText.Text = "…";
@@ -139,17 +129,17 @@ public partial class HotkeyCaptureDialog : Window
         if (key.IsPlainTypingKey)
         {
             TypingNoteText.Text = L.F("While EasyVocal is open, this key will stop typing '{0}' in other apps. Ctrl+{0} or the number pad avoid that.", key.KeyName);
-            TypingNote.Visibility = Visibility.Visible;
+            TypingNote.IsVisible = true;
         }
     }
 
     private void ShowProblem(string text)
     {
         ProblemText.Text = text;
-        ProblemText.Visibility = Visibility.Visible;
+        ProblemText.IsVisible = true;
     }
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    private void SaveButton_Click(object? sender, RoutedEventArgs e)
     {
         if (captured is not { } key) return;
         if (!controller.IsHotkeyFree(key))
@@ -159,12 +149,12 @@ public partial class HotkeyCaptureDialog : Window
             return;
         }
         Result = key.ToString();
-        DialogResult = true;
+        Accept();
     }
 
-    private void RemoveButton_Click(object sender, RoutedEventArgs e)
+    private void RemoveButton_Click(object? sender, RoutedEventArgs e)
     {
         Result = null;
-        DialogResult = true;
+        Accept();
     }
 }

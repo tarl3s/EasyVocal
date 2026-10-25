@@ -1,11 +1,13 @@
-using System.ComponentModel;
 using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
@@ -16,13 +18,12 @@ namespace EasyVocal;
 /// The top bar and the Voices / Sounds tabs. Only shows what <see cref="AppController"/> holds and forwards clicks
 /// to it; no audio logic lives here.
 /// </summary>
-public partial class MainWindow : Window
+public partial class MainWindow : AppWindow
 {
     private readonly AppController controller;
     private readonly DispatcherTimer meterTimer;
     private readonly Dictionary<string, Card> voiceCards = new();
     private readonly Dictionary<string, Card> soundCards = new();
-    private readonly FontFamily emojiFont;
     private string layoutKey = "";
     private bool showHidden;
     private bool allowClose;
@@ -39,24 +40,26 @@ public partial class MainWindow : Window
 
         public Button Button { get; }
         public Border Outline { get; }
-        public bool Pulsing { get; set; }
     }
 
     public MainWindow(AppController controller)
     {
         this.controller = controller;
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "main", controller);
-        emojiFont = (FontFamily)FindResource("EmojiFont");
+        Place("main", controller);
 
-        meterTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher) { Interval = TimeSpan.FromMilliseconds(33) };
+        meterTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
         meterTimer.Tick += (_, _) => UpdateMeter();
-        IsVisibleChanged += (_, _) =>
+        PropertyChanged += (_, e) =>
         {
+            if (e.Property != IsVisibleProperty) return;
             if (IsVisible) { meterTimer.Start(); UpdateAll(); }
             else meterTimer.Stop();
         };
+        Opened += (_, _) => meterTimer.Start();
+
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
 
         controller.Changed += UpdateAll;
         UpdateAll();
@@ -78,11 +81,12 @@ public partial class MainWindow : Window
     /// <summary>Lets the next Close really close (quitting); otherwise closing hides to the tray.</summary>
     public void AllowClose() => allowClose = true;
 
-    protected override void OnClosing(CancelEventArgs e)
+    protected override void OnClosing(WindowClosingEventArgs e)
     {
         base.OnClosing(e);
-        if (allowClose) return;
+        if (allowClose || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown) return;
         e.Cancel = true;
+        WindowPlacer.Remember(this, "main", controller);
         Hide();
         HiddenToTray?.Invoke();
     }
@@ -137,11 +141,11 @@ public partial class MainWindow : Window
         SoundsUseVoiceBox.IsChecked = controller.SoundsUseVoice;
 
         var problems = controller.HotkeyProblems;
-        HotkeyNote.Visibility = problems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        HotkeyNote.IsVisible = problems.Count > 0;
         HotkeyNote.Text = problems.Count > 0 ? "⚠ " + string.Join(" ", problems) : "";
     }
 
-    /// <summary>The banner's Fix puts Windows' sound back on a real device (instead of opening the setup).</summary>
+    /// <summary>The banner's Fix puts the system's sound back on a real device (instead of opening the setup).</summary>
     private bool fixDefaults;
 
     private void UpdateBanner()
@@ -167,11 +171,11 @@ public partial class MainWindow : Window
                 ShowBanner(L.T("Virtual microphone not found"), fix: true, chooseMic: false);
                 break;
             case EngineState.Running when controller.MicStandIn is { } standIn:
-                // The chosen mic has been gone a while: Windows' default is used for now (the choice is kept).
+                // The chosen mic has been gone a while: the system's default is used for now (the choice is kept).
                 ShowBanner(L.F("Your microphone isn't connected, so EasyVocal is using {0} for now.", standIn), fix: false, chooseMic: true);
                 break;
             default:
-                Banner.Visibility = Visibility.Collapsed;
+                Banner.IsVisible = false;
                 break;
         }
     }
@@ -179,16 +183,16 @@ public partial class MainWindow : Window
     private void ShowBanner(string text, bool fix, bool chooseMic)
     {
         BannerText.Text = text;
-        FixButton.Visibility = fix ? Visibility.Visible : Visibility.Collapsed;
-        MicButton.Visibility = chooseMic ? Visibility.Visible : Visibility.Collapsed;
-        Banner.Visibility = Visibility.Visible;
+        FixButton.IsVisible = fix;
+        MicButton.IsVisible = chooseMic;
+        Banner.IsVisible = true;
     }
 
     private void UpdateMeter()
     {
         if (WindowState == WindowState.Minimized) return;
-        meterShown = Core.Engine.MicMeter.NextFill(meterShown, controller.InputLevel);
-        MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
+        meterShown = MicMeter.NextFill(meterShown, controller.InputLevel);
+        MeterBar.Width = Math.Max(0, MeterTrack.Bounds.Width * meterShown);
     }
 
     // ---------- cards ----------
@@ -201,13 +205,12 @@ public partial class MainWindow : Window
         {
             if (v.Hidden && !showHidden) continue;
             var id = v.Id;
-            var card = MakeCard(v.Emoji, AppController.DisplayName(v), v.Hotkey, v.Hidden);
+            var card = MakeCard(v.Emoji, AppController.DisplayName(v), v.Hotkey, v.Hidden, () => VoiceMenu(v));
             card.Button.Click += (_, _) =>
             {
                 if (v.Hidden) controller.SetVoiceHidden(id, false);
                 else controller.SelectVoice(id);
             };
-            card.Button.ContextMenu = VoiceMenu(v);
             voiceCards[id] = card;
             VoicePanel.Children.Add(card.Button);
         }
@@ -224,14 +227,13 @@ public partial class MainWindow : Window
             if (s.Hidden && !showHidden) continue;
             var id = s.Id;
             bool broken = !s.Hidden && controller.IsSoundBroken(id);
-            var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden, broken);
+            var card = MakeCard(s.Emoji, AppController.DisplayName(s), s.Hotkey, s.Hidden, () => SoundMenu(s), broken);
             card.Button.Click += (_, _) =>
             {
                 if (s.Hidden) controller.SetSoundHidden(id, false);
-                else if (controller.IsSoundBroken(id)) AskDialog.Tell(this, L.T("This sound file couldn't be opened"));
+                else if (controller.IsSoundBroken(id)) _ = AskDialog.TellAsync(this, L.T("This sound file couldn't be opened"));
                 else controller.ToggleSound(id);
             };
-            card.Button.ContextMenu = SoundMenu(s);
             soundCards[id] = card;
             SoundPanel.Children.Add(card.Button);
         }
@@ -241,7 +243,7 @@ public partial class MainWindow : Window
     /// <summary>Active voice outlined; playing sounds outlined and pulsing.</summary>
     private void UpdateCards()
     {
-        var accent = (Brush)FindResource("Accent");
+        var accent = Res.Brush("Accent");
         var active = controller.ActiveVoice.Id;
         foreach (var (id, card) in voiceCards)
             card.Button.BorderBrush = id == active ? accent : Brushes.Transparent;
@@ -249,36 +251,22 @@ public partial class MainWindow : Window
         {
             bool playing = controller.IsPlaying(id);
             card.Button.BorderBrush = playing ? accent : Brushes.Transparent;
-            if (playing == card.Pulsing) continue;
-            card.Pulsing = playing;
-            if (playing)
-            {
-                var pulse = new DoubleAnimation(0.9, 0.15, TimeSpan.FromMilliseconds(550))
-                {
-                    AutoReverse = true,
-                    RepeatBehavior = RepeatBehavior.Forever,
-                };
-                card.Outline.BeginAnimation(OpacityProperty, pulse);
-            }
-            else
-            {
-                card.Outline.BeginAnimation(OpacityProperty, null);
-                card.Outline.Opacity = 0;
-            }
+            card.Outline.Classes.Set("playing", playing);
         }
     }
 
-    private Card MakeCard(string emoji, string name, string? hotkey, bool hidden, bool broken = false)
+    private Card MakeCard(string emoji, string name, string? hotkey, bool hidden, Func<ContextMenu> menu, bool broken = false)
     {
-        var button = new Button { Style = (Style)FindResource("CardButton"), AllowDrop = true, ToolTip = broken ? L.T("This sound file couldn't be opened") : name };
-        var grid = new Grid();
+        var button = new Button { Theme = Res.Theme("CardButton") };
+        ToolTip.SetTip(button, broken ? L.T("This sound file couldn't be opened") : name);
+        var grid = new Panel();
 
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         if (broken) stack.Opacity = 0.55; // dimmed, with a ⚠ below: the file didn't load
         stack.Children.Add(new TextBlock
         {
             Text = emoji,
-            FontFamily = emojiFont,
+            FontFamily = Res.Emoji,
             FontSize = 30,
             HorizontalAlignment = HorizontalAlignment.Center,
             Opacity = hidden ? 0.4 : 1,
@@ -289,12 +277,12 @@ public partial class MainWindow : Window
             FontSize = 12.5,
             Margin = new Thickness(0, 4, 0, 0),
             MaxWidth = 98,
-            MaxHeight = 34, // two lines, then "…"
+            MaxLines = 2, // two lines, then "…"
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = hidden ? (Brush)FindResource("TextDim") : (Brush)FindResource("Text"),
+            Foreground = hidden ? Res.Brush("TextDim") : Res.Brush("Text"),
         });
         if (broken)
         {
@@ -303,7 +291,7 @@ public partial class MainWindow : Window
                 Text = "⚠",
                 FontSize = 12,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = (Brush)FindResource("Warn"),
+                Foreground = Res.Brush("Warn"),
             });
         }
         if (hidden)
@@ -313,7 +301,7 @@ public partial class MainWindow : Window
                 Text = L.T("Unhide"),
                 FontSize = 11,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = (Brush)FindResource("Accent"),
+                Foreground = Res.Brush("Accent"),
             });
         }
         grid.Children.Add(stack);
@@ -322,13 +310,13 @@ public partial class MainWindow : Window
         {
             grid.Children.Add(new Border
             {
-                Background = (Brush)FindResource("Bg0"),
+                Background = Res.Brush("Bg0"),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(4, 0, 4, 1),
                 Margin = new Thickness(0, 4, 5, 0),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Top,
-                Child = new TextBlock { Text = hotkey, FontSize = 10, Foreground = (Brush)FindResource("TextDim") },
+                Child = new TextBlock { Text = hotkey, FontSize = 10, Foreground = Res.Brush("TextDim") },
             });
         }
 
@@ -336,50 +324,44 @@ public partial class MainWindow : Window
         var more = new Button
         {
             Content = "⋯",
-            Style = (Style)FindResource("FlatButton"),
+            Theme = Res.Theme("FlatButton"),
             Padding = new Thickness(5, 0, 5, 2),
             FontSize = 14,
             Margin = new Thickness(2),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
-            Visibility = Visibility.Hidden,
-            ToolTip = L.T("More"),
+            IsVisible = false,
         };
+        ToolTip.SetTip(more, L.T("More"));
         more.Click += (_, e) =>
         {
             e.Handled = true; // don't let the click reach the card (it would pick the voice / play the sound)
-            if (button.ContextMenu == null) return;
-            button.ContextMenu.PlacementTarget = more;
-            button.ContextMenu.Placement = PlacementMode.Bottom;
-            button.ContextMenu.IsOpen = true;
+            var m = menu();
+            m.Placement = PlacementMode.Bottom;
+            m.Open(more);
         };
         grid.Children.Add(more);
-        button.MouseEnter += (_, _) => more.Visibility = Visibility.Visible;
-        button.MouseLeave += (_, _) => more.Visibility = Visibility.Hidden;
-        button.ContextMenuOpening += (_, _) =>
-        {
-            if (button.ContextMenu == null) return;
-            button.ContextMenu.PlacementTarget = button;
-            button.ContextMenu.Placement = PlacementMode.MousePoint;
-        };
+        button.PointerEntered += (_, _) => more.IsVisible = true;
+        button.PointerExited += (_, _) => more.IsVisible = false;
+        button.ContextMenu = menu();
 
         // Pulsing outline for a playing sound (drawn over the card's own border).
         var outline = new Border
         {
-            BorderBrush = (Brush)FindResource("Accent"),
+            BorderBrush = Res.Brush("Accent"),
             BorderThickness = new Thickness(2),
             CornerRadius = new CornerRadius(8),
             Margin = new Thickness(-2),
-            Opacity = 0,
             IsHitTestVisible = false,
         };
+        outline.Classes.Add("pulse");
         grid.Children.Add(outline);
 
         button.Content = grid;
         return new Card(button, outline);
     }
 
-    private Button MakeAddCard(string text, RoutedEventHandler click)
+    private Button MakeAddCard(string text, EventHandler<RoutedEventArgs> click)
     {
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         stack.Children.Add(new TextBlock { Text = "＋", FontSize = 26, HorizontalAlignment = HorizontalAlignment.Center });
@@ -391,29 +373,31 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center,
         });
-        var button = new Button { Style = (Style)FindResource("AddCardButton"), Content = stack, ToolTip = text, AllowDrop = true };
+        var button = new Button { Theme = Res.Theme("AddCardButton"), Content = stack };
+        ToolTip.SetTip(button, text);
         button.Click += click;
         return button;
     }
 
     /// <summary>Keeps the AI pack's place: a disabled card.</summary>
-    private Border MakeComingLaterCard()
+    private static Border MakeComingLaterCard()
     {
-        var dim = (Brush)FindResource("TextDim");
+        var dim = Res.Brush("TextDim");
         var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        stack.Children.Add(new TextBlock { Text = "🧠", FontFamily = emojiFont, FontSize = 26, Opacity = 0.5, HorizontalAlignment = HorizontalAlignment.Center });
+        stack.Children.Add(new TextBlock { Text = "🧠", FontFamily = Res.Emoji, FontSize = 26, Opacity = 0.5, HorizontalAlignment = HorizontalAlignment.Center });
         stack.Children.Add(new TextBlock { Text = L.T("AI voices"), FontSize = 12.5, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
         stack.Children.Add(new TextBlock { Text = L.T("coming later"), FontSize = 11, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center });
-        return new Border
+        var card = new Border
         {
             Width = 110,
             Height = 96,
             Margin = new Thickness(0, 0, 8, 8),
             CornerRadius = new CornerRadius(8),
-            Background = (Brush)FindResource("Bg1"),
+            Background = Res.Brush("Bg1"),
             Child = stack,
-            ToolTip = L.T("Realistic AI voices will be an optional download in a later version."),
         };
+        ToolTip.SetTip(card, L.T("Realistic AI voices will be an optional download in a later version."));
+        return card;
     }
 
     private ContextMenu VoiceMenu(VoicePreset v)
@@ -461,12 +445,12 @@ public partial class MainWindow : Window
     /// <summary>A built-in voice opens as a copy ("Save as new filter").</summary>
     private void EditVoice(string id)
     {
-        if (VoiceById(id) is { } v) new FilterEditorWindow(controller, v) { Owner = this }.ShowDialog();
+        if (VoiceById(id) is { } v) _ = new FilterEditorWindow(controller, v).ShowAsync(this);
     }
 
     private void EditSound(string id)
     {
-        if (SoundById(id) is { } s) new SoundEditorWindow(controller, s, null) { Owner = this }.ShowDialog();
+        if (SoundById(id) is { } s) _ = new SoundEditorWindow(controller, s, null).ShowAsync(this);
     }
 
     private void EditSoundAudio(string id)
@@ -476,21 +460,23 @@ public partial class MainWindow : Window
 
     private void SetVoiceHotkey(string id)
     {
-        if (VoiceById(id) is { } v) AssignHotkey("voice:" + id, AppController.DisplayName(v), v.Hotkey, key => v.Hotkey = key);
+        if (VoiceById(id) is { } v) _ = AssignHotkeyAsync("voice:" + id, AppController.DisplayName(v), v.Hotkey, key => v.Hotkey = key);
     }
 
     private void SetSoundHotkey(string id)
     {
-        if (SoundById(id) is { } s) AssignHotkey("sound:" + id, AppController.DisplayName(s), s.Hotkey, key => s.Hotkey = key);
+        if (SoundById(id) is { } s) _ = AssignHotkeyAsync("sound:" + id, AppController.DisplayName(s), s.Hotkey, key => s.Hotkey = key);
     }
 
     /// <summary>
-    /// Asks for a key, saves it and registers it. If Windows refuses it (another app owns it) the old hotkey
+    /// Asks for a key, saves it and registers it. If the system refuses it (another app owns it) the old hotkey
     /// comes back and the person is told.
     /// </summary>
-    private void AssignHotkey(string actionId, string name, string? current, Action<string?> set)
+    private async Task AssignHotkeyAsync(string actionId, string name, string? current, Action<string?> set)
     {
-        if (!HotkeyCaptureDialog.Pick(this, controller, actionId, name, current, out var chosen)) return;
+        var pick = await HotkeyCaptureDialog.PickAsync(this, controller, actionId, name, current);
+        if (!pick.Ok) return;
+        var chosen = pick.Hotkey;
         set(chosen);
         controller.Save();
         controller.RebuildHotkeys(); // unregisters first; refused keys are listed in HotkeyProblems (shown above the tabs)
@@ -498,84 +484,82 @@ public partial class MainWindow : Window
         set(current);
         controller.Save();
         controller.RebuildHotkeys();
-        AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", chosen));
+        await AskDialog.TellAsync(this, L.F("Another app is already using {0}. Pick a different one.", chosen));
     }
 
-    private void DeleteVoice(string id)
+    private async void DeleteVoice(string id)
     {
-        if (VoiceById(id) is { } v && ConfirmDelete(AppController.DisplayName(v))) controller.DeleteVoice(id);
+        if (VoiceById(id) is { } v && await ConfirmDeleteAsync(AppController.DisplayName(v))) controller.DeleteVoice(id);
     }
 
-    private void DeleteSound(string id)
+    private async void DeleteSound(string id)
     {
-        if (SoundById(id) is { } s && ConfirmDelete(AppController.DisplayName(s))) controller.DeleteSound(id);
+        if (SoundById(id) is { } s && await ConfirmDeleteAsync(AppController.DisplayName(s))) controller.DeleteSound(id);
     }
 
-    private bool ConfirmDelete(string name) =>
-        AskDialog.Ask(this, L.F("Delete “{0}”? This can't be undone.", name), L.T("Delete"), L.T("Cancel"), null, out _);
+    private async Task<bool> ConfirmDeleteAsync(string name) =>
+        (await AskDialog.AskAsync(this, L.F("Delete “{0}”? This can't be undone.", name), L.T("Delete"), L.T("Cancel"), null)).Yes;
 
-    private void NewFilter_Click(object sender, RoutedEventArgs e) => new FilterEditorWindow(controller, null) { Owner = this }.ShowDialog();
+    private void NewFilter_Click(object? sender, RoutedEventArgs e) => _ = new FilterEditorWindow(controller, null).ShowAsync(this);
 
-    private void AddSound_Click(object sender, RoutedEventArgs e) => OpenSoundEditor(null);
+    private void AddSound_Click(object? sender, RoutedEventArgs e) => OpenSoundEditor(null);
 
     /// <summary>The sound editor for a new sound, starting from <paramref name="path"/> when given (the e2e test uses it with a file).</summary>
-    internal void OpenSoundEditor(string? path) => new SoundEditorWindow(controller, null, path) { Owner = this }.ShowDialog();
+    internal void OpenSoundEditor(string? path) => _ = new SoundEditorWindow(controller, null, path).ShowAsync(this);
 
     // ---------- drag and drop: sound files dropped on the window add sounds ----------
 
-    protected override void OnPreviewDragOver(DragEventArgs e)
+    private void OnDragOver(object? sender, DragEventArgs e)
     {
-        base.OnPreviewDragOver(e);
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-        e.Effects = DragDropEffects.Copy;
+        if (!e.DataTransfer.Contains(DataFormat.File)) return;
+        e.DragEffects = DragDropEffects.Copy;
         e.Handled = true;
     }
 
-    protected override void OnPreviewDrop(DragEventArgs e)
+    private async void OnDrop(object? sender, DragEventArgs e)
     {
-        base.OnPreviewDrop(e);
-        if (e.Data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } files) return;
+        var files = (e.DataTransfer.TryGetFiles() ?? Array.Empty<IStorageItem>())
+            .Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
+        if (files.Count == 0) return;
         e.Handled = true;
         Tabs.SelectedIndex = 1;
         // One editor per file, one after the other (the Cancel button of one stops the rest).
-        Dispatcher.BeginInvoke(() =>
+        foreach (var file in files)
         {
-            foreach (var file in files)
-            {
-                var editor = new SoundEditorWindow(controller, null, file) { Owner = this };
-                if (editor.ShowDialog() != true) break;
-            }
-        });
+            var editor = new SoundEditorWindow(controller, null, file);
+            await editor.ShowAsync(this);
+            if (!editor.Accepted) break;
+        }
     }
 
     // ---------- top bar and footers ----------
 
-    private void OnOffButton_Click(object sender, RoutedEventArgs e) => controller.FilterEnabled = OnOffButton.IsChecked == true;
+    private void OnOffButton_Click(object? sender, RoutedEventArgs e) => controller.FilterEnabled = OnOffButton.IsChecked == true;
 
-    private void MuteButton_Click(object sender, RoutedEventArgs e) => controller.MicMuted = MuteButton.IsChecked == true;
+    private void MuteButton_Click(object? sender, RoutedEventArgs e) => controller.MicMuted = MuteButton.IsChecked == true;
 
-    private void HearMeButton_Click(object sender, RoutedEventArgs e) => controller.HearMe = HearMeButton.IsChecked == true;
+    private void HearMeButton_Click(object? sender, RoutedEventArgs e) => controller.HearMe = HearMeButton.IsChecked == true;
 
-    private void SettingsButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
+    private void SettingsButton_Click(object? sender, RoutedEventArgs e) => _ = SettingsWindow.OpenAsync(controller, this);
 
-    private void FixButton_Click(object sender, RoutedEventArgs e)
+    private async void FixButton_Click(object? sender, RoutedEventArgs e)
     {
         if (!fixDefaults)
         {
-            SetupWindow.Open(controller, this);
+            await SetupWindow.OpenAsync(controller, this);
             return;
         }
         if (!controller.FixDefaults())
-            AskDialog.Tell(this, L.T("Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings."));
+            await AskDialog.TellAsync(this, L.T("Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings."));
     }
 
-    private void MicButton_Click(object sender, RoutedEventArgs e) => SettingsWindow.Open(controller, this);
+    private void MicButton_Click(object? sender, RoutedEventArgs e) => _ = SettingsWindow.OpenAsync(controller, this);
 
-    private void StopAllButton_Click(object sender, RoutedEventArgs e) => controller.StopAllSounds();
+    private void StopAllButton_Click(object? sender, RoutedEventArgs e) => controller.StopAllSounds();
 
-    private void SoundsUseVoice_Click(object sender, RoutedEventArgs e) => controller.SoundsUseVoice = SoundsUseVoiceBox.IsChecked == true;
+    private void SoundsUseVoice_Click(object? sender, RoutedEventArgs e) => controller.SoundsUseVoice = SoundsUseVoiceBox.IsChecked == true;
 
-    private void ShowHidden_Click(object sender, RoutedEventArgs e) => SetShowHidden(((CheckBox)sender).IsChecked == true);
+    private void ShowHidden_Click(object? sender, RoutedEventArgs e) => SetShowHidden(((CheckBox)sender!).IsChecked == true);
 
     /// <summary>Lists hidden items too (greyed, a click unhides them).</summary>
     internal void SetShowHidden(bool show)

@@ -1,6 +1,10 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Text;
 
@@ -14,7 +18,7 @@ namespace EasyVocal;
 /// changed, and everything is put back when the window closes.
 /// Editing a built-in voice opens a copy (it can't be changed): the button says "Save as new filter".
 /// </summary>
-public partial class FilterEditorWindow : Window
+public partial class FilterEditorWindow : AppWindow
 {
     private sealed record Row(Slider Slider, Func<VoiceSliders, double> Get, Action<VoiceSliders, double> Set, bool Snaps);
 
@@ -31,8 +35,7 @@ public partial class FilterEditorWindow : Window
     {
         this.controller = controller;
         InitializeComponent();
-        DarkTitleBar.Use(this);
-        WindowPlacer.Use(this, "filterEditor", controller);
+        Place("filterEditor", controller);
 
         bool asCopy = editing == null || editing.BuiltIn;
         this.editing = asCopy ? null : editing;
@@ -44,7 +47,6 @@ public partial class FilterEditorWindow : Window
             : editing.BuiltIn ? L.F("{0} copy", AppController.DisplayName(editing))
             : editing.Name;
         NameBox.Text = asCopy ? ItemOps.UniqueName(names, name) : name;
-        NameBox.SelectAll();
 
         emojiGrid = new EmojiGrid(editing?.Emoji ?? "🎤");
         EmojiHost.Content = emojiGrid;
@@ -61,7 +63,7 @@ public partial class FilterEditorWindow : Window
         controller.PreviewSliders(current);
 
         loading = false;
-        Loaded += (_, _) =>
+        Opened += (_, _) =>
         {
             NameBox.Focus();
             NameBox.SelectAll();
@@ -73,7 +75,10 @@ public partial class FilterEditorWindow : Window
         };
     }
 
-    private void HearToggle_Click(object sender, RoutedEventArgs e) => controller.PreviewHearMe(HearToggle.IsChecked == true);
+    /// <summary>The nine sliders, in order (for the tests).</summary>
+    internal IReadOnlyList<Slider> Sliders => rows.Select(r => r.Slider).ToList();
+
+    private void HearToggle_Click(object? sender, RoutedEventArgs e) => controller.PreviewHearMe(HearToggle.IsChecked == true);
 
     // ---------- start from ----------
 
@@ -87,11 +92,11 @@ public partial class FilterEditorWindow : Window
         // A new filter starts from Normal; a copy of a built-in from that voice; editing your own filter from nothing.
         var start = editing == null ? controller.Settings.Voices.FirstOrDefault(v => v.Id == AppController.NormalVoiceId)
             : editing.BuiltIn ? editing : null;
-        foreach (ComboBoxItem item in StartBox.Items)
+        foreach (var item in StartBox.Items.OfType<ComboBoxItem>())
             if (ReferenceEquals(item.Tag, start)) StartBox.SelectedItem = item;
     }
 
-    private void StartBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void StartBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (loading || StartBox.SelectedItem is not ComboBoxItem { Tag: VoicePreset voice }) return;
         current = voice.Sliders.Clone();
@@ -117,16 +122,13 @@ public partial class FilterEditorWindow : Window
 
     private void AddRow(string title, string left, string right, double min, Func<VoiceSliders, double> get, Action<VoiceSliders, double> set, bool snaps = false)
     {
-        var dim = (Brush)FindResource("TextDim");
+        var dim = Res.Brush("TextDim");
         var slider = new Slider { Minimum = min, Maximum = 1, SmallChange = 0.02, LargeChange = 0.1, VerticalAlignment = VerticalAlignment.Center };
         var row = new Row(slider, get, set, snaps);
         slider.ValueChanged += (_, e) => OnSliderMoved(row, e.NewValue);
         rows.Add(row);
 
-        var line = new Grid { Margin = new Thickness(0, 2, 0, 0) };
-        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
-        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
+        var line = new Grid { Margin = new Thickness(0, 2, 0, 0), ColumnDefinitions = new ColumnDefinitions("64,*,64") };
         var l = new TextBlock { Text = left, Foreground = dim, FontSize = 12, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
         var r = new TextBlock { Text = right, Foreground = dim, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
         Grid.SetColumn(slider, 1);
@@ -160,7 +162,7 @@ public partial class FilterEditorWindow : Window
         loading = was;
     }
 
-    private void ResetButton_Click(object sender, RoutedEventArgs e)
+    private void ResetButton_Click(object? sender, RoutedEventArgs e)
     {
         current = baseline.Clone();
         ShowValues();
@@ -169,13 +171,13 @@ public partial class FilterEditorWindow : Window
 
     // ---------- save ----------
 
-    private void NameBox_TextChanged(object sender, TextChangedEventArgs e) => UpdateSave();
+    private void NameBox_TextChanged(object? sender, TextChangedEventArgs e) => UpdateSave();
 
     private void UpdateSave() => SaveButton.IsEnabled = !string.IsNullOrWhiteSpace(NameBox.Text);
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    private void SaveButton_Click(object? sender, RoutedEventArgs e)
     {
-        var name = NameBox.Text.Trim();
+        var name = (NameBox.Text ?? "").Trim();
         if (name.Length == 0) return;
         if (editing != null)
         {
@@ -194,6 +196,6 @@ public partial class FilterEditorWindow : Window
                 Sliders = current.Clamp(),
             });
         }
-        DialogResult = true;
+        Accept();
     }
 }

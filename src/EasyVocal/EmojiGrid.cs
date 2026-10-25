@@ -1,6 +1,7 @@
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
 
 namespace EasyVocal;
 
@@ -25,8 +26,8 @@ public sealed class EmojiGrid : WrapPanel
     public EmojiGrid(string? current)
     {
         selected = string.IsNullOrEmpty(current) ? Choices[0] : current;
-        var style = (Style)Application.Current.FindResource("CardButton");
-        var font = (FontFamily)Application.Current.FindResource("EmojiFont");
+        var theme = Res.Theme("CardButton");
+        var font = Res.Emoji;
         var list = new List<string>(Choices);
         if (!list.Contains(selected)) list.Insert(0, selected); // an emoji from an older version is still there to keep
         foreach (var emoji in list)
@@ -34,7 +35,7 @@ public sealed class EmojiGrid : WrapPanel
             var text = emoji;
             var cell = new Button
             {
-                Style = style,
+                Theme = theme,
                 Width = 38,
                 Height = 38,
                 Margin = new Thickness(0, 0, 4, 4),
@@ -64,7 +65,7 @@ public sealed class EmojiGrid : WrapPanel
 
     private void Highlight()
     {
-        var accent = (Brush)Application.Current.FindResource("Accent");
+        var accent = Res.Brush("Accent");
         foreach (var (emoji, cell) in cells)
             cell.BorderBrush = emoji == selected ? accent : Brushes.Transparent;
     }

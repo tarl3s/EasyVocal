@@ -1,6 +1,5 @@
 using System.IO;
-using System.Threading;
-using System.Windows;
+using Avalonia.Controls;
 
 namespace EasyVocal;
 
@@ -9,14 +8,14 @@ namespace EasyVocal;
 /// Never in the smoke and e2e tests (they never touch the network), and a build run from the source code never
 /// installs (only <c>--update-check</c> makes it look).
 /// </summary>
-public partial class App
+internal sealed partial class AppSession
 {
     private UpdateCoordinator? updates;
 
     /// <summary>The real updater for this platform (its release file, unpacking, helper script and launcher).</summary>
     private static UpdateService RealUpdateService(IUpdaterPlatform platform)
     {
-        var current = UpdateRules.RunningVersion(typeof(App).Assembly);
+        var current = UpdateRules.RunningVersion(typeof(AppSession).Assembly);
         var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, platform.ExeName);
         return new UpdateService(platform, new GitHubUpdateSource("EasyVocal-updater/" + current), platform.Launcher, current, exe,
             UpdateService.DefaultWorkRoot, AppLog.Info);
@@ -25,13 +24,13 @@ public partial class App
     /// <summary>Builds the updater for a normal launch (null in the tests).</summary>
     private void SetUpUpdates(AppArgs args, string dataFolder, AppController c)
     {
-        if (args.TestMode) return;
+        if (args.TestMode || options.Hosted) return;
         bool sourceBuild = UpdateRules.IsSourceBuild(AppContext.BaseDirectory);
         updates = new UpdateCoordinator(c, RealUpdateService(c.Platform.Updater),
             canCheck: !sourceBuild || args.UpdateCheck, canInstall: !sourceBuild, forceCheck: args.UpdateCheck,
             visibleWindow: VisibleUpdateOwner,
             balloon: (text, click) => tray?.ShowBalloon(text, click),
-            quit: () => Quit(ask: false),
+            quit: () => _ = QuitAsync(ask: false),
             logFile: Path.Combine(dataFolder, "update.log"),
             relaunchArguments: c.Platform.Updater.RelaunchArguments(args.DataFolder));
         c.Updates = updates;
@@ -42,7 +41,7 @@ public partial class App
     private Window? VisibleUpdateOwner()
     {
         if (quitting || window is not { IsVisible: true }) return null;
-        foreach (Window w in Windows)
+        foreach (var w in AppWindow.OpenWindows)
             if (w.IsActive && w.IsVisible) return w;
         return window;
     }
@@ -60,26 +59,23 @@ public partial class App
     /// to the helper (which opens the new EasyVocal), all without asking. Logs to the data folder. Exit codes:
     /// 0 updated or already the latest, 1 failed, 3 a build run from the source code, 4 EasyVocal is running.
     /// </summary>
-    private void RunUpdateNow(AppArgs args, string dataFolder)
+    public static int RunUpdateNow(AppArgs args, string dataFolder)
     {
         AppLog.Init(dataFolder);
-        Dispatcher.InvokeAsync(async () =>
+        int code;
+        try { code = Task.Run(() => UpdateNowAsync(args, dataFolder)).GetAwaiter().GetResult(); }
+        catch (Exception ex)
         {
-            int code;
-            try { code = await UpdateNowAsync(args, dataFolder); }
-            catch (Exception ex)
-            {
-                AppLog.Error("--update-now failed", ex);
-                code = 1;
-            }
-            AppLog.Info("--update-now: exit code " + code);
-            Shutdown(code);
-        });
+            AppLog.Error("--update-now failed", ex);
+            code = 1;
+        }
+        AppLog.Info("--update-now: exit code " + code);
+        return code;
     }
 
     private static async Task<int> UpdateNowAsync(AppArgs args, string dataFolder)
     {
-        var updater = RealPlatform.Updater;
+        var updater = PlatformFactory.ForThisComputer().Updater;
         var service = RealUpdateService(updater);
         AppLog.Info($"--update-now: EasyVocal {service.Current} at {service.ExePath}");
         if (UpdateRules.IsSourceBuild(AppContext.BaseDirectory))
@@ -87,9 +83,8 @@ public partial class App
             AppLog.Info("--update-now: this EasyVocal runs from its source code: it never installs updates");
             return 3;
         }
-        if (Mutex.TryOpenExisting(InstanceMutexName, out var running))
+        if (SingleInstance.IsRunning())
         {
-            running.Dispose();
             AppLog.Info("--update-now: EasyVocal is running: close it first");
             return 4;
         }
