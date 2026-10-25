@@ -2,15 +2,17 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Runtime.CompilerServices;
 using EasyVocal.Core.Dsp;
+using EasyVocal.Core.Sounds;
 
 namespace EasyVocal;
 
 /// <summary>
 /// The sound editor's picture of the sound: a time ruler on top, the wave (the quietest and loudest sample of every
-/// pixel column, cached until the sound, the zoom, the scroll or the size changes), the selection, the cursor and
-/// the playhead. Drag to select, click to place the cursor (Shift+click extends the selection), Ctrl+wheel zooms
-/// around the mouse, the wheel scrolls.
+/// pixel column, read from the sound's <see cref="WavePeaks"/> and cached until the sound, the zoom, the scroll or the
+/// size changes), the selection, the cursor and the playhead. Drag to select, click to place the cursor (Shift+click
+/// extends the selection), Ctrl+wheel zooms around the mouse, the wheel scrolls.
 /// </summary>
 public sealed class WaveformView : FrameworkElement
 {
@@ -21,7 +23,12 @@ public sealed class WaveformView : FrameworkElement
 
     private static readonly double[] TickSteps = { 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300 };
 
+    /// <summary>A sound longer than this gets its peaks built off the UI thread (the wave shows once they are ready).</summary>
+    private const int BackgroundPeaksAbove = Sr * 20;
+
     private float[] samples = Array.Empty<float>();
+    private WavePeaks? peaks;          // null while a long sound's peaks are being built
+    private readonly ConditionalWeakTable<float[], WavePeaks> peaksOf = new(); // undo / redo reuse them
     private double viewStart;          // first sample at the left edge
     private double samplesPerPixel = 1;
     private bool fitted = true;        // zoomed all the way out (follows the width)
@@ -79,6 +86,7 @@ public sealed class WaveformView : FrameworkElement
         set
         {
             samples = value ?? Array.Empty<float>();
+            UsePeaks();
             SelectionStart = Math.Clamp(SelectionStart, 0, samples.Length);
             SelectionLength = Math.Clamp(SelectionLength, 0, samples.Length - SelectionStart);
             CursorPosition = Math.Clamp(CursorPosition, 0, samples.Length);
@@ -86,6 +94,29 @@ public sealed class WaveformView : FrameworkElement
             else SetView(viewStart, samplesPerPixel);
             InvalidateVisual();
         }
+    }
+
+    /// <summary>The peaks of <see cref="Samples"/>: remembered per sound, built at once for a short one, in the background for a long one.</summary>
+    private void UsePeaks()
+    {
+        cacheKey = default;
+        if (peaksOf.TryGetValue(samples, out var known)) peaks = known;
+        else if (samples.Length <= BackgroundPeaksAbove) peaksOf.Add(samples, peaks = new WavePeaks(samples));
+        else
+        {
+            peaks = null;
+            BuildPeaks(samples);
+        }
+    }
+
+    private async void BuildPeaks(float[] sound)
+    {
+        var built = await Task.Run(() => new WavePeaks(sound));
+        peaksOf.AddOrUpdate(sound, built);
+        if (!ReferenceEquals(samples, sound)) return; // another version is shown by now
+        peaks = built;
+        cacheKey = default;
+        InvalidateVisual();
     }
 
     public int SelectionStart { get; private set; }
@@ -297,8 +328,8 @@ public sealed class WaveformView : FrameworkElement
 
     private void DrawWave(DrawingContext dc, int columns, double mid, double half)
     {
-        if (samples.Length == 0) return;
-        Compute(columns);
+        if (samples.Length == 0 || peaks == null) return;
+        Compute(peaks, columns);
         var geo = new StreamGeometry();
         using (var g = geo.Open())
         {
@@ -318,7 +349,7 @@ public sealed class WaveformView : FrameworkElement
     }
 
     /// <summary>The lowest and highest sample under every pixel column (only redone when something changed).</summary>
-    private void Compute(int columns)
+    private void Compute(WavePeaks peaks, int columns)
     {
         if (ReferenceEquals(cacheKey.Samples, samples) && cacheKey.Start == viewStart && cacheKey.Spp == samplesPerPixel && cacheKey.Columns == columns)
             return;
@@ -335,15 +366,7 @@ public sealed class WaveformView : FrameworkElement
             if (a >= samples.Length) { colMin[c] = 1; colMax[c] = -1; continue; }
             b = Math.Min(b, samples.Length);
             if (a > 0) a--; // from the previous column's last sample: neighbouring columns join up, no gaps between them
-            float lo = float.MaxValue, hi = float.MinValue;
-            for (long i = a; i < b; i++)
-            {
-                float v = samples[i];
-                if (v < lo) lo = v;
-                if (v > hi) hi = v;
-            }
-            colMin[c] = lo;
-            colMax[c] = hi;
+            (colMin[c], colMax[c]) = peaks.MinMax(a, b);
         }
         // Zoomed in to less than a few periods per column, one column holds only part of a wave and the picture
         // turns into stripes: every column also takes in its neighbours, so the wave reads as one shape.
