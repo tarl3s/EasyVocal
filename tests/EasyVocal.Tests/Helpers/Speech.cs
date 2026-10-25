@@ -38,6 +38,14 @@ public static class Speech
     /// <summary>Seconds of silence after the last word.</summary>
     public const double TailSeconds = 1.5;
 
+    /// <summary>
+    /// <c>EV_SPEECH</c> picks the input to reproduce another computer's: <c>synthetic</c> (what macOS/Linux get) or a
+    /// culture prefix such as <c>en</c> (only those lines: a Windows without the Portuguese voice). Unset = all.
+    /// </summary>
+    private static readonly string? Only = Environment.GetEnvironmentVariable("EV_SPEECH");
+
+    private static bool Wanted(Line l) => string.IsNullOrEmpty(Only) || l.Culture.StartsWith(Only, StringComparison.OrdinalIgnoreCase);
+
     private static (float[], string) Make()
     {
         var parts = new List<float[]>();
@@ -45,6 +53,7 @@ public static class Speech
         string dir = Path.Combine(Path.GetTempPath(), "EV_tts_" + Guid.NewGuid().ToString("N"));
         try
         {
+            if (string.Equals(Only, "synthetic", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("synthetic asked");
             Directory.CreateDirectory(dir);
             var names = Synthesize(dir);
             for (int i = 0; i < Lines.Length; i++)
@@ -94,6 +103,7 @@ public static class Speech
         for (int i = 0; i < Lines.Length; i++)
         {
             var l = Lines[i];
+            if (!Wanted(l)) continue;
             string text = l.Text.Replace("'", "''");
             ps.AppendLine($"$v = $voices | Where-Object {{ $_.Culture.Name -eq '{l.Culture}' -and $_.Gender -eq '{l.Gender}' }} | Select-Object -First 1");
             ps.AppendLine("if ($v) {");

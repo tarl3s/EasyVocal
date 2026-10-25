@@ -73,6 +73,9 @@ public sealed class AppController : IDisposable
         FirstRun = !File.Exists(Path.Combine(dataFolder, "settings.json"));
         settingsFile = new SettingsFile(dataFolder);
         Settings = settingsFile.Load();
+        // Every start (also the one at login) begins on the Normal voice, so nobody joins a call with the last filter
+        // still on; everything else (ON/OFF, mute, Hear me, the voices themselves) is as it was left. Saved at quit.
+        Settings.ActiveVoiceId = NormalVoiceId;
         if (settingsFile.CouldNotRead)
             AppLog.Info("settings.json could not be read (another program holds it?): using defaults and not saving this session");
         engine = new AudioEngine(MakeInput, MakeCallOutput, MakeMonitor, chain, mixer);

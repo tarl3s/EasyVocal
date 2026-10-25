@@ -27,10 +27,10 @@ public static class BuiltInVoices
         // Rough and rattling (growl), deep and full of bass, almost no room.
         V("monster", "Monster", "👹", new() { Pitch = -0.6, Body = -0.6, Growl = 1, Bass = 0.45, Distortion = 0.1, Room = 0.12 }),
         // Wavering pitch, a little ring modulation and a spacey echo.
-        V("alien", "Alien", "👽", new() { Pitch = 0.3, Body = -0.3, Robot = 0.35, Wobble = 0.8, Echo = 0.3, Treble = 0.3 }),
+        V("alien", "Alien", "👽", new() { Pitch = 0.3, Body = -0.3, Robot = 0.25, Wobble = 0.8, Echo = 0.3, Treble = 0.3 }),
         V("radio", "Radio", "📻", new() { Radio = 0.9, Distortion = 0.2 }),
         // The voice plus a second one an octave below it, distorted, in a dark cave.
-        V("demon", "Demon", "😈", new() { Pitch = -0.45, Body = -0.7, Octave = 0.85, Distortion = 0.3, Room = 0.4, Bass = 0.1, Treble = -0.5 }),
+        V("demon", "Demon", "😈", new() { Pitch = -0.45, Body = -0.7, Octave = 1, Distortion = 0.3, Room = 0.4, Bass = 0.1, Treble = -0.5 }),
         // Your own voice with echoes off rock walls.
         V("cave", "Cave", "🕳️", new() { Echo = 0.7, Room = 0.45 }),
         // A bit deeper but a small, gruff body.

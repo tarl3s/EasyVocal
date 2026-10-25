@@ -568,7 +568,11 @@ internal sealed partial class AppSession
             var expect = File.ReadAllLines(expectFile).Select(l => l.Split('=', 2)).ToDictionary(p => p[0], p => p[1]);
             string voiceId = expect["voice"], soundId = expect["sound"], hotkey = expect["hotkey"];
             var s = c.Settings;
-            Expect(!s.Enabled && s.HearMe && !s.ConfirmQuit && s.ActiveVoiceId == voiceId, "OFF, Hear me, 'Don't ask again' and the active voice were saved");
+            Expect(!s.Enabled && s.HearMe && !s.ConfirmQuit, "OFF, Hear me and 'Don't ask again' were saved");
+            Expect(c.ActiveVoice.Id == AppController.NormalVoiceId && s.ActiveVoiceId == AppController.NormalVoiceId && voiceId != AppController.NormalVoiceId,
+                "the restart begins on the Normal voice (the first run quit on " + voiceId + ")");
+            Expect(main.VoiceCard(AppController.NormalVoiceId)?.BorderBrush == Res.Brush("Accent") && main.VoiceCard(voiceId)?.BorderBrush != Res.Brush("Accent"),
+                "the Normal card is the outlined one");
             Expect(main.OnOffButton.IsChecked == false && main.HearMeButton.IsChecked == true, "the top bar shows OFF and Hear me on");
             Expect(s.SoundsUseVoice && main.SoundsUseVoiceBox.IsChecked == true, "Sounds use the voice was saved");
             var voice = s.Voices.FirstOrDefault(v => v.Id == voiceId);

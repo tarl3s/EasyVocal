@@ -112,6 +112,40 @@ public class ControllerTests
     }
 
     [Fact]
+    public void EveryStart_BeginsOnTheNormalVoice_AndKeepsTheRest()
+    {
+        var data = TestFolders.New("EV_UiNormalStart_");
+        PlatformServices Platform() => TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default);
+        try
+        {
+            using (var c = new AppController(data, Platform(), new ManualDispatcher()))
+            {
+                c.Start();
+                c.SelectVoice("female");
+                c.MicMuted = true;
+                c.Settings.Voices.First(v => v.Id == "robot").Hotkey = "Ctrl+5";
+                Assert.Equal("female", c.ActiveVoice.Id);
+            } // quitting saves
+            Assert.Contains("\"ActiveVoiceId\": \"female\"", File.ReadAllText(Path.Combine(data, "settings.json")));
+
+            using (var c = new AppController(data, Platform(), new ManualDispatcher()))
+            {
+                Assert.Equal(AppController.NormalVoiceId, c.ActiveVoice.Id); // before Start: the window and the tray are made first
+                c.Start();
+                Assert.Equal(AppController.NormalVoiceId, c.ActiveVoice.Id);
+                Assert.Equal(AppController.NormalVoiceId, c.Settings.ActiveVoiceId);
+                Assert.True(c.MicMuted);
+                Assert.True(c.FilterEnabled);
+                Assert.Equal("Ctrl+5", c.Settings.Voices.First(v => v.Id == "robot").Hotkey);
+            }
+        }
+        finally
+        {
+            TestFolders.Delete(data);
+        }
+    }
+
+    [Fact]
     public void KeyMap_GivesTheSavedVirtualKeys()
     {
         Assert.Equal('7', KeyMap.VirtualKey(Avalonia.Input.Key.D7));

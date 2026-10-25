@@ -108,7 +108,8 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   e lembra onde você a deixou.
 - **English e Português (Brasil).**
 - **Leve:** download pequeno, quase nenhum uso de CPU parado, poucos por cento enquanto você fala.
-- **Desligado ou Normal = sua voz limpa.** Seus amigos continuam te ouvindo.
+- **Desligado ou Normal = sua voz limpa.** Seus amigos continuam te ouvindo. O EasyVocal sempre abre na voz **Normal**, para você
+  nunca entrar numa chamada com um filtro ligado sem querer (todo o resto fica como você deixou).
 - **Vozes de IA: em breve**, como um download opcional separado.
 
 ## Créditos

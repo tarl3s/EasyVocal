@@ -230,10 +230,14 @@ public static class ItemOps
         });
     }
 
-    /// <summary>A file name stem made of the name's allowed characters (at most 60), or "sound".</summary>
+    /// <summary>
+    /// A file name stem made of the name's allowed characters (at most 60), or "sound". Names EasyVocal makes follow
+    /// Windows' stricter rules on every system, so they also work after the folder moves to another one (and a
+    /// <c>:</c> doesn't show up as <c>/</c> in the Finder).
+    /// </summary>
     public static string SafeStem(string? name)
     {
-        var invalid = FileNames.InvalidChars(OperatingSystem.IsWindows());
+        var invalid = FileNames.InvalidChars(windows: true);
         var chars = (name ?? "").Trim().ToCharArray();
         for (int i = 0; i < chars.Length; i++)
             if (Array.IndexOf(invalid, chars[i]) >= 0) chars[i] = '_';

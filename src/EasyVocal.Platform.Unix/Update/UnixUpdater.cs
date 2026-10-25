@@ -74,16 +74,20 @@ public static class ShHelperScript
         sb.Append("    nohup \"$PROGRAM\"").Append(args.Length > 0 ? " " + args : "")
           .Append(" >/dev/null 2>&1 &\n}\n");
         sb.Append("remove_staging() {\n    [ -n \"$STAGING\" ] && rm -rf \"$STAGING\" 2>/dev/null\n    return 0\n}\n");
-        sb.Append(Body);
+        sb.Append(Lf(Body));
         if (mac)
         {
             sb.Append("xattr -dr com.apple.quarantine \"$TARGET\" 2>/dev/null\n");
             // Built on Windows, the bundle has no valid signature: an ad-hoc one lets Apple silicon run it.
             sb.Append("codesign --force --deep --sign - \"$TARGET\" >/dev/null 2>&1 || log 'could not sign the new version (ad hoc)'\n");
         }
-        sb.Append(Tail);
+        sb.Append(Lf(Tail));
         return sb.ToString();
     }
+
+    // The raw strings below take this file's line endings, CRLF in a Windows checkout (the releases are built on
+    // Windows): sh must only ever see LF.
+    private static string Lf(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal);
 
     private const string Body = """
 

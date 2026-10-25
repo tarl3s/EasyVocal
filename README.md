@@ -106,7 +106,8 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   screen and remembers where you left it.
 - **English and Português (Brasil).**
 - **Light:** small download, almost no CPU when idle, a few percent while you talk.
-- **OFF or Normal = your clean voice.** Your friends still hear you.
+- **OFF or Normal = your clean voice.** Your friends still hear you. EasyVocal always opens on **Normal**, so you never join a
+  call with a filter on by accident (everything else is as you left it).
 - **AI voices: coming later** as a separate optional download.
 
 ## Credits
