@@ -102,7 +102,12 @@ the relaunch is a second `AppSession` on the same folder).
 
 ## Avalonia notes (learned in the port)
 
-- Dialogs are awaited: `await window.ShowAsync(owner)` then read `Accepted` (no nested message loop). Closing a dialog
+- Dialogs are awaited: `await window.ShowAsync(owner)` then read `Accepted` (no nested message loop). Without a visible owner a
+  dialog goes modal over the main window when that is on screen (`AppWindow.MainWindowSource`), else opens on its own;
+  `SingleKind` (setup, settings, update) keeps one of a kind open (`WasDuplicate`). Code after an await must check
+  `controller.IsDisposed` (EasyVocal may have quit meanwhile). With no tray icon `MainWindow.CanHideToTray` is false and
+  closing minimises. The smoke and e2e tests fail when an exception reaches the UI thread (`AppSession.UiErrors`), and
+  `Ui.Click` refuses a disabled or hidden button. Closing a dialog
   can run the awaiting code right away (inline continuation): set any flag the caller checks *before* the click that
   closes it. In the smoke test an `async` step must go through `DialogAsync` (`Dialog` takes an `Action`, so an async
   lambda there becomes `async void` and the window closes under it).
