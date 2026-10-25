@@ -116,19 +116,21 @@ public class ControllerTests
     {
         var data = TestFolders.New("EV_UiNormalStart_");
         PlatformServices Platform() => TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default);
+        var ui = new ManualDispatcher();
         try
         {
-            using (var c = new AppController(data, Platform(), new ManualDispatcher()))
+            using (var c = new AppController(data, Platform(), ui))
             {
                 c.Start();
                 c.SelectVoice("female");
                 c.MicMuted = true;
                 c.Settings.Voices.First(v => v.Id == "robot").Hotkey = "Ctrl+5";
                 Assert.Equal("female", c.ActiveVoice.Id);
+                SoundsSettled(c, ui);
             } // quitting saves
             Assert.Contains("\"ActiveVoiceId\": \"female\"", File.ReadAllText(Path.Combine(data, "settings.json")));
 
-            using (var c = new AppController(data, Platform(), new ManualDispatcher()))
+            using (var c = new AppController(data, Platform(), ui))
             {
                 Assert.Equal(AppController.NormalVoiceId, c.ActiveVoice.Id); // before Start: the window and the tray are made first
                 c.Start();
@@ -137,11 +139,22 @@ public class ControllerTests
                 Assert.True(c.MicMuted);
                 Assert.True(c.FilterEnabled);
                 Assert.Equal("Ctrl+5", c.Settings.Voices.First(v => v.Id == "robot").Hotkey);
+                SoundsSettled(c, ui);
             }
         }
         finally
         {
             TestFolders.Delete(data);
+        }
+    }
+
+    /// <summary>The sounds load (and the starter ones are written) in the background: done before the folder goes.</summary>
+    private static void SoundsSettled(AppController c, ManualDispatcher ui)
+    {
+        for (int i = 0; i < 500 && !c.Settings.Sounds.All(s => c.IsSoundLoaded(s.Id) || c.IsSoundBroken(s.Id)); i++)
+        {
+            Thread.Sleep(10);
+            ui.Pump();
         }
     }
 
