@@ -9,7 +9,7 @@ namespace EasyVocal;
 
 /// <summary>
 /// A small notice in the corner of the screen next to the tray (bottom right; top right on macOS, under the menu bar):
-/// the app's icon, the text, and a close ×. A click runs its action (when it has one). It goes away by itself. It
+/// "EasyVocal", the text, and a close ×. A click runs its action (when it has one). It goes away by itself. It
 /// replaces Windows' tray balloons and looks the same on every OS.
 /// </summary>
 internal sealed class TrayNotice : Window

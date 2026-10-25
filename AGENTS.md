@@ -5,26 +5,28 @@ Context for AI coding assistants. `README.md` (English) and `README.pt-BR.md` ar
 
 ## The project in one paragraph
 
-EasyVocal is a **free, light Windows real-time voice changer + soundboard for any call app** (C# / WPF / .NET 8).
+EasyVocal is a **free, light Windows real-time voice changer + soundboard for any call app** (C# / Avalonia / .NET 8).
 Microphone → filter → mixer (+ soundboard) → the virtual cable VB-CABLE, which the call app picks as its microphone.
 Audience: people who want fun on calls, not audio people (buttons, emojis, plain sliders). MIT, public repo.
 Owner speaks Brazilian Portuguese; code, comments, UI source text and commits are English.
 
 **1.0.0 is going cross-platform** (Windows + macOS + Linux; design in
 `docs/superpowers/specs/2026-10-25-cross-platform-design.md`). Phase 1 is done: `EasyVocal.Core` is portable `net8.0`
-and everything Windows-only sits behind its `Core/Platform` interfaces in `EasyVocal.Platform.Windows`. The UI is still
-WPF (phase 2 ports it to Avalonia); macOS/Linux backends come in phase 3.
+and everything Windows-only sits behind its `Core/Platform` interfaces in `EasyVocal.Platform.Windows`. Phase 2 is
+done: the UI is Avalonia 11 (one UI for every OS, WPF and WinForms are gone) and the smoke and e2e tests also run
+headless. macOS/Linux backends come in phase 3 (`PlatformFactory.cs` is where they plug in).
 
 ## Project layout
 
 | Project | Target | What |
 |---|---|---|
 | `src/EasyVocal.Core` | `net8.0` (portable) | model, storage, DSP, engine, hotkey logic, localizer, audio editing, decoders, the updater (rules, unpacking, service), the platform interfaces (`Core/Platform/PlatformInterfaces.cs`), `AppLog` |
-| `src/EasyVocal.Platform.Windows` | `net8.0-windows`, no WPF | WASAPI devices + Windows' default devices, Media Foundation / ACM decoders and the MP3 encoder, `RegisterHotKey` (on its own message-only window), the Run key, the Start menu `.lnk`, VB-CABLE installer + Authenticode, the updater's PowerShell swap; `WindowsPlatform.Services` hands them out |
-| `src/EasyVocal` | `net8.0-windows`, WPF | the app: windows, `AppController` (talks only to the interfaces), tray, smoke/e2e test modes; `App.RealPlatform` is the one place that picks Windows |
+| `src/EasyVocal.Platform.Windows` | `net8.0` marked `SupportedOSPlatform("windows")`, no UI | WASAPI devices + Windows' default devices, Media Foundation / ACM decoders and the MP3 encoder, `RegisterHotKey` (on its own message-only window), the Run key, the Start menu `.lnk`, VB-CABLE installer + Authenticode, the updater's PowerShell swap; `WindowsPlatform.Services` hands them out |
+| `src/EasyVocal` | `net8.0`, Avalonia 11 (exe `EasyVocal(.exe)`) | the app: windows, `AppController` (talks only to the interfaces and an `IUiDispatcher`), tray, smoke/e2e test modes; `PlatformFactory.ForThisComputer` is the one place that picks the platform (`OperatingSystem.IsWindows()` → Windows; elsewhere a no-devices stand-in until phase 3). It references the Windows project on every OS and calls it only behind `IsWindows()` (CA1416 checks) |
 | `tests/EasyVocal.Tests` | `net8.0` | everything portable (runs on any OS), the updater with a pretend platform (`Helpers/FakeUpdate.cs`); fixtures in `Fixtures/` (a 440 Hz tone as MP3 and OGG) |
 | `tests/EasyVocal.FfmpegStandIn` | `net8.0` exe | a tiny program the decoder tests run in place of ffmpeg (what it does is written in the "sound file" it gets) |
 | `tests/EasyVocal.Tests.Windows` | `net8.0-windows` | registry, `.lnk`, VB-CABLE/Authenticode, Media Foundation / ACM, hotkeys, the PowerShell helper, the e2e run; links the portable tests' `Helpers/` |
+| `tests/EasyVocal.UiTests` | `net8.0` (portable) | Avalonia.Headless (drawn with Skia): the app's own smoke and e2e steps in-process on pretend devices/hotkeys/startup/virtual mic (`E2E/TestPlatform.cs`), the e2e relaunch as a second session; `AppController` on a hand-pumped `IUiDispatcher`; `KeyMap`. `EV_UI_SNAPSHOTS=<folder>` keeps the PNGs |
 
 Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (the tests swap pieces with `with { … }`):
 - `IAudioBackend`: list/open devices, defaults (one default = both roles off Windows), set default where supported,
@@ -48,9 +50,10 @@ Platform interfaces (`EasyVocal.Core.Platform`), bundled as `PlatformServices` (
 
 ```bash
 dotnet build                       # 0 errors, 0 warnings expected
-dotnet test                        # both test projects (xUnit), including the E2E test below (builds the app first)
-dotnet test --filter Category!=E2E # everything but the E2E test (~20 s instead of ~50 s)
-dotnet test tests/EasyVocal.Tests  # only the portable tests (what macOS/Linux run)
+dotnet test                        # every test project (xUnit), including the E2E tests below (builds the app first)
+dotnet test --filter Category!=E2E # everything but the real-window E2E test
+dotnet test tests/EasyVocal.Tests  # only the portable tests (what macOS/Linux run, with tests/EasyVocal.UiTests)
+EV_UI_SNAPSHOTS=<folder> dotnet test tests/EasyVocal.UiTests   # headless smoke + e2e; keeps the smoke PNGs in <folder>
 dotnet run --project src/EasyVocal
 dotnet run --project src/EasyVocal -- --data <folder> --smoketest   # opens every window, renders PNGs, exits 0
 dotnet run --project src/EasyVocal -- --data <folder> --e2e         # end-to-end test on test audio devices, exits 0
@@ -58,7 +61,7 @@ tools/Publish-Release.ps1 -NoUpload   # self-contained single-file zip -> publis
 EV_VOICE_SAMPLES=<folder> dotnet test --filter RenderListeningSamples   # every built-in voice on real speech, as WAVs + README.txt (voice-samples/ is git-ignored)
 ```
 
-App arguments (`App.xaml.cs`, parsed by `AppArgs.cs`): `--data <folder>` (use that folder instead of
+App arguments (`Program.cs` and `AppSession.cs`, parsed by `AppArgs.cs`): `--data <folder>` (use that folder instead of
 `%APPDATA%\EasyVocal`), `--smoketest` (headless-ish UI check, PNGs and `easyvocal.log` go to the data folder),
 `--e2e` (see below), `--tray` (start hidden in the tray), `--update-check` (a source build looks for a new release
 anyway; it still never installs), `--update-now` (no window: download and install the latest release without asking,
@@ -67,17 +70,19 @@ EasyVocal is running). The tests refuse to run without `--data` (exit code 2),
 skip the first-run setup, never touch the real "Start with Windows" entry and don't hand over to (or wake) a running
 EasyVocal. Tests create temp folders under `%TEMP%\EV_*` and must delete them.
 
-**E2E test** (`App.E2E.cs`, devices in `E2E/`): the real app (controller, engine, voice chain, mixer, windows) with
+**E2E test** (`AppSession.E2E.cs`, devices in `E2E/`): the real app (controller, engine, voice chain, mixer, windows) with
 `TestAudioDevices` (an `IAudioBackend`) swapped into `AppController`'s `PlatformServices`: a microphone that plays a 150 Hz
 vowel with pauses in real time on its own thread, and headphones and VB-CABLE that record what they get. It clicks
 the real cards and buttons, opens the real dialogs, and checks the recorded audio (exact copy of the voice where the
 voice should be clean, pitch, energy on the harmonics, sounds over the voice): no VB-CABLE then installed, Normal,
 the voice cards, Settings and Setup listing the test devices, ON/OFF and mute, sound cards and Stop all, Hear me (and headphones whose stream stops coming back), a hotkey set through its dialog and pressed
-(a real WM_HOTKEY), the filter editor (live preview, Cancel, hotkeys back), a custom sound added and deleted, 🎭 Sounds use the voice (a sound takes the voice and follows a voice change), the
+(a real WM_HOTKEY in the real app; in-memory hotkeys headless), the filter editor (live preview, Cancel, hotkeys back), a custom sound added and deleted, 🎭 Sounds use the voice (a sound takes the voice and follows a voice change), the
 mic unplugged and back, VB-CABLE taking Windows' default devices (the banner's Fix, the setup's Install with a fake installer putting back what was there), then quit the normal way and a second run (`--e2e-relaunch`) checks that everything came
 back. PASS/FAIL per step in `%TEMP%\easyvocal_e2e.log` and `<data>\e2e.log`; exit 0 only when every step passed.
 `EasyVocal.Tests.Windows/E2ETests.cs` (trait `Category=E2E`) runs the built exe this way (it passes with a "SKIPPED" note
 when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a free fallback) meanwhile.
+`EasyVocal.UiTests` runs the same steps headless in-process (no windows on screen, nothing registered with the system;
+the relaunch is a second `AppSession` on the same folder).
 
 ## Architecture map
 
@@ -90,16 +95,32 @@ when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a
 | Model and storage | `Core/Model/`: `AppSettings.cs`, `BuiltIns.cs` (14 voices, each with its own signature, see below; starter sounds), `ItemOps.cs` (`ImportSound`: a picked file is copied into `Sounds`, a video only as a WAV of its sound; also the edited-copy rules: `WriteSoundFile`, `UseEditedFile`, `BackToOriginal`, `AddSplitSounds`; a file stays while any sound uses it as `FileName` or `OriginalFileName`), `Core/Layout/WindowFit.cs` (`WindowBox`, clamp a window into a screen's working area, pick the screen, does a remembered place still fit); `Core/Storage/SettingsStore.cs` (`settings.json` + `Sounds\` in `%APPDATA%\EasyVocal`, `~/Library/Application Support/EasyVocal` on macOS, `~/.config/EasyVocal` on Linux; `IsPlainName` treats `\` `/` `:` as folder parts on every OS), `PathCompare.cs` (case-sensitive on Linux only), `TempFolders.cs`; `Core/Logging/AppLog.cs` |
 | Hotkeys and text | `Core/Hotkeys/` (`Hotkey.cs` (Windows virtual-key codes), `HotkeyMap.cs`), `Core/Text/Localizer.cs` |
 | Windows platform | `src/EasyVocal.Platform.Windows/`: `WindowsPlatform.cs` (`Services`; `Decoders()` = WAV/AIFF → ACM WAV (compressed WAVs, as 0.2) → OGG → Media Foundation (MP3 and the rest, as 0.2's AudioFileReader did) → ACM MP3 → NLayer → ffmpeg), `Audio/` (`WindowsAudioBackend` (`Instance`; `ReadOnlyDefaults` for the smoke test), `DeviceList`, WASAPI mic (E_ACCESSDENIED → `MicPermissionDeniedException`) and speaker, `DefaultDevices.cs` = IPolicyConfig, never called by the tests: the smoke test gets read-only defaults and no installer), `Sounds/MediaFoundationCodecs.cs` (MF, ACM WAV, ACM MP3, MP3 encoder), `Hotkeys/WindowsGlobalHotkeys.cs` (RegisterHotKey on its own message-only window, created on the UI thread whose loop delivers WM_HOTKEY; or on a given HWND whose messages go to `ProcessMessage`), `Shell/` (`StartupRegistration` = Run key, `StartMenuShortcut` = .lnk), `VirtualMic/` (`VbCableProvider` incl. its setup texts, `VbCableInstaller`, `Authenticode`), `Update/WindowsUpdater.cs` (`HelperScript`, `PowerShellLauncher`, `WindowsUpdaterPlatform`: unpack only EasyVocal.exe, "MZ" check, folder probe) |
-| App (WPF) | `src/EasyVocal/`: `App.xaml(.cs)` (startup, single instance, args; `RealPlatform` = `WindowsPlatform.Services`, swapped for the tests), `AppController.cs` (wires engine, settings, hotkeys, the virtual mic's lifecycle; only sees the platform interfaces), `MainWindow`, `SettingsWindow`, `SetupWindow` (first run, the virtual mic's install; its texts come from the provider), `FilterEditorWindow`, `SoundEditorWindow`, `AudioEditorWindow` ("✂ Edit audio…": wave, selection, headphone playback with playhead, the `AudioEdit` tools, Save / Back to original / Save a copy as…) + `WaveformView.cs` (the wave control: min/max columns read from `Core/Sounds/WavePeaks.cs`, a min/max pyramid built once per sound, ruler, zoom, drag-select), `WindowPlacer.cs` (every window: never bigger than or off the screen, place remembered in `AppSettings.WindowPlacements`), `HotkeyCaptureDialog`, `Tray.cs`, `Loc.cs` + `Lang/pt-BR.json`, `Theme.xaml`, `App.SmokeTest.cs` + `App.SmokeTest.Editor.cs` (the audio editor's tools, every window at its smallest size), `App.E2E.cs` + `E2E/` (test devices, signal and measurements) |
-| Updater | `src/EasyVocal.Core/Update/Updater.cs` (portable: `AppVersion` (tags, semver order), `UpdateRules` (GitHub's release JSON, `PickAsset` from the platform's names, when to offer: newer, not draft/pre-release, not the skipped version unless "Check now"; `IsSourceBuild` = an `EasyVocal.sln` or `src\EasyVocal\EasyVocal.csproj` above the exe), `ReleaseNotes` (Markdown to plain lines), `UpdatePackage` (`ExtractFile` one file from a zip, `ExtractAll` a zip or tar.gz; zip-slip, no links, size limit, Unix permission bits kept), `UpdateService` behind `IUpdaterPlatform` + `IUpdateSource` + `IHelperLauncher`: the payload replaces the platform's `InstallRoot`); Windows' part in `Platform.Windows/Update/WindowsUpdater.cs` (`HelperScript` = the PowerShell swap script: paths as single-quoted literals, UTF-8 with BOM); the app's `UpdateWindow` (the dialog: notes, Update now with progress + Cancel, Later, Skip this version; opens the release page when the platform can't self-update), `UpdateCoordinator.cs` (check on open: dialog or tray balloon; Settings' Check now; start the helper, then `Quit(ask: false)`), `App.Update.cs` (wiring through `controller.Platform.Updater`, `--update-now`), `App.SmokeTest.Update.cs` |
-| Tests | `tests/EasyVocal.Tests/` (portable, `net8.0`: + `Helpers/FakeAudio.cs`, `FakeUpdate.cs` (a pretend updater platform, source and launcher), `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder; `Speech.cs` = real speech made once per run with Windows' TTS through PowerShell (David/Zira/Maria when installed, a synthetic vowel otherwise, e.g. on macOS/Linux); `VoiceFeatures.cs` = what a voice sounds like in numbers; `WavFile.cs`); `VoiceCharacterTests.cs` measures every built-in voice on that speech; `DecoderTests.cs` (NLayer, NVorbis, extensible WAV, the loader's "keep looking", ffmpeg through the stand-in: output, non-zero exit, deadline + kill, cancel; a real ffmpeg only when installed, "SKIPPED" otherwise); `UpdateServiceTests.cs`; `MeterPreviewTests.cs` (MicMeter, SoundPreview, PathCompare, data folders); `AppArgs.cs` is linked in via the csproj. `tests/EasyVocal.Tests.Windows/` (`SetupTests` = Run key + VB-CABLE pack, `StartMenuShortcutTests`, `UpdaterTests` = Windows' names and unpack, PowerShell helper run for real; `WindowsSoundTests` = Media Foundation, ACM mu-law / IMA ADPCM, which decoder reads MP3; `WindowsHotkeysTests` = the message-only window; `E2ETests.cs` runs the built app with `--e2e`) |
+| App (Avalonia) | `src/EasyVocal/`: `Program.cs` (entry: the `--data` rule, `--update-now`, `SingleInstance.cs` = named mutex + event on Windows, a lock file + local pipe elsewhere; then Avalonia with an explicit shutdown), `App.axaml(.cs)` (theme; `Fonts()` = Windows' fallbacks: symbols from Segoe UI Symbol, emoji from Segoe UI Emoji), `AppSession.cs` (one run: settings, language, controller, main window, tray, quit; a test host can start a second one), `PlatformFactory.cs` (picks the platform; read-only defaults for the smoke test), `AppController.cs` (wires engine, settings, hotkeys, the virtual mic's lifecycle; only sees the platform interfaces and `IUiDispatcher` = `UiDispatcher.cs`, Avalonia's dispatcher in the app, a hand-pumped one in the tests), `AppWindow.cs` (every window's base: icon, `Place` → `WindowPlacer.cs`, `ShowAsync` = a dialog over its owner or on its own from the tray, `Accepted`, the open-window list the tests use), `MainWindow`, `SettingsWindow`, `SetupWindow` (first run, the virtual mic's install; its texts come from the provider), `FilterEditorWindow`, `SoundEditorWindow`, `AudioEditorWindow` ("✂ Edit audio…": wave, selection, headphone playback with playhead, the `AudioEdit` tools, Save / Back to original / Save a copy as…) + `WaveformView.cs` (the wave control: min/max columns read from `Core/Sounds/WavePeaks.cs`, a min/max pyramid built once per sound, ruler, zoom, drag-select), `WindowPlacer.cs` (never bigger than or off the screen, place remembered in `AppSettings.WindowPlacements` in primary-screen DIPs), `HotkeyCaptureDialog` + `KeyMap.cs` (Avalonia keys → the saved virtual-key codes), `AskDialog.cs`, `Tray.cs` (Avalonia `TrayIcon` + native menu) + `TrayNotice.cs` (the corner notice that replaced tray balloons), `Loc.cs` (`{loc:T '…'}`) + `Lang/pt-BR.json`, `Theme.axaml` (palette + control themes; Fluent underneath for TextBox and menus), `Res.cs`, `AppSession.SmokeTest.cs` + `.Editor.cs` (the audio editor's tools, every window at its smallest size) + `.Update.cs`, `AppSession.E2E.cs` + `E2E/` (test devices, signal and measurements, `TestPlatform.cs` = in-memory hotkeys/startup and a pretend VB-CABLE), `Ui.cs` (the tests' clicks) |
+| Updater | `src/EasyVocal.Core/Update/Updater.cs` (portable: `AppVersion` (tags, semver order), `UpdateRules` (GitHub's release JSON, `PickAsset` from the platform's names, when to offer: newer, not draft/pre-release, not the skipped version unless "Check now"; `IsSourceBuild` = an `EasyVocal.sln` or `src\EasyVocal\EasyVocal.csproj` above the exe), `ReleaseNotes` (Markdown to plain lines), `UpdatePackage` (`ExtractFile` one file from a zip, `ExtractAll` a zip or tar.gz; zip-slip, no links, size limit, Unix permission bits kept), `UpdateService` behind `IUpdaterPlatform` + `IUpdateSource` + `IHelperLauncher`: the payload replaces the platform's `InstallRoot`); Windows' part in `Platform.Windows/Update/WindowsUpdater.cs` (`HelperScript` = the PowerShell swap script: paths as single-quoted literals, UTF-8 with BOM); the app's `UpdateWindow` (the dialog: notes, Update now with progress + Cancel, Later, Skip this version; opens the release page when the platform can't self-update), `UpdateCoordinator.cs` (check on open: dialog or tray notice; Settings' Check now; start the helper, then quit without asking), `AppSession.Update.cs` (wiring through `controller.Platform.Updater`, `--update-now`), `AppSession.SmokeTest.Update.cs` |
+| Tests | `tests/EasyVocal.Tests/` (portable, `net8.0`: + `Helpers/FakeAudio.cs`, `FakeUpdate.cs` (a pretend updater platform, source and launcher), `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder; `Speech.cs` = real speech made once per run with Windows' TTS through PowerShell (David/Zira/Maria when installed, a synthetic vowel otherwise, e.g. on macOS/Linux); `VoiceFeatures.cs` = what a voice sounds like in numbers; `WavFile.cs`); `VoiceCharacterTests.cs` measures every built-in voice on that speech; `DecoderTests.cs` (NLayer, NVorbis, extensible WAV, the loader's "keep looking", ffmpeg through the stand-in: output, non-zero exit, deadline + kill, cancel; a real ffmpeg only when installed, "SKIPPED" otherwise); `UpdateServiceTests.cs`; `MeterPreviewTests.cs` (MicMeter, SoundPreview, PathCompare, data folders); `AppArgs.cs` is linked in via the csproj. `tests/EasyVocal.Tests.Windows/` (`SetupTests` = Run key + VB-CABLE pack, `StartMenuShortcutTests`, `UpdaterTests` = Windows' names and unpack, PowerShell helper run for real; `WindowsSoundTests` = Media Foundation, ACM mu-law / IMA ADPCM, which decoder reads MP3; `WindowsHotkeysTests` = the message-only window; `E2ETests.cs` runs the built app with `--e2e`). `tests/EasyVocal.UiTests/` (`HeadlessAppTests` = the smoke and e2e steps headless, `ControllerTests` = the controller on a hand-pumped dispatcher, `KeyMap`; `TestAppBuilder.cs` = the real App on the headless platform with Skia) |
 | Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`), `tools/Publish-Release.ps1` |
+
+## Avalonia notes (learned in the port)
+
+- Dialogs are awaited: `await window.ShowAsync(owner)` then read `Accepted` (no nested message loop). Closing a dialog
+  can run the awaiting code right away (inline continuation): set any flag the caller checks *before* the click that
+  closes it. In the smoke test an `async` step must go through `DialogAsync` (`Dialog` takes an `Action`, so an async
+  lambda there becomes `async void` and the window closes under it).
+- Text in XAML: `{loc:T 'English text'}` (`xmlns:loc="using:EasyVocal"`); `ToolTip.Tip`, `IsVisible` (no Visibility).
+- Styles: control themes in `Theme.axaml` (`Theme="{StaticResource AccentButton}"`, or `Res.Theme("CardButton")` in
+  code); a subclass of a themed control needs `StyleKeyOverride` (AppWindow returns `typeof(Window)`). Emoji
+  TextBlocks use `Classes="emoji"` (the colour font, normal weight: a bold parent made it fall back to black and white).
+- `TextBox.TextChanged` may arrive after the change: tell a name the code set from one the person typed by its text.
+- Drag and drop: `DragDrop.AllowDrop` + `e.DataTransfer.TryGetFiles()` (the `e.Data` API is obsolete in 11.3).
+- `AVLN3001` is silenced in the csproj: the windows take the controller in their constructor (the runtime XAML loader
+  isn't used).
 
 ## Global constraints
 
-- Today Windows 10/11 (`net8.0-windows` app); self-contained win-x64 release, download under ~80 MB. Core stays
-  portable `net8.0`: nothing Windows-only in it (CA1416 would warn); put it in `EasyVocal.Platform.Windows` behind a
-  `Core/Platform` interface.
+- Today Windows 10/11 (the app is portable `net8.0` + Avalonia; only the Windows platform exists yet); self-contained
+  win-x64 single-file release, ~38 MB zipped (limit ~80-100 MB). Core and the app stay portable `net8.0`: nothing
+  Windows-only in them unless behind `OperatingSystem.IsWindows()` (CA1416 warns); put platform code in
+  `EasyVocal.Platform.Windows` (and the macOS/Linux projects) behind a `Core/Platform` interface. No WPF/WinForms.
 - Free, MIT, no ads, nothing locked. Public repo: no secrets, no personal paths.
 - No real celebrity/character voices and no recognisable meme clips shipped; starter sounds are generated by code.
 - Added latency under ~50 ms with classic filters (DSP <= 30 ms; WASAPI buffers <= 20 ms).
@@ -115,8 +136,8 @@ when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a
   nonlinearity, loudness): every pair at least 1.5 "audible steps" apart, plus Demon = octave layer, Monster = rough,
   Giant = longest tail and clean, Female up / Male down, the two robots different, loudness within -6..+5 dB. Retune
   a voice with that table (it is printed in the test output) and render the listening samples for the owner.
-- Dependencies: only small permissive packages (Core: NAudio.Core, NAudio.Vorbis, NLayer; Windows platform: NAudio;
-  xUnit in tests).
+- Dependencies: only permissive packages (Core: NAudio.Core, NAudio.Vorbis, NLayer; Windows platform: NAudio; app:
+  Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent (MIT); tests: xUnit, Avalonia.Headless.XUnit).
 - Audio thread: no allocation per block, no locks held while doing DSP, no LINQ.
 - VB-CABLE is not bundled (donationware); the app downloads the official installer and verifies its signature.
 
@@ -133,7 +154,7 @@ when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a
 - **A sound's original file is never modified.** The sound editor saves a new WAV in `Sounds\` ("<original>
   (edited).wav"), points `SoundItem.FileName` at it and keeps the original in `SoundItem.OriginalFileName` ("Back to
   original"). Never delete a file another sound still uses (`ItemOps.IsFileUsed`).
-- **Windows fit small screens** (1366×768 at 125 % is ~580 px tall): every window goes through `WindowPlacer.Use`, is
+- **Windows fit small screens** (1366×768 at 125 % is ~580 px tall): every window derives from `AppWindow` and calls `Place(key, controller)` (→ `WindowPlacer`), is
   resizable where it makes sense, has MinWidth/MinHeight, and keeps long content in a ScrollViewer with its
   Save/Close buttons outside it. The smoke test renders each one at its minimum size (`smoke_small_*.png`,
   `smoke_audio_editor_small.png`) and checks those buttons are on screen.
