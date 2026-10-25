@@ -386,4 +386,38 @@ public class PactlTests(ITestOutputHelper output)
         Assert.DoesNotContain(backend.Outputs(), d => d.Id == PactlVirtualMic.SinkName);
         Assert.DoesNotContain(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName);
     }
+
+    [Fact]
+    public void PulseStreams_AskForSmallBuffers()
+    {
+        const int Block = 480 * sizeof(float); // 10 ms of mono float at 48 kHz
+        var play = PulseSimple.Attributes(PulseSimple.Playback, Block);
+        Assert.Equal((uint)(3 * Block), play.TLength); // ~30 ms queued at the server
+        Assert.Equal((uint)Block, play.MinReq);
+        var record = PulseSimple.Attributes(PulseSimple.Record, Block);
+        Assert.Equal((uint)Block, record.FragSize);
+        Assert.Equal(uint.MaxValue, record.TLength);
+    }
+
+    [Fact]
+    public void Find_OnlyReturnsPrograms()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            output.WriteLine("SKIPPED on Windows: no execute bits");
+            return;
+        }
+        var folder = TestFolders.New("EV_Test_Find_");
+        try
+        {
+            var plain = Path.Combine(folder, "pactl");
+            File.WriteAllText(plain, "not a program");
+            File.SetUnixFileMode(plain, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            Assert.False(CommandRunner.IsExecutable(plain));
+            Assert.Null(CommandRunner.Instance.Find(plain));
+            File.SetUnixFileMode(plain, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            Assert.Equal(plain, CommandRunner.Instance.Find(plain));
+        }
+        finally { TestFolders.Delete(folder); }
+    }
 }
