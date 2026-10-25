@@ -192,6 +192,7 @@ public partial class App
         other.Hotkey = null;
         c.Save();
 
+        await SmokeUpdates(main, c, dataFolder, Png);
         SmokeSetupAndSettings(main, c, Png);
         SmokeAudioEditor(main, c, dataFolder, Png);
         SmokeSmallWindows(main, c, dataFolder, Png);

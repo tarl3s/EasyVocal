@@ -8,7 +8,7 @@ namespace EasyVocal;
 
 /// <summary>
 /// The ⚙ window: which microphone, call output and headphones to use, language, start with Windows, ask before
-/// quitting, the general hotkeys, and "Open setup again". Every change applies at once (there is no Save button);
+/// quitting, updates (check on open, Check now), the general hotkeys, and "Open setup again". Every change applies at once (there is no Save button);
 /// a device change restarts the audio.
 /// </summary>
 public partial class SettingsWindow : Window
@@ -66,6 +66,9 @@ public partial class SettingsWindow : Window
 
             StartBox.IsChecked = s.StartWithWindows;
             AskQuitBox.IsChecked = s.ConfirmQuit;
+            UpdateBox.IsChecked = s.CheckForUpdates;
+            CheckNowButton.Visibility = controller.Updates != null ? Visibility.Visible : Visibility.Collapsed;
+            UpdateStatus.Text = L.F("Version {0}", UpdateRules.RunningVersion(typeof(SettingsWindow).Assembly));
             RefreshHotkeyRows();
         }
         finally
@@ -137,6 +140,33 @@ public partial class SettingsWindow : Window
     {
         controller.Settings.ConfirmQuit = AskQuitBox.IsChecked == true;
         controller.Save();
+    }
+
+    private void UpdateBox_Click(object sender, RoutedEventArgs e)
+    {
+        controller.Settings.CheckForUpdates = UpdateBox.IsChecked == true;
+        controller.Save();
+    }
+
+    private async void CheckNowButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (controller.Updates is not { } updates) return;
+        CheckNowButton.IsEnabled = false;
+        UpdateStatus.Text = L.T("Checking…");
+        try
+        {
+            var text = await updates.CheckNowAsync(this);
+            UpdateStatus.Text = text ?? L.F("Version {0}", UpdateRules.RunningVersion(typeof(SettingsWindow).Assembly));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Check now failed", ex);
+            UpdateStatus.Text = L.T("Couldn't check for updates. Try again later.");
+        }
+        finally
+        {
+            CheckNowButton.IsEnabled = true;
+        }
     }
 
     private void SetupAgainButton_Click(object sender, RoutedEventArgs e)

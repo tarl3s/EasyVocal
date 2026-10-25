@@ -44,6 +44,8 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   elsewhere while EasyVocal runs, so the app warns you.)
 - **Tray icon** with a quick voice menu, and **Start with Windows** (off by default).
 - **Start menu shortcut**: the first time you open EasyVocal it asks whether to add it to the Start menu.
+- **Updates itself:** EasyVocal tells you when there's a new version and updates itself with one click (or skip that
+  version; you can turn the check off in the settings).
 - **Fits small screens:** every window can be resized, scrolls instead of cutting things off, opens inside your
   screen and remembers where you left it.
 - **English and Português (Brasil).**

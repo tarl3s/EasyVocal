@@ -24,7 +24,10 @@ tools/Publish-Release.ps1 -NoUpload   # self-contained single-file zip -> publis
 
 App arguments (`App.xaml.cs`, parsed by `AppArgs.cs`): `--data <folder>` (use that folder instead of
 `%APPDATA%\EasyVocal`), `--smoketest` (headless-ish UI check, PNGs and `easyvocal.log` go to the data folder),
-`--e2e` (see below), `--tray` (start hidden in the tray). The tests refuse to run without `--data` (exit code 2),
+`--e2e` (see below), `--tray` (start hidden in the tray), `--update-check` (a source build looks for a new release
+anyway; it still never installs), `--update-now` (no window: download and install the latest release without asking,
+log in `<data>\easyvocal.log` and `<data>\update.log`; exit 0 updated or already latest, 1 failed, 3 source build, 4
+EasyVocal is running). The tests refuse to run without `--data` (exit code 2),
 skip the first-run setup, never touch the real "Start with Windows" entry and don't hand over to (or wake) a running
 EasyVocal. Tests create temp folders under `%TEMP%\EV_*` and must delete them.
 
@@ -50,6 +53,7 @@ when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a
 | Model and storage | `Core/Model/`: `AppSettings.cs`, `BuiltIns.cs` (14 voices, starter sounds), `ItemOps.cs` (also the edited-copy rules: `WriteSoundFile`, `UseEditedFile`, `BackToOriginal`, `AddSplitSounds`; a file stays while any sound uses it as `FileName` or `OriginalFileName`), `Core/Layout/WindowFit.cs` (`WindowBox`, clamp a window into a screen's working area, pick the screen, does a remembered place still fit); `Core/Storage/SettingsStore.cs` (`%APPDATA%\EasyVocal\settings.json`, `Sounds\`) |
 | Hotkeys and text | `Core/Hotkeys/` (`Hotkey.cs`, `HotkeyMap.cs`), `Core/Text/Localizer.cs` |
 | App (WPF) | `src/EasyVocal/`: `App.xaml(.cs)` (startup, single instance, args), `AppController.cs` (wires engine, settings, hotkeys), `MainWindow`, `SettingsWindow`, `SetupWindow` (first run, VB-CABLE install via `VbCableInstaller.cs` + `Authenticode.cs`), `FilterEditorWindow`, `SoundEditorWindow`, `AudioEditorWindow` ("✂ Edit audio…": wave, selection, headphone playback with playhead, the `AudioEdit` tools, Save / Back to original / Save a copy as…) + `WaveformView.cs` (the wave control: cached min/max columns, ruler, zoom, drag-select), `WindowPlacer.cs` (every window: never bigger than or off the screen, place remembered in `AppSettings.WindowPlacements`), `HotkeyCaptureDialog`, `Tray.cs`, `StartupRegistration.cs`, `Loc.cs` + `Lang/pt-BR.json`, `Theme.xaml`, `Audio/` (WASAPI mic, speaker, meter, preview; `AudioDevices.cs` = the `IAudioDevices` seam the controller opens devices through and reads/sets Windows' defaults with; `DefaultDevices.cs` = IPolicyConfig, never called by the tests: the smoke test gets read-only defaults and no installer), `Hotkeys/GlobalHotkeys.cs`, `App.SmokeTest.cs` + `App.SmokeTest.Editor.cs` (the audio editor's tools, every window at its smallest size), `App.E2E.cs` + `E2E/` (test devices, signal and measurements) |
+| Updater | `src/EasyVocal/Updater.cs` (no WPF, compiled into the tests too: `AppVersion` (tags, semver order), `UpdateRules` (GitHub's release JSON, the zip for this PC, when to offer: newer, not draft/pre-release, not the skipped version unless "Check now"; `IsSourceBuild` = an `EasyVocal.sln` or `src\EasyVocal\EasyVocal.csproj` above the exe), `ReleaseNotes` (Markdown to plain lines), `UpdatePackage` (zip checks: zip-slip, size, an `EasyVocal.exe` that starts with MZ), `HelperScript` (the PowerShell swap script: paths as single-quoted literals, UTF-8 with BOM), `UpdateService` behind `IUpdateSource` + `IHelperLauncher`), `UpdateWindow` (the dialog: notes, Update now with progress + Cancel, Later, Skip this version), `UpdateCoordinator.cs` (check on open: dialog or tray balloon; Settings' Check now; start the helper, then `Quit(ask: false)`), `App.Update.cs` (wiring, `--update-now`), `App.SmokeTest.Update.cs` |
 | Tests | `tests/EasyVocal.Tests/` (+ `Helpers/FakeAudio.cs`, `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder); some plain app classes are linked in via the csproj; `E2ETests.cs` runs the built app with `--e2e` |
 | Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`), `tools/Publish-Release.ps1` |
 
@@ -84,4 +88,9 @@ when the exe isn't built). It shows its windows for ~35 s and holds Ctrl+1 (or a
   resizable where it makes sense, has MinWidth/MinHeight, and keeps long content in a ScrollViewer with its
   Save/Close buttons outside it. The smoke test renders each one at its minimum size (`smoke_small_*.png`,
   `smoke_audio_editor_small.png`) and checks those buttons are on screen.
+- **The updater never runs in the tests and never installs from a source build.** Smoke and e2e build no
+  `UpdateCoordinator` (the smoke test uses a fake `IUpdateSource` and `IHelperLauncher`); a build under the repo
+  (bin\Debug, publish\win-x64) is a source build. The helper swaps only `EasyVocal.exe` (a `.old` copy until the new one
+  is in place, put back if the copy fails), waits up to 60 s for EasyVocal to close, then opens it again; `%APPDATA%`
+  is never touched. Settings keys: `CheckForUpdates`, `SkippedUpdateVersion`.
 - **Never push, tag or publish a release without the owner's word.**

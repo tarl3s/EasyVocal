@@ -44,6 +44,8 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   caractere nos outros programas enquanto o EasyVocal roda, e o app avisa.)
 - **Ícone na bandeja** com menu rápido de vozes, e **Iniciar com o Windows** (desligado por padrão).
 - **Atalho no Menu Iniciar**: na primeira vez que você abre o EasyVocal, ele pergunta se quer adicionar ao Menu Iniciar.
+- **Se atualiza sozinho:** o EasyVocal avisa quando sai uma versão nova e se atualiza com um clique (ou pule essa
+  versão; dá para desligar a verificação nas configurações).
 - **Cabe em telas pequenas:** toda janela muda de tamanho, rola em vez de cortar as coisas, abre dentro da sua tela
   e lembra onde você a deixou.
 - **English e Português (Brasil).**

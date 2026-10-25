@@ -61,4 +61,15 @@ public class AppArgsTests
         Assert.Null(args.DataFolder);
         Assert.False(args.Allowed);
     }
+
+    [Fact]
+    public void UpdateFlags_AreReadAndAreNotTests()
+    {
+        var none = AppArgs.Parse(new[] { "--tray" });
+        Assert.False(none.UpdateCheck || none.UpdateNow);
+        var check = AppArgs.Parse(new[] { "--update-check" });
+        Assert.True(check.UpdateCheck && !check.UpdateNow && !check.TestMode && check.Allowed);
+        var now = AppArgs.Parse(new[] { "--data", "x", "--update-now" });
+        Assert.True(now.UpdateNow && !now.UpdateCheck && !now.TestMode && now.Allowed);
+    }
 }

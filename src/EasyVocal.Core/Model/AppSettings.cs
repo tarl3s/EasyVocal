@@ -87,6 +87,10 @@ public class AppSettings
     public bool StartMenuAsked { get; set; }
     /// <summary>The person wants the Start menu shortcut (it is kept pointing at this EasyVocal.exe).</summary>
     public bool StartMenuShortcut { get; set; }
+    /// <summary>Look for a newer release on GitHub each time EasyVocal opens.</summary>
+    public bool CheckForUpdates { get; set; } = true;
+    /// <summary>The release version (e.g. "0.3.0") the person chose to skip: it is not offered again when EasyVocal opens.</summary>
+    public string? SkippedUpdateVersion { get; set; }
     /// <summary>
     /// Windows' default playback device when the VB-CABLE install started (VB-CABLE may take its place): put back
     /// once the cable shows up, then forgotten. Null = nothing to put back.

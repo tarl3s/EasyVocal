@@ -2,7 +2,7 @@ using System.IO;
 
 namespace EasyVocal;
 
-/// <summary>The command line: <c>--data &lt;folder&gt;</c>, <c>--smoketest</c>, <c>--e2e</c>, <c>--tray</c>.</summary>
+/// <summary>The command line: <c>--data &lt;folder&gt;</c>, <c>--smoketest</c>, <c>--e2e</c>, <c>--tray</c>, <c>--update-check</c>, <c>--update-now</c>.</summary>
 internal sealed class AppArgs
 {
     /// <summary>The folder given with <c>--data</c> (full path), or null for the normal one.</summary>
@@ -18,6 +18,12 @@ internal sealed class AppArgs
 
     public bool StartHidden { get; private init; }
 
+    /// <summary><c>--update-check</c>: a developer flag: look for a new release even in a build run from the source code (it never installs there).</summary>
+    public bool UpdateCheck { get; private init; }
+
+    /// <summary><c>--update-now</c>: no window: download and install the latest release without asking, then quit (log in the data folder).</summary>
+    public bool UpdateNow { get; private init; }
+
     /// <summary>A self-test run (smoke or e2e): no first-run setup, no single-instance hand-over, no real startup entry.</summary>
     public bool TestMode => SmokeTest || E2E;
 
@@ -30,7 +36,7 @@ internal sealed class AppArgs
     public static AppArgs Parse(IReadOnlyList<string> args)
     {
         string? data = null;
-        bool smoke = false, e2e = false, relaunch = false, hidden = false;
+        bool smoke = false, e2e = false, relaunch = false, hidden = false, updateCheck = false, updateNow = false;
         for (int i = 0; i < args.Count; i++)
         {
             if (args[i] == "--data" && i + 1 < args.Count) data = Path.GetFullPath(args[++i]);
@@ -38,7 +44,10 @@ internal sealed class AppArgs
             else if (args[i] == "--e2e") e2e = true;
             else if (args[i] == "--e2e-relaunch") e2e = relaunch = true;
             else if (args[i] == "--tray") hidden = true;
+            else if (args[i] == "--update-check") updateCheck = true;
+            else if (args[i] == "--update-now") updateNow = true;
         }
-        return new AppArgs { DataFolder = data, SmokeTest = smoke, E2E = e2e, E2ERelaunch = relaunch, StartHidden = hidden };
+        return new AppArgs { DataFolder = data, SmokeTest = smoke, E2E = e2e, E2ERelaunch = relaunch, StartHidden = hidden,
+            UpdateCheck = updateCheck, UpdateNow = updateNow };
     }
 }

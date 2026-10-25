@@ -885,6 +885,9 @@ public sealed class AppController : IDisposable
     private string? MonitorId(IReadOnlyList<DeviceInfo> outputs) =>
         DeviceRules.PickMonitor(Settings.MonitorDeviceId, outputs, DeviceRules.PickCall(Settings.OutputDeviceId, outputs));
 
+    /// <summary>The updater (Settings' "Check now"); null in the tests unless the smoke test sets a fake one.</summary>
+    public UpdateCoordinator? Updates { get; set; }
+
     // ---------- Windows' default devices (VB-CABLE may take them) ----------
 
     /// <summary>How the VB-CABLE install is run (the e2e test fakes it; the smoke test never downloads anything).</summary>

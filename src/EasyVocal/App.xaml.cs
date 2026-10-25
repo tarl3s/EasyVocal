@@ -17,7 +17,8 @@ namespace EasyVocal;
 /// the controller, the main window and the tray. Quitting happens only from the tray (closing the window hides it).
 /// <para>Arguments: <c>--data &lt;folder&gt;</c> uses another data folder (development and tests);
 /// <c>--tray</c> starts hidden in the tray (what "Start with Windows" launches); <c>--smoketest</c> opens and checks every window, then quits (<c>App.SmokeTest.cs</c>);
-/// <c>--e2e</c> runs the end-to-end test on test audio devices (<c>App.E2E.cs</c>). Both tests need <c>--data</c>.</para>
+/// <c>--e2e</c> runs the end-to-end test on test audio devices (<c>App.E2E.cs</c>). Both tests need <c>--data</c>.
+/// <c>--update-now</c> installs the latest release without a window; <c>--update-check</c> makes a source build look for one (<c>App.Update.cs</c>).</para>
 /// </summary>
 public partial class App : Application
 {
@@ -45,6 +46,13 @@ public partial class App : Application
         {
             Console.Error.WriteLine("--smoketest and --e2e need --data <folder> (a scratch folder): they never run on the real settings.");
             Shutdown(2);
+            return;
+        }
+
+        // No window: download and install the latest release, then quit (App.Update.cs).
+        if (args.UpdateNow)
+        {
+            RunUpdateNow(args, dataFolder);
             return;
         }
 
@@ -105,6 +113,7 @@ public partial class App : Application
         MainWindow = window;
         tray = new Tray(controller, ShowMainWindow, () => Quit(ask: true));
         window.HiddenToTray += () => tray?.ShowStillRunningTip();
+        SetUpUpdates(args, dataFolder, controller);
         if (!startHidden) window.Show();
 
         // Opening the devices takes a moment: let the window paint first.
@@ -117,6 +126,8 @@ public partial class App : Application
             if (!args.TestMode) OfferStartMenuShortcut(started, startHidden ? null : window);
             // First run: the setup comes first (not in the tests: the smoke test opens it itself, and they must never download anything).
             if (!started.Settings.SetupDone && !args.TestMode) SetupWindow.Open(started, window.IsVisible ? window : null);
+            // Then, in the background, a newer release (never in the tests: they never touch the network).
+            CheckForUpdatesOnOpen();
         });
 
         if (smokeTest) RunSmokeTest(dataFolder);

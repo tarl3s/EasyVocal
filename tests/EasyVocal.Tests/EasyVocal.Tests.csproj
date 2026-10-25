@@ -27,6 +27,7 @@
     <Compile Include="..\..\src\EasyVocal\Authenticode.cs" Link="Linked\Authenticode.cs" />
     <Compile Include="..\..\src\EasyVocal\AppArgs.cs" Link="Linked\AppArgs.cs" />
     <Compile Include="..\..\src\EasyVocal\StartMenuShortcut.cs" Link="Linked\StartMenuShortcut.cs" />
+    <Compile Include="..\..\src\EasyVocal\Updater.cs" Link="Linked\Updater.cs" />
   </ItemGroup>
 
   <ItemGroup>

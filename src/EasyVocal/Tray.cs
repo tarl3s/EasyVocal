@@ -18,6 +18,7 @@ public sealed class Tray : IDisposable
     private readonly Forms.ContextMenuStrip menu;
     private readonly Forms.NotifyIcon icon;
     private Drawing.Font? boldFont;
+    private Action? balloonClick;
     private bool disposed;
 
     public Tray(AppController controller, Action open, Action quit)
@@ -38,16 +39,31 @@ public sealed class Tray : IDisposable
         {
             if (e.Button == Forms.MouseButtons.Left) Safe(open);
         };
+        icon.BalloonTipClicked += (_, _) =>
+        {
+            var click = balloonClick;
+            balloonClick = null;
+            if (click != null) Safe(click);
+        };
     }
 
     /// <summary>The first time the window is closed: say the app keeps running here.</summary>
     public void ShowStillRunningTip()
     {
         if (disposed || controller.Settings.TrayTipShown) return;
+        balloonClick = null; // a click on this tip does nothing
         icon.ShowBalloonTip(5000, "EasyVocal", L.T("EasyVocal keeps running here — your voice still works in calls"),
             Forms.ToolTipIcon.Info);
         controller.Settings.TrayTipShown = true;
         controller.Save();
+    }
+
+    /// <summary>A balloon whose click runs <paramref name="onClick"/> (e.g. "EasyVocal 0.3.0 is available — click to update").</summary>
+    public void ShowBalloon(string text, Action onClick)
+    {
+        if (disposed) return;
+        balloonClick = onClick;
+        icon.ShowBalloonTip(10000, "EasyVocal", text, Forms.ToolTipIcon.Info);
     }
 
     public void Dispose()
