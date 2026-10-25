@@ -21,6 +21,7 @@ internal abstract unsafe class PortAudioStream : IDisposable
     private IntPtr stream;
     private GCHandle self;
     private long lastCallback;
+    private int outputChannels; // for the silence a closing playback stream gives
     private volatile bool started;
     private int failed;
     protected volatile bool Disposed;
@@ -34,6 +35,7 @@ internal abstract unsafe class PortAudioStream : IDisposable
     protected void Open(PortAudioNative.StreamParameters* input, PortAudioNative.StreamParameters* output, double rate, int framesPerBuffer)
     {
         self = GCHandle.Alloc(this);
+        outputChannels = output != null ? output->ChannelCount : 0;
         int error = PortAudioNative.Pa_OpenStream(out stream, input, output, rate, new CULong((uint)framesPerBuffer),
             new CULong((uint)PortAudioNative.ClipOff), &Callback, (void*)GCHandle.ToIntPtr(self));
         if (error == PortAudioNative.NoError) return;
@@ -69,9 +71,16 @@ internal abstract unsafe class PortAudioStream : IDisposable
     {
         try
         {
-            if (GCHandle.FromIntPtr((IntPtr)userData).Target is not PortAudioStream s) return PortAudioNative.Complete;
+            // Never paComplete: on macOS PortAudio then stops the AudioUnit from inside this IO callback, which deadlocks
+            // with a thread that is opening or checking another stream (CoreAudio's lock) — EasyVocal froze while the
+            // setup's level meter closed. A closing stream gives silence until Pa_AbortStream stops it from outside.
+            if (GCHandle.FromIntPtr((IntPtr)userData).Target is not PortAudioStream s) return PortAudioNative.Continue;
             Volatile.Write(ref s.lastCallback, Stopwatch.GetTimestamp());
-            if (s.Disposed) return PortAudioNative.Complete;
+            if (s.Disposed)
+            {
+                if (output != null) new Span<float>(output, (int)frames.Value * s.outputChannels).Clear();
+                return PortAudioNative.Continue;
+            }
             s.OnAudio((float*)input, (float*)output, (int)frames.Value);
             return PortAudioNative.Continue;
         }
