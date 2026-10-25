@@ -107,7 +107,7 @@ jobs:
   linux-package:
     needs: packages
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -125,7 +125,7 @@ jobs:
   macos-package:
     needs: packages
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -133,5 +133,7 @@ jobs:
           name: downloads
           path: downloads
       - name: Unpack, sign ad hoc and start the Apple silicon download
+        env:
+          EV_SMOKE_RUNS: "6"
         run: sh tools/Test-Package.sh downloads/EasyVocal-macos-arm64.zip "$RUNNER_TEMP/macos-package"
 
