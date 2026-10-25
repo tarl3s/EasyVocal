@@ -9,6 +9,8 @@ using EasyVocal.Tests.Helpers;
 namespace EasyVocal.UiTests;
 
 /// <summary>The main window's close-to-tray, and dialogs shown without an owner (from the tray, at a --tray start).</summary>
+// One at a time with the other app tests: they share the process' current session, its error count and the log.
+[Collection("App sessions")]
 public class WindowBehaviourTests
 {
     private sealed class Fixture : IDisposable

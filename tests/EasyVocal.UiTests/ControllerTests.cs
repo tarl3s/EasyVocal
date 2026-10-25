@@ -11,6 +11,8 @@ namespace EasyVocal.UiTests;
 /// <see cref="AppController"/> without any UI framework: its posts and timers go to <see cref="ManualDispatcher"/>, which
 /// the test pumps by hand.
 /// </summary>
+// One at a time with the other app tests: they share the process' current session, its error count and the log.
+[Collection("App sessions")]
 public class ControllerTests
 {
     /// <summary>A UI thread the test drives: posted work waits in a queue, timers tick when told to.</summary>

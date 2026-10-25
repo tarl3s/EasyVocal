@@ -13,6 +13,8 @@ namespace EasyVocal.UiTests;
 /// process: every window opened, driven and drawn; the e2e test's audio checked on its test devices; the "relaunch" is a
 /// second session on the same folder. Nothing on the computer is touched: pretend hotkeys, startup entry and virtual mic.
 /// </summary>
+// One at a time with the other app tests: they share the process' current session, its error count and the log.
+[Collection("App sessions")]
 public class HeadlessAppTests
 {
     private static readonly TimeSpan Limit = TimeSpan.FromMinutes(4);
