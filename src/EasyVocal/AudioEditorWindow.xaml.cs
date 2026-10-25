@@ -383,19 +383,24 @@ public partial class AudioEditorWindow : Window
         await Edit(x => (AudioEdit.Trim(x, start, count), 0, 0));
     }
 
-    private void SplitButton_Click(object sender, RoutedEventArgs e)
+    private async void SplitButton_Click(object sender, RoutedEventArgs e)
     {
         int at = Wave.CursorPosition;
         var x = Current;
+        if (busy) return;
         if (at <= 0 || at >= x.Length)
         {
             Status(L.T("Click inside the sound to place the cursor first."));
             return;
         }
+        StopPlaying();
         var (a, b) = AudioEdit.Split(x, at);
+        busy = true;
+        Status(L.T("Working…"));
+        UpdateAll();
         try
         {
-            var (first, second) = controller.SplitSound(soundId, soundName, emoji, volume, a, b);
+            var (first, second) = await controller.SplitSoundAsync(soundId, soundName, emoji, volume, a, b);
             Status(L.F("Made two new sounds: “{0}” and “{1}”.", first.Name, second.Name));
             SplitDone = true;
         }
@@ -403,6 +408,11 @@ public partial class AudioEditorWindow : Window
         {
             AppLog.Error("Splitting a sound failed", ex);
             Status(L.T("We couldn't save the new sounds."));
+        }
+        finally
+        {
+            busy = false;
+            UpdateAll();
         }
     }
 
@@ -591,7 +601,7 @@ public partial class AudioEditorWindow : Window
     /// Opens the editor for a saved sound (the sound card's "✂ Edit audio…") and saves what the person keeps:
     /// an edited copy, or the original again.
     /// </summary>
-    public static void EditSavedSound(Window owner, AppController controller, SoundItem item)
+    public static async Task EditSavedSoundAsync(Window owner, AppController controller, SoundItem item)
     {
         var samples = controller.SoundSamples(item.Id);
         if (samples == null)
@@ -605,16 +615,16 @@ public partial class AudioEditorWindow : Window
         var editor = new AudioEditorWindow(controller, AppController.DisplayName(item), item.Emoji, item.Volume, samples,
             isOriginal: !edited, originalPath: edited ? controller.SoundPath(item.OriginalFileName) : null, soundId: item.Id) { Owner = owner };
         if (editor.ShowDialog() != true || editor.Result is not { } result) return;
-        SaveResult(owner, controller, item.Id, result);
+        await SaveResultAsync(owner, controller, item.Id, result);
     }
 
     /// <summary>Saves an editor's result on a saved sound; false (and the person is told) when the file can't be written.</summary>
-    public static bool SaveResult(Window owner, AppController controller, string id, AudioState result)
+    public static async Task<bool> SaveResultAsync(Window owner, AppController controller, string id, AudioState result)
     {
         try
         {
             if (result.IsOriginal) controller.RestoreOriginalAudio(id, result.Samples);
-            else controller.ApplyEditedAudio(id, result.Samples);
+            else await controller.ApplyEditedAudioAsync(id, result.Samples);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

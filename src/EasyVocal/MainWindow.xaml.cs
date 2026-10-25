@@ -471,7 +471,7 @@ public partial class MainWindow : Window
 
     private void EditSoundAudio(string id)
     {
-        if (SoundById(id) is { } s) AudioEditorWindow.EditSavedSound(this, controller, s);
+        if (SoundById(id) is { } s) _ = AudioEditorWindow.EditSavedSoundAsync(this, controller, s);
     }
 
     private void SetVoiceHotkey(string id)

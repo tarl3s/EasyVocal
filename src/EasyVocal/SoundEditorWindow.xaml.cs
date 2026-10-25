@@ -58,6 +58,7 @@ public partial class SoundEditorWindow : Window
         UpdateSave();
 
         controller.PreviewEnded += OnPreviewEnded;
+        Closing += (_, e) => e.Cancel |= saving; // the edited copy is being written: Save closes the window when done
         Closed += (_, _) =>
         {
             controller.PreviewEnded -= OnPreviewEnded;
@@ -241,9 +242,9 @@ public partial class SoundEditorWindow : Window
     }
 
     /// <summary>Writes the edited audio as the sound's new file (the person is told when that fails).</summary>
-    private void SaveEditedAudio(float[] edited)
+    private async Task SaveEditedAudio(float[] edited)
     {
-        if (AudioEditorWindow.SaveResult(this, controller, itemId, new AudioState(edited, false))) audioChange = AudioChange.None;
+        if (await AudioEditorWindow.SaveResultAsync(this, controller, itemId, new AudioState(edited, false))) audioChange = AudioChange.None;
     }
 
     // ---------- hotkey ----------
@@ -266,7 +267,7 @@ public partial class SoundEditorWindow : Window
     private void UpdateSave() =>
         SaveButton.IsEnabled = !saving && !loadingFile && !string.IsNullOrWhiteSpace(NameBox.Text) && (editing != null || samples != null);
 
-    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         var name = NameBox.Text.Trim();
         if (name.Length == 0) return;
@@ -320,7 +321,7 @@ public partial class SoundEditorWindow : Window
             }
             // The edited audio is written as a copy next to the file it came from (that one is kept as the original).
             // If that fails the person is told and the sound keeps its unedited audio.
-            if (audioChange == AudioChange.Edited && samples != null) SaveEditedAudio(samples);
+            if (audioChange == AudioChange.Edited && samples != null) await SaveEditedAudio(samples);
 
             // Windows could still refuse the key (an app grabbed it since we checked): don't keep it.
             if (pendingHotkey != null && controller.RefusedActions.Contains("sound:" + itemId))
@@ -331,6 +332,7 @@ public partial class SoundEditorWindow : Window
                 controller.RebuildHotkeys();
                 AskDialog.Tell(this, L.F("Another app is already using {0}. Pick a different one.", pendingHotkey));
             }
+            saving = false; // lets the window close
             DialogResult = true;
         }
         finally

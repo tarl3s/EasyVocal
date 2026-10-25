@@ -194,7 +194,7 @@ public partial class App
 
         await SmokeUpdates(main, c, dataFolder, Png);
         SmokeSetupAndSettings(main, c, Png);
-        SmokeAudioEditor(main, c, dataFolder, Png);
+        await SmokeAudioEditor(main, c, dataFolder, Png);
         SmokeSmallWindows(main, c, dataFolder, Png);
     }
 

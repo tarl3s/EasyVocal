@@ -503,13 +503,24 @@ public sealed class AppController : IDisposable
     /// Saves edited audio as a new WAV in the Sounds folder and makes the sound play it. The original file is never
     /// changed (it is remembered for "Back to original"). Throws <see cref="IOException"/> or
     /// <see cref="UnauthorizedAccessException"/> when the file can't be written; nothing changes then.
+    /// The clamping and the writing run off the UI thread; a sound deleted meanwhile is left alone (the new file goes).
     /// </summary>
-    public void ApplyEditedAudio(string id, float[] samples)
+    public async Task ApplyEditedAudioAsync(string id, float[] samples)
     {
         var item = FindSound(id) ?? throw new ArgumentException("No sound with id '" + id + "'.", nameof(id));
-        var clean = AudioEdit.Clamped(samples); // what the file holds is what plays
-        var file = ItemOps.WriteSoundFile(SoundsFolder, ItemOps.EditedStem(item), clean);
-        ItemOps.UseEditedFile(Settings, item, file, SoundsFolder);
+        var folder = SoundsFolder;
+        var stem = ItemOps.EditedStem(item);
+        var (clean, file) = await Task.Run(() =>
+        {
+            var c = AudioEdit.Clamped(samples); // what the file holds is what plays
+            return (c, ItemOps.WriteSoundFile(folder, stem, c));
+        });
+        if (disposed || !Settings.Sounds.Contains(item))
+        {
+            ItemOps.DeleteFileIfUnused(Settings, file, folder);
+            return;
+        }
+        ItemOps.UseEditedFile(Settings, item, file, folder);
         mixer.Stop(id);
         SetSamples(id, clean);
         AppLog.Info($"Sound '{id}' edited: now plays {file}");
@@ -535,20 +546,26 @@ public sealed class AppController : IDisposable
 
     /// <summary>
     /// "Split at cursor": two new sounds of the person's own, "<paramref name="name"/> 1" and "… 2", each with its
-    /// half saved as a WAV, right after <paramref name="afterId"/> (the sound being edited, if it is saved yet).
+    /// half saved as a WAV (off the UI thread), right after <paramref name="afterId"/> (the sound being edited, if it
+    /// is saved yet). Throws <see cref="IOException"/> or <see cref="UnauthorizedAccessException"/> when a file can't
+    /// be written; nothing is added then.
     /// </summary>
-    public (SoundItem First, SoundItem Second) SplitSound(string? afterId, string name, string emoji, double volume, float[] first, float[] second)
+    public async Task<(SoundItem First, SoundItem Second)> SplitSoundAsync(string? afterId, string name, string emoji,
+        double volume, float[] first, float[] second)
     {
-        var a = AudioEdit.Clamped(first);
-        var b = AudioEdit.Clamped(second);
-        var fileA = ItemOps.WriteSoundFile(SoundsFolder, name + " 1", a);
-        string fileB;
-        try { fileB = ItemOps.WriteSoundFile(SoundsFolder, name + " 2", b); }
-        catch
+        var folder = SoundsFolder;
+        var (a, b, fileA, fileB) = await Task.Run(() =>
         {
-            ItemOps.DeleteFileIfUnused(Settings, fileA, SoundsFolder);
-            throw;
-        }
+            var one = AudioEdit.Clamped(first);
+            var two = AudioEdit.Clamped(second);
+            var oneFile = ItemOps.WriteSoundFile(folder, name + " 1", one);
+            try { return (one, two, oneFile, ItemOps.WriteSoundFile(folder, name + " 2", two)); }
+            catch
+            {
+                try { File.Delete(Path.Combine(folder, oneFile)); } catch (Exception) { /* only clutter */ }
+                throw;
+            }
+        });
         var pair = ItemOps.AddSplitSounds(Settings, afterId, name, emoji, volume, fileA, fileB);
         SetSamples(pair.First.Id, a);
         SetSamples(pair.Second.Id, b);

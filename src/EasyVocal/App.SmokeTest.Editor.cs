@@ -70,7 +70,7 @@ public partial class App
         window.ShowDialog();
     }
 
-    private void SmokeAudioEditor(MainWindow main, AppController c, string dataFolder, Func<string, string> Png)
+    private async Task SmokeAudioEditor(MainWindow main, AppController c, string dataFolder, Func<string, string> Png)
     {
         // A sound of the person's own, from a file in the Sounds folder.
         var source = Path.Combine(dataFolder, "smoke speech.wav");
@@ -148,6 +148,7 @@ public partial class App
             w.UpdateLayout();
             Check(w.SplitButton.IsEnabled, "Split is offered with the cursor inside the sound");
             Press(w.SplitButton);
+            await w.IdleAsync();
             Check(w.SplitDone && c.Settings.Sounds.Count == soundsBefore + 2
                   && c.Settings.Sounds.Any(s => s.Name == "Smoke speech 1") && c.Settings.Sounds.Any(s => s.Name == "Smoke speech 2"),
                 "Split adds 'Smoke speech 1' and 'Smoke speech 2'");
@@ -174,7 +175,7 @@ public partial class App
 
         var result = editor?.Result;
         Check(result is { IsOriginal: false }, "Save gives the edited sound");
-        if (result != null) AudioEditorWindow.SaveResult(main, c, item.Id, result);
+        if (result != null) await AudioEditorWindow.SaveResultAsync(main, c, item.Id, result);
         var edited = item.FileName;
         Check(item.OriginalFileName == fileName && edited != fileName && File.Exists(Path.Combine(c.SoundsFolder, edited))
               && File.Exists(Path.Combine(c.SoundsFolder, fileName)), "Save writes an edited copy and keeps the original file");
@@ -191,7 +192,7 @@ public partial class App
             Check(w.History.Current.IsOriginal && w.SaveButton.IsEnabled, "Back to original loads the original file");
             Press(w.SaveButton);
         });
-        if (editor.Result is { } back) AudioEditorWindow.SaveResult(main, c, item.Id, back);
+        if (editor.Result is { } back) await AudioEditorWindow.SaveResultAsync(main, c, item.Id, back);
         Check(item.FileName == fileName && item.OriginalFileName == null && !File.Exists(Path.Combine(c.SoundsFolder, edited)),
             "Back to original plays the original file again and drops the edited copy");
 
