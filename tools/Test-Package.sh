@@ -10,6 +10,31 @@ set -u
 archive=$1
 work=$2
 fail() { echo "FAIL: $*"; exit 1; }
+# Runs the program with a deadline; a hung one first gets its threads' stacks printed (macOS: sample), then is killed.
+# Sets $code (142 = it hung).
+run_app() {
+    limit=$1
+    shift
+    HOME="$work/home" $runner "$program" "$@" &
+    pid=$!
+    waited=0
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$limit" ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "== still running after $limit s: the threads' stacks"
+        if command -v sample >/dev/null 2>&1; then
+            sample "$pid" 3 -file "$work/hang.txt" >/dev/null 2>&1 && cat "$work/hang.txt"
+        fi
+        kill -9 "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        code=142
+        return
+    fi
+    wait "$pid"
+    code=$?
+}
 rm -rf "$work"
 mkdir -p "$work/unpacked" "$work/home" "$work/data" || fail "can't make $work"
 archive=$(cd "$(dirname "$archive")" && pwd)/$(basename "$archive")
@@ -64,9 +89,14 @@ case "$archive" in
 esac
 
 echo "== $program --data $work/data --smoketest"
-# perl's alarm: macOS has no timeout(1). A smoke test takes well under a minute.
-HOME="$work/home" perl -e 'alarm shift; exec @ARGV or die "exec: $!"' 300 $runner "$program" --data "$work/data" --smoketest
-code=$?
+# EV_SMOKE_RUNS=n: the smoke test n times (to catch something that happens now and then).
+for round in $(seq 1 "${EV_SMOKE_RUNS:-1}"); do
+    rm -rf "$work/data"
+    mkdir -p "$work/data"
+    echo "== smoke run $round"
+    run_app 240 --data "$work/data" --smoketest
+    [ "$code" = 0 ] || break
+done
 echo "exit code $code"
 if [ -f "$work/data/easyvocal.log" ]; then
     echo "== easyvocal.log"
@@ -80,8 +110,7 @@ echo "PASS: $(basename "$archive") unpacks, installs and starts"
 # The end-to-end test of the unpacked program: pretend devices, the real windows, a quit and a relaunch.
 mkdir -p "$work/e2e" || fail "can't make $work/e2e"
 echo "== $program --data $work/e2e --e2e"
-HOME="$work/home" perl -e 'alarm shift; exec @ARGV or die "exec: $!"' 400 $runner "$program" --data "$work/e2e" --e2e
-code=$?
+run_app 360 --data "$work/e2e" --e2e
 echo "exit code $code"
 [ -f "$work/e2e/e2e.log" ] && cat "$work/e2e/e2e.log"
 [ "$code" = 0 ] || { [ -f "$work/e2e/easyvocal.log" ] && tail -n 80 "$work/e2e/easyvocal.log"; fail "the e2e test of the unpacked download exited with $code"; }
