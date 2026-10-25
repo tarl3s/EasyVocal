@@ -156,20 +156,31 @@ public static class ItemOps
         if (string.Equals(Path.GetDirectoryName(source), folder.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
             return name;
 
-        var stem = Path.GetFileNameWithoutExtension(name);
-        var ext = Path.GetExtension(name);
-        for (int n = 1; ; n++)
+        return FirstFreeName(Path.GetFileNameWithoutExtension(name), Path.GetExtension(name), candidate =>
         {
-            var candidate = n == 1 ? name : $"{stem} ({n}){ext}";
+            var path = Path.Combine(folder, candidate);
             try
             {
-                File.Copy(source, Path.Combine(folder, candidate), overwrite: false);
-                return candidate;
+                File.Copy(source, path, overwrite: false);
+                return true;
             }
-            catch (IOException) when (File.Exists(Path.Combine(folder, candidate)))
+            catch (IOException) when (File.Exists(path))
             {
-                // taken: try the next number
+                return false;
             }
+        });
+    }
+
+    /// <summary>
+    /// "stem.ext", then "stem (2).ext", "stem (3).ext"… until <paramref name="create"/> makes that file (false = the
+    /// name is taken). Returns the name it made.
+    /// </summary>
+    private static string FirstFreeName(string stem, string ext, Func<string, bool> create)
+    {
+        for (int n = 1; ; n++)
+        {
+            var candidate = n == 1 ? stem + ext : $"{stem} ({n}){ext}";
+            if (create(candidate)) return candidate;
         }
     }
 
@@ -198,14 +209,12 @@ public static class ItemOps
     public static string WriteSoundFile(string soundsFolder, string stem, float[] samples)
     {
         Directory.CreateDirectory(soundsFolder);
-        stem = SafeStem(stem);
-        for (int n = 1; ; n++)
+        return FirstFreeName(SafeStem(stem), ".wav", candidate =>
         {
-            var candidate = n == 1 ? stem + ".wav" : $"{stem} ({n}).wav";
             var path = Path.Combine(soundsFolder, candidate);
             FileStream stream;
             try { stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None); }
-            catch (IOException) when (File.Exists(path)) { continue; } // taken: try the next number
+            catch (IOException) when (File.Exists(path)) { return false; }
             try
             {
                 SoundWriter.WriteWav(stream, samples); // closes the stream
@@ -216,8 +225,8 @@ public static class ItemOps
                 try { File.Delete(path); } catch (Exception) { /* a half-written file is only clutter */ }
                 throw;
             }
-            return candidate;
-        }
+            return true;
+        });
     }
 
     /// <summary>A file name stem made of the name's allowed characters (at most 60), or "sound".</summary>
