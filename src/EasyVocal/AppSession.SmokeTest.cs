@@ -208,10 +208,64 @@ internal sealed partial class AppSession
         await Dialog(main, null, () => AskDialog.AskAsync(main, L.F("Delete “{0}”? This can't be undone.", "Smoke"), L.T("Delete"), L.T("Cancel"), L.T("Don't ask again")),
             w => Snapshot(w, Png("ask")));
 
+        await SmokePopups(main, c, Png);
         await SmokeUpdates(main, c, dataFolder, Png);
         await SmokeSetupAndSettings(main, c, Png);
         await SmokeAudioEditor(main, c, dataFolder, Png);
         await SmokeSmallWindows(main, c, dataFolder, Png);
+    }
+
+    /// <summary>What opens over a window: a card's menu, a list's drop-down, a tooltip (pictures of their popups).</summary>
+    private async Task SmokePopups(MainWindow main, AppController c, Func<string, string> Png)
+    {
+        main.Tabs.SelectedIndex = 0;
+        await Settle(main);
+        if (main.VoiceCard("robot") is { ContextMenu: { } menu } card)
+        {
+            menu.Open(card);
+            await Settle(main);
+            Check(menu.IsOpen && SnapshotPopup(menu, Png("menu")), "a card's menu opens");
+            menu.Close();
+        }
+        await DialogAsync(main, new SettingsWindow(c), async w =>
+        {
+            w.LanguageBox.IsDropDownOpen = true;
+            await Settle(w);
+            var popup = w.LanguageBox.GetVisualDescendants().OfType<Popup>().FirstOrDefault();
+            Check(popup?.Child != null && SnapshotPopup(popup.Child, Png("dropdown")), "a list's drop-down opens");
+            w.LanguageBox.IsDropDownOpen = false;
+            var tipped = w.HotkeyButton(HotkeyMap.MuteMic);
+            var tip = new TextBlock { Text = L.T("Set hotkey…") }; // as a control, so the popup it lands in can be found
+            ToolTip.SetTip(tipped, tip);
+            ToolTip.SetIsOpen(tipped, true);
+            await Settle(w);
+            Check(SnapshotPopup(tip, Png("tooltip")), "a tooltip opens");
+            ToolTip.SetIsOpen(tipped, false);
+        });
+    }
+
+    /// <summary>
+    /// What a popup (menu, drop-down, tooltip) is drawn in, saved as a PNG: its own little window, or (headless, where
+    /// popups are drawn over their window) its overlay host. False when it isn't shown.
+    /// </summary>
+    private static bool SnapshotPopup(Visual inPopup, string path)
+    {
+        var root = inPopup.GetSelfAndVisualAncestors().OfType<IPopupHost>().OfType<Visual>().FirstOrDefault();
+        if (root == null) return false;
+        var size = root.Bounds.Size;
+        if (size.Width < 2 || size.Height < 2) return false;
+        try
+        {
+            using var bitmap = new RenderTargetBitmap(new PixelSize((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height)), new Vector(96, 96));
+            bitmap.Render(root);
+            bitmap.Save(path);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Saving the snapshot " + path + " failed", ex);
+            return false;
+        }
     }
 
     // ---------- first-run setup and settings ----------

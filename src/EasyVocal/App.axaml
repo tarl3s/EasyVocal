@@ -47,6 +47,9 @@
             <Setter Property="SelectionForegroundBrush" Value="{StaticResource AccentText}" />
             <Setter Property="CaretBrush" Value="{StaticResource Text}" />
         </Style>
+        <Style Selector="ContextMenu">
+            <Setter Property="MinWidth" Value="160" />
+        </Style>
         <!-- A playing sound's card: its outline pulses. -->
         <Style Selector="Border.pulse">
             <Setter Property="Opacity" Value="0" />
