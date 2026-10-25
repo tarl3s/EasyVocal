@@ -60,5 +60,5 @@ public static class Program
     }
 
     /// <summary>Avalonia's set-up (also used by the visual designer).</summary>
-    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect().LogToTrace();
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<App>().UsePlatformDetect().With(App.Fonts()).LogToTrace();
 }

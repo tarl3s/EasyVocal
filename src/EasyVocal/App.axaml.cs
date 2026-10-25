@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 
 namespace EasyVocal;
 
@@ -11,6 +12,26 @@ namespace EasyVocal;
 /// </summary>
 public partial class App : Application
 {
+    /// <summary>
+    /// Where a character the UI font doesn't have comes from. On Windows, as WPF did: arrows, shapes and symbols
+    /// (▶ ■ ✂ ⌨ ↶) from Segoe UI Symbol, drawn like text in the button's colour; emoji from Segoe UI Emoji, in colour.
+    /// Elsewhere the system's own fallback decides.
+    /// </summary>
+    public static FontManagerOptions Fonts()
+    {
+        if (!OperatingSystem.IsWindows()) return new FontManagerOptions();
+        return new FontManagerOptions
+        {
+            DefaultFamilyName = "Segoe UI",
+            FontFallbacks = new[]
+            {
+                new FontFallback { FontFamily = new FontFamily("Segoe UI Symbol"), UnicodeRange = UnicodeRange.Parse("U+2190-23FF, U+25A0-27BF, U+2B00-2BFF") },
+                new FontFallback { FontFamily = new FontFamily("Segoe UI Emoji") },
+                new FontFallback { FontFamily = new FontFamily("Segoe UI Symbol") },
+            },
+        };
+    }
+
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
