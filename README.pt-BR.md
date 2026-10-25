@@ -1,13 +1,16 @@
 # EasyVocal
 
+<!-- Botões de download. Os de macOS e Linux entram ao lado deste quando essas versões existirem. -->
+<p align="center">
+  <a href="https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-win-x64.zip"><img alt="⬇ Baixar para Windows" src="https://img.shields.io/badge/%E2%AC%87%20Baixar-para%20Windows-2ea44f?style=for-the-badge&logo=windows&logoColor=white" height="48"></a>
+</p>
+<p align="center">Extraia em qualquer pasta e dê dois cliques no <code>EasyVocal.exe</code> (uns 58 MB, Windows 10 ou 11, não precisa instalar mais nada).</p>
+
 **Um trocador de voz e painel de sons, grátis e leve, para qualquer chamada.** Fale como robô, monstro ou esquilo
 no Discord, no WhatsApp Desktop, nos jogos, em qualquer lugar que use microfone, e toque sons na chamada com uma
 tecla. Sem anúncios, sem pagar, nada bloqueado.
 
 [English](README.md)
-
-[**Baixar o EasyVocal para Windows**](https://github.com/tarl3s/EasyVocal/releases/latest/download/EasyVocal-win-x64.zip)
-(uns 58 MB, Windows 10 ou 11, não precisa instalar mais nada)
 
 ## Configure em 3 passos
 
@@ -26,13 +29,28 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
 
 ## O que vem nele
 
-- **14 vozes prontas:** Normal, Feminina, Masculina, Robô, Esquilo, Monstro, Alienígena, Rádio, Demônio, Caverna,
-  Anão, Gigante, Fantasma e Robô de filme.
-- **Suas próprias vozes:** um editor pequeno com 7 controles simples (Mais grave/agudo, Corpo da voz, Robô, Eco,
-  Rádio antigo, Distorção, Sussurro). Escute ao vivo com **Me ouvir** enquanto arrasta.
+- **14 vozes prontas, cada uma com seu jeito:**
+  - **Normal**: a sua voz, sem mudar nada.
+  - **Feminina** / **Masculina**: mais aguda, com o corpo da voz mais leve e menos grave / mais grave, com o corpo
+    maior e mais peito.
+  - **Robô**: a melodia da sua fala achatada em quase uma nota só, metálica e zumbindo.
+  - **Robô de filme**: um sintetizador zumbindo numa nota fixa que fala as suas palavras (vocoder).
+  - **Esquilo**: bem aguda e pequenininha.
+  - **Monstro**: grave, áspera e rosnando, com muito grave e quase sem eco.
+  - **Demônio**: a sua voz mais uma segunda voz uma oitava abaixo, distorcida, numa caverna escura.
+  - **Gigante**: um corpo enorme, um pouco mais grave, num salão gigantesco; limpa.
+  - **Anão**: um pouco mais grave, com um corpo pequeno e rouco.
+  - **Alienígena**: um tom que oscila e treme, com um toque metálico e um eco espacial.
+  - **Fantasma**: um sussurro cheio de ar que oscila de leve, flutuando numa sala grande e suave.
+  - **Rádio**: um rádio antigo fininho, com um pouco de chiado e estalos.
+  - **Caverna**: a sua voz normal com ecos nas paredes de pedra.
+- **Suas próprias vozes:** um editor pequeno com 9 controles simples (Mais grave/agudo, Corpo da voz, Robô, Eco,
+  Rádio antigo, Distorção, Sussurro, Rosnado, Sala grande). Comece de qualquer voz pronta e ela mantém o seu jeito.
+  Escute ao vivo com **Me ouvir** enquanto arrasta.
 - **Um painel de sons:** 10 sons iniciais que já vêm no app, e os seus: adicione um arquivo de som (MP3, WAV, OGG,
   FLAC, M4A, AAC, WMA, AIFF) ou o som de um vídeo (MP4, MOV, WMV...), ou só arraste e solte, e dê um nome, um emoji e
-  um volume. Apertar de novo num som tocando para ele. Dá para tocar vários ao mesmo tempo.
+  um volume. Apertar de novo num som tocando para ele. Dá para tocar vários ao mesmo tempo. Marque
+  **🎭 Sons usam a voz** e os seus sons também passam pela voz (troque de voz enquanto um som toca e ele muda junto).
 - **Um editor de som** (**✂ Editar áudio...** em qualquer som): veja a onda, escolha um trecho com o mouse e ouça no
   seu fone, e então corte, mantenha só aquele trecho ou divida o som em dois; deixe mais rápido ou mais lento
   (mantendo o tom ou não), mais agudo ou mais grave, mais alto, mais baixo ou o mais alto possível; faça aparecer ou
