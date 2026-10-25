@@ -316,7 +316,15 @@ public static class AudioEdit
     public static float[] EchoRange(float[] x, int start, int count, EchoStrength strength)
     {
         (start, count) = Clamp(x.Length, start, count);
-        var wet = Echo(Slice(x, start, count), strength);
+        return RingOver(x, start, count, Echo(Slice(x, start, count), strength));
+    }
+
+    /// <summary>
+    /// The range replaced by the first <paramref name="count"/> samples of <paramref name="wet"/>; the rest of
+    /// <paramref name="wet"/> (its tail) is mixed over what follows, making the sound longer only past its end.
+    /// </summary>
+    private static float[] RingOver(float[] x, int start, int count, float[] wet)
+    {
         int end = Math.Max(x.Length, start + wet.Length);
         var o = new float[end];
         Array.Copy(x, o, x.Length);
@@ -327,25 +335,51 @@ public static class AudioEdit
 
     // ---------- a voice ----------
 
+    /// <summary>Longest tail a voice may add after the sound (the longest echo + room ring for about 6 s).</summary>
+    private const double MaxVoiceTailSeconds = 8;
+
+    /// <summary>The tail is over once it has stayed under <see cref="TailFloor"/> (-60 dBFS) this long.</summary>
+    private const double TailQuietSeconds = 0.5;
+
+    private const float TailFloor = 0.001f;
+
     /// <summary>
     /// Runs the sound through a voice's filter, offline. The filter's own delay (the pitch shifter's) is taken out,
-    /// so the result lines up with the original sample for sample and has the same length.
+    /// so the result lines up with the original sample for sample. What the voice rings on with after the sound (an
+    /// echo, a cave, a big room) is kept: the result is longer by that tail, its last near-silence trimmed.
     /// </summary>
     public static float[] ApplyVoice(float[] x, VoiceSliders sliders)
     {
         if (x.Length == 0) return Array.Empty<float>();
         var chain = new VoiceChain(Sr);
         chain.Apply(sliders);
-        int latency = chain.LatencySamples;
         // The chain crossfades into the voice over its first 20 ms: let that happen over silence.
         int pad = Sr / 10;
-        var buf = new float[pad + x.Length + latency];
+        int from = pad + chain.LatencySamples;  // where the sound's first sample comes out
+        int soundEnd = from + x.Length;         // ... and its last one
+        int quiet = (int)(TailQuietSeconds * Sr);
+        var buf = new float[soundEnd + (int)(MaxVoiceTailSeconds * Sr)];
         Array.Copy(x, 0, buf, pad, x.Length);
-        for (int i = 0; i < buf.Length; i += AudioFormat.BlockSize)
-            chain.Process(buf.AsSpan(i, Math.Min(AudioFormat.BlockSize, buf.Length - i)));
-        var o = new float[x.Length];
-        Array.Copy(buf, pad + latency, o, 0, x.Length);
-        return Finite(o);
+        int done = 0, lastLoud = -1;
+        while (done < buf.Length)
+        {
+            var block = buf.AsSpan(done, Math.Min(AudioFormat.BlockSize, buf.Length - done));
+            chain.Process(block);
+            for (int k = 0; k < block.Length; k++)
+                if (Math.Abs(block[k]) > TailFloor) lastLoud = done + k;
+            done += block.Length;
+            if (done >= soundEnd && done - lastLoud > quiet) break; // the tail has died out
+        }
+        int margin = (int)Math.Round(SilenceMarginSeconds * Sr);
+        int end = lastLoud >= soundEnd ? Math.Min(lastLoud + 1 + margin, done) : soundEnd; // no tail: the same length
+        return Finite(Slice(buf, from, end - from));
+    }
+
+    /// <summary>A voice on a range: the range takes the voice and its tail rings on over what follows (like <see cref="EchoRange"/>).</summary>
+    public static float[] ApplyVoiceRange(float[] x, int start, int count, VoiceSliders sliders)
+    {
+        (start, count) = Clamp(x.Length, start, count);
+        return RingOver(x, start, count, ApplyVoice(Slice(x, start, count), sliders));
     }
 
     // ---------- silence ----------

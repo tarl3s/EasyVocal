@@ -463,21 +463,24 @@ public partial class AudioEditorWindow : Window
 
     private async void EchoStrongButton_Click(object sender, RoutedEventArgs e) => await Echo(AudioEdit.EchoStrength.Strong);
 
-    private Task Echo(AudioEdit.EchoStrength strength)
+    private Task Echo(AudioEdit.EchoStrength strength) => EditRinging((x, s, c) => AudioEdit.EchoRange(x, s, c, strength));
+
+    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
+        await EditRinging((x, s, c) => AudioEdit.ApplyVoiceRange(x, s, c, sliders));
+    }
+
+    /// <summary>An edit of the picked part (or everything) whose tail rings on over what follows; the part stays picked.</summary>
+    private Task EditRinging(Func<float[], int, int, float[]> op)
     {
         var (start, count) = Target();
         bool picked = Wave.HasSelection;
         return Edit(x =>
         {
-            var y = AudioEdit.EchoRange(x, start, count, strength);
+            var y = op(x, start, count);
             return picked ? (y, start, count) : (y, 0, 0);
         });
-    }
-
-    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (VoiceBox.SelectedItem is not ComboBoxItem { Tag: VoiceSliders sliders }) return;
-        await EditRange(p => AudioEdit.ApplyVoice(p, sliders));
     }
 
     private async void SilenceButton_Click(object sender, RoutedEventArgs e)

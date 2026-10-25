@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
@@ -237,6 +238,36 @@ public class AudioEditTests
         Assert.True(Signals.Rms(Signals.Slice(y, 1.25, 2)) < 1e-2, "nothing long after it");
         int first = Array.FindIndex(y, v => Math.Abs(v) > 0.02f);
         Assert.InRange(first, onset - Sr / 200, onset + Sr / 100); // within 5 ms before / 10 ms after
+    }
+
+    [Theory]
+    [InlineData("cave")]
+    [InlineData("giant")]
+    [InlineData("ghost")]
+    [InlineData("demon")]
+    public void ApplyVoice_KeepsTheTail_AndTrimsTheSilenceAfterIt(string voice)
+    {
+        var x = Signals.PulseVowel(150, new[] { 700.0, 1200 }, 0.4);
+        var sliders = BuiltInVoices.All().First(v => v.Id == voice).Sliders;
+        var y = AudioEdit.ApplyVoice(x, sliders);
+        Assert.True(y.Length > x.Length + Sr / 5, voice + ": the tail was cut, length " + y.Length);
+        Assert.True(Signals.Rms(Signals.Slice(y, 0.4, 0.6)) > 1e-3, voice + ": nothing rings on after the sound");
+        Assert.True(y.Length < x.Length + 8 * Sr, voice + ": the silence after the tail was not trimmed");
+        double end = y.Length / (double)Sr;
+        Assert.True(Signals.Peak(Signals.Slice(y, end - 0.02, end)) < 0.01, voice + ": it stops abruptly");
+    }
+
+    [Fact]
+    public void ApplyVoiceRange_RingsOnOverWhatFollows()
+    {
+        var x = new float[Sr * 6];
+        var vowel = Signals.PulseVowel(150, new[] { 700.0, 1200 }, 0.3);
+        Array.Copy(vowel, x, vowel.Length);
+        var cave = BuiltInVoices.All().First(v => v.Id == "cave").Sliders;
+        var y = AudioEdit.ApplyVoiceRange(x, 0, vowel.Length, cave);
+        Assert.Equal(x.Length, y.Length); // the tail fits in the sound: mixed in, nothing pushed later
+        Assert.True(Signals.Rms(Signals.Slice(y, 0.35, 0.9)) > 1e-3, "the tail rings on over what follows");
+        Assert.Equal(x, AudioEdit.ApplyVoiceRange(x, Sr * 5, Sr / 2, new VoiceSliders())); // Normal changes nothing
     }
 
     [Fact]
