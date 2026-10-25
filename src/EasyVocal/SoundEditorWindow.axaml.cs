@@ -91,7 +91,11 @@ public partial class SoundEditorWindow : AppWindow
                 AllowMultiple = false,
                 FileTypeFilter = new[]
                 {
-                    new FilePickerFileType(L.T("Sound and video files")) { Patterns = SoundLoader.Extensions.Select(x => "*" + x).ToArray() },
+                    new FilePickerFileType(L.T("Sound and video files"))
+                    {
+                        Patterns = SoundLoader.PickerPatterns(SoundLoader.Extensions),
+                        MimeTypes = SoundLoader.MimeTypes,
+                    },
                 },
             });
             if (files.Count > 0 && files[0].TryGetLocalPath() is { } path) await LoadFileAsync(path);

@@ -44,8 +44,28 @@ public static class SoundLoader
     /// <summary>True when the file is a video (by its extension).</summary>
     public static bool IsVideo(string? path) => HasExtension(path, VideoExtensions);
 
-    /// <summary>The extensions as a file-dialog pattern: "*.wav;*.mp3;…".</summary>
-    public static string DialogPattern => "*" + string.Join(";*", Extensions);
+    /// <summary>
+    /// File-picker patterns for <paramref name="extensions"/> in both cases ("*.wav", "*.WAV"…): the Linux pickers (GTK,
+    /// the desktop portal) match them case-sensitively, so "CLIP.MP3" would be hidden by "*.mp3" alone.
+    /// </summary>
+    public static string[] PickerPatterns(IEnumerable<string> extensions)
+    {
+        var patterns = new List<string>();
+        foreach (var x in extensions)
+        {
+            patterns.Add("*" + x.ToLowerInvariant());
+            patterns.Add("*" + x.ToUpperInvariant());
+        }
+        return patterns.ToArray();
+    }
+
+    /// <summary>The MIME types of <see cref="Extensions"/>, for pickers that also filter by type (Linux).</summary>
+    public static readonly string[] MimeTypes =
+    {
+        "audio/wav", "audio/x-wav", "audio/vnd.wave", "audio/mpeg", "audio/ogg", "audio/x-vorbis+ogg", "audio/flac", "audio/x-flac",
+        "audio/mp4", "audio/x-m4a", "audio/aac", "audio/x-ms-wma", "audio/aiff", "audio/x-aiff",
+        "video/mp4", "video/x-m4v", "video/quicktime", "video/x-ms-wmv",
+    };
 
     /// <summary>True when the file's extension is one <see cref="Load(string)"/> reads.</summary>
     public static bool IsSupported(string? path) => HasExtension(path, Extensions);

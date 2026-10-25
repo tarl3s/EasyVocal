@@ -91,7 +91,7 @@ public class SingleInstanceTests : IDisposable
     }
 
     [Fact]
-    public void Portable_AHeldLock_WaitsForTheRunningEasyVocalsPipeToAppear()
+    public async Task Portable_AHeldLock_WaitsForTheRunningEasyVocalsPipeToAppear()
     {
         var names = WithPipeFile(out var pipeFile);
         using var held = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -108,7 +108,7 @@ public class SingleInstanceTests : IDisposable
             got = server.ReadByte();
         });
         Assert.Null(SingleInstance.TryAcquire(names)); // a quick double launch: the second one leaves
-        listener.Wait(TimeSpan.FromSeconds(5));
+        await listener.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(1, got); // and asked the first to show its window
     }
 

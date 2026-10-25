@@ -25,15 +25,19 @@ public class SoundFormatTests : IDisposable
     [Fact]
     public void Extensions_CoverSoundAndVideoFiles()
     {
+        var patterns = SoundLoader.PickerPatterns(SoundLoader.Extensions);
         foreach (var ext in new[] { ".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".mp4", ".m4v", ".mov", ".wmv" })
         {
             Assert.Contains(ext, SoundLoader.Extensions);
             Assert.True(SoundLoader.IsSupported("x" + ext.ToUpperInvariant()));
-            Assert.Contains("*" + ext, SoundLoader.DialogPattern);
+            Assert.Contains("*" + ext, patterns);
+            Assert.Contains("*" + ext.ToUpperInvariant(), patterns); // Linux pickers match case-sensitively
         }
         Assert.False(SoundLoader.IsSupported("notes.txt"));
         Assert.False(SoundLoader.IsSupported(null));
-        Assert.DoesNotContain(" ", SoundLoader.DialogPattern);
+        Assert.All(patterns, p => Assert.DoesNotContain(" ", p));
+        Assert.Contains("audio/mpeg", SoundLoader.MimeTypes);
+        Assert.Contains("video/mp4", SoundLoader.MimeTypes);
     }
 
     [Fact]

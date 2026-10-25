@@ -544,8 +544,8 @@ public partial class AudioEditorWindow : AppWindow
     {
         StopPlaying();
         bool mp3 = Mp3 != null;
-        var types = new List<FilePickerFileType> { new(L.T("WAV sound")) { Patterns = new[] { "*.wav" } } };
-        if (mp3) types.Add(new FilePickerFileType(L.T("MP3 sound")) { Patterns = new[] { "*.mp3" } });
+        var types = new List<FilePickerFileType> { new(L.T("WAV sound")) { Patterns = SoundLoader.PickerPatterns(new[] { ".wav" }), MimeTypes = new[] { "audio/wav", "audio/x-wav" } } };
+        if (mp3) types.Add(new FilePickerFileType(L.T("MP3 sound")) { Patterns = SoundLoader.PickerPatterns(new[] { ".mp3" }), MimeTypes = new[] { "audio/mpeg" } });
         try
         {
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
