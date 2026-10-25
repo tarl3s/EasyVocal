@@ -676,7 +676,7 @@ public sealed class AppController : IDisposable
         {
             var root = Path.GetFullPath(SoundsFolder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             var full = Path.GetFullPath(Path.Combine(root, fileName));
-            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+            return PathCompare.IsUnder(full, root) ? full : null;
         }
         catch (Exception)
         {

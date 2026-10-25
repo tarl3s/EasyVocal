@@ -154,10 +154,14 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData(@"..\evil.wav")]
-    [InlineData(@"C:\Windows\x.wav")]
-    public void Load_EditedBuiltInPointingOutOfTheFolder_PlaysItsOwnFile(string file)
+    [InlineData("../evil.wav", true)]
+    [InlineData("/etc/x.wav", true)]
+    [InlineData("..", true)]
+    [InlineData(@"..\evil.wav", false)] // on macOS/Linux a backslash is part of a name: that file is in the folder
+    [InlineData(@"C:\Windows\x.wav", false)]
+    public void Load_EditedBuiltInPointingOutOfTheFolder_PlaysItsOwnFile(string file, bool everywhere)
     {
+        if (!everywhere && !OperatingSystem.IsWindows()) return;
         var s = SettingsStore.Load(tmp);
         var ding = s.Sounds.Single(x => x.Id == "ding");
         ding.OriginalFileName = "ding.wav";
@@ -180,6 +184,20 @@ public class SettingsStoreTests : IDisposable
         var loaded = SettingsStore.Load(tmp);
         Assert.Equal("mine.mp3", loaded.Sounds.Single(x => x.Id == "my-1").OriginalFileName);
         Assert.Null(loaded.Sounds.Single(x => x.Id == "my-2").OriginalFileName); // "original" = itself means nothing
+    }
+
+    [Fact]
+    public void SaveThenLoad_AnOriginalNamedWithAColon_IsKeptWhereThatIsAFileName()
+    {
+        var s = SettingsStore.Load(tmp);
+        s.Sounds.Add(new SoundItem { Id = "my-1", Name = "Mine", FileName = "take 1 (edited).wav", OriginalFileName = "take 1: intro.mp3" });
+        s.Sounds.Add(new SoundItem { Id = "my-2", Name = "Case", FileName = "Song.wav", OriginalFileName = "song.wav" });
+        SettingsStore.Save(tmp, s);
+
+        var loaded = SettingsStore.Load(tmp);
+        Assert.Equal(OperatingSystem.IsWindows() ? null : "take 1: intro.mp3", loaded.Sounds.Single(x => x.Id == "my-1").OriginalFileName);
+        // Two files on Linux (case matters there), the same file elsewhere.
+        Assert.Equal(OperatingSystem.IsLinux() ? "song.wav" : null, loaded.Sounds.Single(x => x.Id == "my-2").OriginalFileName);
     }
 
     [Fact]

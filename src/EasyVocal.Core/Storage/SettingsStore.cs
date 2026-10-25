@@ -228,7 +228,7 @@ public static class SettingsStore
                 if (!string.IsNullOrWhiteSpace(f.Name)) b.Name = f.Name;
                 if (!string.IsNullOrWhiteSpace(f.Emoji)) b.Emoji = f.Emoji;
                 // Edited in the sound editor: it plays the edited copy; its own file stays the original.
-                if (!string.IsNullOrEmpty(f.OriginalFileName) && IsPlainName(f.FileName) && !string.Equals(f.FileName, b.FileName, StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(f.OriginalFileName) && FileNames.IsPlain(f.FileName) && !PathCompare.Same(f.FileName, b.FileName))
                 {
                     b.OriginalFileName = b.FileName;
                     b.FileName = f.FileName;
@@ -241,22 +241,12 @@ public static class SettingsStore
             if (x == null || string.IsNullOrEmpty(x.Id) || catalogIds.Contains(x.Id)) continue;
             x.BuiltIn = false;
             x.Volume = ClampVolume(x.Volume, 0.8);
-            if (x.OriginalFileName != null && (!IsPlainName(x.OriginalFileName) || string.Equals(x.OriginalFileName, x.FileName, StringComparison.OrdinalIgnoreCase)))
+            if (x.OriginalFileName != null && (!FileNames.IsPlain(x.OriginalFileName) || PathCompare.Same(x.OriginalFileName, x.FileName)))
                 x.OriginalFileName = null;
             result.Add(x);
         }
         return result;
     }
-
-    /// <summary>
-    /// A file name of the Sounds folder itself (no folders, nothing that leaves it). Backslashes and colons count as
-    /// folder parts on every system, so a settings file written on Windows means the same on macOS and Linux.
-    /// </summary>
-    public static bool IsPlainName([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? name) =>
-        !string.IsNullOrWhiteSpace(name) && Path.GetFileName(name) == name && name != "." && name != ".."
-        && name.IndexOfAny(FolderChars) < 0;
-
-    private static readonly char[] FolderChars = { '\\', '/', ':' };
 
     private static Dictionary<string, WindowBox> KeepSaneBoxes(Dictionary<string, WindowBox>? boxes)
     {

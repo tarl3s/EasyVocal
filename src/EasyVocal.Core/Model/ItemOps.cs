@@ -132,7 +132,7 @@ public static class ItemOps
     /// </summary>
     public static void DeleteFileIfUnused(AppSettings s, string fileName, string soundsFolder)
     {
-        if (!SettingsStore.IsPlainName(fileName)) return; // never leave the folder
+        if (!FileNames.IsPlain(fileName)) return; // never leave the folder
         if (IsFileUsed(s, fileName)) return;
         try
         {
@@ -198,8 +198,8 @@ public static class ItemOps
 
     /// <summary>True when a sound uses the file, as its file or as the original of an edited one.</summary>
     public static bool IsFileUsed(AppSettings s, string fileName) =>
-        s.Sounds.Exists(x => string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(x.OriginalFileName, fileName, StringComparison.OrdinalIgnoreCase));
+        s.Sounds.Exists(x => PathCompare.Same(x.FileName, fileName) ||
+                             PathCompare.Same(x.OriginalFileName, fileName));
 
     // ---------- the sound editor ----------
 
@@ -233,7 +233,7 @@ public static class ItemOps
     /// <summary>A file name stem made of the name's allowed characters (at most 60), or "sound".</summary>
     public static string SafeStem(string? name)
     {
-        var invalid = Path.GetInvalidFileNameChars();
+        var invalid = FileNames.InvalidChars(OperatingSystem.IsWindows());
         var chars = (name ?? "").Trim().ToCharArray();
         for (int i = 0; i < chars.Length; i++)
             if (Array.IndexOf(invalid, chars[i]) >= 0) chars[i] = '_';
@@ -256,8 +256,8 @@ public static class ItemOps
         var old = item.FileName;
         if (string.IsNullOrEmpty(item.OriginalFileName)) item.OriginalFileName = old;
         item.FileName = newFile;
-        if (!string.Equals(old, item.OriginalFileName, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(old, newFile, StringComparison.OrdinalIgnoreCase))
+        if (!PathCompare.Same(old, item.OriginalFileName) &&
+            !PathCompare.Same(old, newFile))
             DeleteFileIfUnused(s, old, soundsFolder);
     }
 
@@ -268,7 +268,7 @@ public static class ItemOps
         var edited = item.FileName;
         item.FileName = item.OriginalFileName;
         item.OriginalFileName = null;
-        if (!string.Equals(edited, item.FileName, StringComparison.OrdinalIgnoreCase)) DeleteFileIfUnused(s, edited, soundsFolder);
+        if (!PathCompare.Same(edited, item.FileName)) DeleteFileIfUnused(s, edited, soundsFolder);
         return true;
     }
 

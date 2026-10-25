@@ -112,6 +112,36 @@ public class PortablePathTests
         Assert.Equal(!OperatingSystem.IsLinux(), PathCompare.IsUnder("/ROOT/x", "/root/"));
     }
 
+    [Theory]
+    [InlineData("ding.wav", true, true)]
+    [InlineData("take 1: intro.mp3", false, true)]
+    [InlineData(@"back\slash.wav", false, true)]
+    [InlineData("what?.wav", false, true)]
+    [InlineData("a/b.wav", false, false)]
+    [InlineData("../x.wav", false, false)]
+    [InlineData("nul\0.wav", false, false)]
+    [InlineData(".", false, false)]
+    [InlineData("..", false, false)]
+    [InlineData(" ", false, false)]
+    [InlineData("", false, false)]
+    public void FileNames_ArePlainByEachSystemsRules(string name, bool onWindows, bool onUnix)
+    {
+        Assert.Equal(onWindows, FileNames.IsPlain(name, windows: true));
+        Assert.Equal(onUnix, FileNames.IsPlain(name, windows: false));
+        Assert.Equal(OperatingSystem.IsWindows() ? onWindows : onUnix, FileNames.IsPlain(name));
+        Assert.Equal(Path.GetInvalidFileNameChars().Order(), FileNames.InvalidChars(OperatingSystem.IsWindows()).Order());
+    }
+
+    [Fact]
+    public void SoundFiles_InUse_CompareLikeThePaths()
+    {
+        var s = new EasyVocal.Core.Model.AppSettings();
+        s.Sounds.Add(new EasyVocal.Core.Model.SoundItem { Id = "a", FileName = "Song.wav", OriginalFileName = "Take.mp3" });
+        Assert.True(EasyVocal.Core.Model.ItemOps.IsFileUsed(s, "Song.wav"));
+        Assert.Equal(!OperatingSystem.IsLinux(), EasyVocal.Core.Model.ItemOps.IsFileUsed(s, "song.wav"));
+        Assert.Equal(!OperatingSystem.IsLinux(), EasyVocal.Core.Model.ItemOps.IsFileUsed(s, "take.mp3"));
+    }
+
     [Fact]
     public void DataFolder_IsApplicationSupportOnMac_AndAppDataElsewhere()
     {
