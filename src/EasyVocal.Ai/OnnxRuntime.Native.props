@@ -1,0 +1,14 @@
+<Project>
+  <!-- ONNX Runtime's native library for a project that runs the AI voices without an AI pack (the tests, Debug
+       builds of the app). Windows: the DirectML build (it also has the CPU provider); macOS (arm64 with CoreML, and
+       x64) and Linux: the CPU build. Both packages carry a native "onnxruntime" of the same name, so only one is
+       referenced. Release downloads leave it out: the AI pack brings it. -->
+  <PropertyGroup>
+    <_EvOrtWindows Condition="'$(RuntimeIdentifier)' != '' and $(RuntimeIdentifier.StartsWith('win'))">true</_EvOrtWindows>
+    <_EvOrtWindows Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">true</_EvOrtWindows>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.23.0" Condition="'$(_EvOrtWindows)' == 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" Condition="'$(_EvOrtWindows)' != 'true'" />
+  </ItemGroup>
+</Project>

@@ -79,7 +79,28 @@ public class VoicePreset
     public bool Hidden { get; set; }
     public string? Hotkey { get; set; }
     public VoiceKind Kind { get; set; } = VoiceKind.Classic;
+    /// <summary>An AI voice (<see cref="VoiceKind.Ai"/>): the id of its folder in the AI pack's voices. Null on classic voices.</summary>
+    public string? AiVoiceId { get; set; }
+    /// <summary>An AI voice's own quality ("light", "balanced", "max"); null = the one in <see cref="AiSettings.Quality"/>.</summary>
+    public string? AiQuality { get; set; }
     public VoiceSliders Sliders { get; set; } = new();
+}
+
+/// <summary>How the AI voices run on this computer. Missing in an older settings.json = defaults.</summary>
+public class AiSettings
+{
+    /// <summary>"auto" (the benchmark's suggestion, else "balanced"), "light", "balanced" or "max".</summary>
+    public string Quality { get; set; } = "auto";
+    /// <summary>"auto" (the GPU when one works, else the processor), "cpu" or "gpu".</summary>
+    public string Device { get; set; } = "auto";
+    /// <summary>What the one-time benchmark suggested ("light", "balanced", "max"); null = not measured yet.</summary>
+    public string? SuggestedQuality { get; set; }
+    /// <summary>The device the benchmark found best ("cpu" or "gpu"); null = not measured yet.</summary>
+    public string? SuggestedDevice { get; set; }
+    /// <summary>When the benchmark ran (UTC); null = never.</summary>
+    public DateTime? BenchmarkedUtc { get; set; }
+    /// <summary>Per level the time one block took (95th percentile, ms) when measured; for the prime of the stream.</summary>
+    public Dictionary<string, double> MeasuredBlockMs { get; set; } = new();
 }
 
 public class SoundItem
@@ -142,4 +163,6 @@ public class AppSettings
     public Dictionary<string, string> GeneralHotkeys { get; set; } = new();
     /// <summary>Where each window was last (keys: "main", "filterEditor", "soundEditor", "audioEditor", "settings", "setup").</summary>
     public Dictionary<string, WindowBox> WindowPlacements { get; set; } = new();
+    /// <summary>The AI voices' engine settings (quality, device, the benchmark's suggestion).</summary>
+    public AiSettings Ai { get; set; } = new();
 }

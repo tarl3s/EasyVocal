@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The AI voices' engine (RVC v2 through ONNX Runtime), portable net8.0. Only ONNX Runtime's managed API is
+       referenced here: its native library comes with the AI pack (or, for tests and Debug builds, from
+       OnnxRuntime.Native.props). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 1.23.x: the last line whose CPU package still has osx-x64 (Intel Macs); DirectML's last is 1.24. -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.23.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EasyVocal.Ai.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Weight-less graphs (tools/ai/export): the RVC v2 generators per output rate (a .pth fills them at import)
+         and HuBERT (its public state dict fills it when the pack is built). -->
+    <EmbeddedResource Include="Templates\*.onnx.gz" LogicalName="EasyVocal.Ai.Templates.%(Filename)%(Extension)" />
+    <!-- The bundled voices' recipe: blends of the base model's speakers. -->
+    <EmbeddedResource Include="Voices\bundled-voices.json" LogicalName="EasyVocal.Ai.Voices.bundled-voices.json" />
+  </ItemGroup>
+
+</Project>

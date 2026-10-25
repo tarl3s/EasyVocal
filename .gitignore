@@ -5,3 +5,4 @@ publish/
 .superpowers/
 .vs/
 voice-samples/
+__pycache__/
