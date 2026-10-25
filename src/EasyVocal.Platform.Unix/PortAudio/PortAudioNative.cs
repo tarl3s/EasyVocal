@@ -20,7 +20,7 @@ internal static unsafe class PortAudioNative
     public const int InvalidSampleRate = -9997;
 
     public const ulong Float32 = 0x00000001;
-    public const ulong ClipOff = 0x00000002;
+    public const ulong ClipOff = 0x00000001; // paClipOff (0x2 would be paDitherOff)
 
     public const int Continue = 0;
     public const int Complete = 1;

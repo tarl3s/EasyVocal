@@ -13,7 +13,7 @@ public sealed record SystemDevice(string Id, string Name, bool Input, bool Outpu
 /// </summary>
 public interface IDeviceSource
 {
-    /// <summary>The active devices. Never throws (an empty list).</summary>
+    /// <summary>The active devices, in the system's order. Never throws (an empty list).</summary>
     IReadOnlyList<SystemDevice> Devices();
 
     /// <summary>The system's default microphone / playback device (an <see cref="SystemDevice.Id"/>), or null.</summary>
@@ -22,24 +22,33 @@ public interface IDeviceSource
 
 /// <summary>
 /// Sound devices through PortAudio (macOS: CoreAudio underneath; Linux without PulseAudio/PipeWire: ALSA). Mono float at
-/// 48 kHz, 10 ms blocks. The list comes from the <see cref="IDeviceSource"/> when there is one, else from PortAudio
-/// itself. PortAudio learns about new devices only when it is started again, which happens whenever a stream is opened
-/// while none is open (the engine restarts all its devices when the routes change). Every 2 s a poll looks for list
-/// changes (<see cref="Changed"/>) and for streams that stopped by themselves (unplugged): those report it.
+/// 48 kHz, 10 ms blocks.
+/// <para>
+/// The list comes from the <see cref="IDeviceSource"/> when there is one, else from PortAudio itself. PortAudio learns
+/// about new devices only when it is started again, which can happen only while no stream is open: it is started again
+/// when a stream is opened with none open after the devices changed. What says they changed: the source's list
+/// (macOS), else a cheap look at the system (<c>systemFingerprint</c>: Linux' /proc/asound/cards and /dev/snd) — never a
+/// restart on a timer. Without a source, a change while streams are open fails them, so the engine opens everything
+/// again on the new list. Every 2 s a poll also fails streams that stopped by themselves (unplugged).
 /// The system's defaults can't be changed here (<see cref="SetDefault"/> is false).
+/// </para>
 /// </summary>
 public sealed class PortAudioBackend : IAudioBackend, IDisposable
 {
     public static readonly TimeSpan PollEvery = TimeSpan.FromSeconds(2);
+    /// <summary>A device asked for that PortAudio doesn't list: PortAudio is started again at most this often for it.</summary>
+    private static readonly TimeSpan RetryEvery = TimeSpan.FromSeconds(2);
 
     private readonly object sync = new();
     private readonly IDeviceSource? source;
     private readonly Func<bool>? micRefused;
+    private readonly Func<string>? systemFingerprint;
     private readonly List<PortAudioStream> streams = new();
     private readonly Timer poll;
     private List<PaDevice> paDevices = new();
     private bool initialized, stale = true, unavailable, disposed;
-    private string fingerprint = "";
+    private DateTime lastRetry = DateTime.MinValue;
+    private string fingerprint = "", systemLook = "";
     private string? problem;
     private int polling;
 
@@ -49,10 +58,13 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
 
     /// <param name="source">The system's own device list (macOS: CoreAudio); null = PortAudio's.</param>
     /// <param name="micRefused">True while the system refuses EasyVocal the microphone (macOS privacy); null = never.</param>
-    public PortAudioBackend(IDeviceSource? source = null, Func<bool>? micRefused = null)
+    /// <param name="systemFingerprint">Without a source: something that changes when the devices do (Linux: ALSA's cards); null = none.</param>
+    public PortAudioBackend(IDeviceSource? source = null, Func<bool>? micRefused = null, Func<string>? systemFingerprint = null)
     {
         this.source = source;
         this.micRefused = micRefused;
+        this.systemFingerprint = systemFingerprint;
+        systemLook = systemFingerprint?.Invoke() ?? "";
         poll = new Timer(_ => Poll(), null, PollEvery, PollEvery);
     }
 
@@ -137,34 +149,39 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
         RefreshIfIdle();
         if (unavailable) throw new IOException("Sound devices aren't available: " + problem);
         var match = Match(id, input);
-        if (match == null && streams.Count == 0 && !stale)
+        if (match == null && streams.Count == 0 && !stale && DateTime.UtcNow - lastRetry > RetryEvery)
         {
-            stale = true; // plugged in a moment ago: PortAudio may not list it yet
+            lastRetry = DateTime.UtcNow;
+            stale = true; // plugged in a moment ago: PortAudio may not list it yet (tried again at most every 2 s)
             RefreshIfIdle();
             match = Match(id, input);
         }
         return match ?? throw new IOException("The sound device is not connected: " + id);
     }
 
-    private PaDevice? Match(string id, bool input)
+    private PaDevice? Match(string id, bool input) => source == null
+        ? paDevices.FirstOrDefault(d => d.Id == id && Can(d, input))
+        : MatchSystem(source.Devices(), paDevices, id, input);
+
+    private static bool Can(PaDevice d, bool input) => input ? d.MaxInputs > 0 : d.MaxOutputs > 0;
+
+    /// <summary>
+    /// The system's id → PortAudio's device: by name, and when several devices share a name (two identical USB headsets),
+    /// the n-th of that name on each side, in the system's order (the order PortAudio reads them in).
+    /// </summary>
+    internal static PaDevice? MatchSystem(IReadOnlyList<SystemDevice> system, IReadOnlyList<PaDevice> pa, string id, bool input)
     {
-        bool Can(PaDevice d) => input ? d.MaxInputs > 0 : d.MaxOutputs > 0;
-        if (source == null)
+        var wanted = system.FirstOrDefault(d => d.Id == id);
+        if (wanted == null) return null;
+        int nth = 0;
+        foreach (var d in system)
         {
-            foreach (var d in paDevices)
-                if (d.Id == id && Can(d)) return d;
-            return null;
+            if (d.Id == id) break;
+            if (d.Name == wanted.Name && (input ? d.Input : d.Output)) nth++;
         }
-        // The system's id → its name → PortAudio's device of that name.
-        string? name = null;
-        foreach (var d in source.Devices())
-            if (d.Id == id) name = d.Name;
-        if (name == null) return null;
-        foreach (var d in paDevices)
-            if (Can(d) && d.Name == name) return d;
-        foreach (var d in paDevices)
-            if (Can(d) && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase)) return d;
-        return null;
+        var named = pa.Where(d => Can(d, input) && d.Name == wanted.Name).ToList();
+        if (named.Count == 0) named = pa.Where(d => Can(d, input) && string.Equals(d.Name, wanted.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        return nth < named.Count ? named[nth] : null;
     }
 
     /// <summary>Under <see cref="sync"/>: starts PortAudio again for a fresh list, only while no stream is open.</summary>
@@ -178,6 +195,7 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
             int error = PortAudioNative.Pa_Initialize();
             if (error != PortAudioNative.NoError) throw new PortAudioException("Starting PortAudio", error);
             initialized = true;
+            Starts++;
             paDevices = ReadDevices();
             stale = false;
             unavailable = false;
@@ -217,30 +235,47 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
         return list;
     }
 
-    /// <summary>Every 2 s (timer thread): a changed list raises <see cref="Changed"/>; a stream that stopped by itself reports it.</summary>
+    /// <summary>
+    /// Every 2 s (timer thread): a changed list raises <see cref="Changed"/>; a stream that stopped by itself reports it.
+    /// Without a source, PortAudio is started again only when the system's devices changed.
+    /// </summary>
     private void Poll()
     {
         if (Interlocked.Exchange(ref polling, 1) == 1) return; // the last round is still running
         try
         {
-            string now;
             PortAudioStream[] open;
+            string now;
+            bool systemChanged = false;
+            if (source == null && systemFingerprint != null)
+            {
+                var look = systemFingerprint();
+                systemChanged = look != systemLook;
+                systemLook = look;
+            }
             lock (sync)
             {
                 if (disposed) return;
-                if (source == null && streams.Count == 0) stale = true; // nothing open: PortAudio may be started again
-                if (source == null) RefreshIfIdle();
+                if (systemChanged) stale = true;
+                if (source == null) RefreshIfIdle(); // only does anything when stale and nothing is open
                 open = streams.ToArray();
                 now = source == null ? Fingerprint(paDevices) : "";
             }
             if (source != null) now = Fingerprint(source.Devices(), source.DefaultId(false), source.DefaultId(true));
             bool refused = micRefused?.Invoke() == true;
             foreach (var s in open) s.Check(refused);
-            if (now == fingerprint) return;
+            if (systemChanged && source == null && open.Length > 0)
+            {
+                // The devices changed under open streams: PortAudio can't see it until they close. Failing them makes
+                // the engine open everything again on a fresh list (a short gap, like an unplugged device).
+                AppLog.Info("The sound devices changed: opening the audio again to see them");
+                foreach (var s in open) s.SimulateFailure(new IOException("The sound devices changed."));
+            }
+            if (now == fingerprint && !systemChanged) return;
             bool first = fingerprint.Length == 0;
             fingerprint = now;
-            lock (sync) stale = true; // the next open with nothing else open starts PortAudio again
-            if (!first) Changed?.Invoke();
+            if (source != null) lock (sync) stale = true; // the next open with nothing else open starts PortAudio again
+            if (!first || systemChanged) Changed?.Invoke();
         }
         catch (Exception ex) { AppLog.Error("Watching the sound devices failed", ex); }
         finally { Volatile.Write(ref polling, 0); }
@@ -259,6 +294,12 @@ public sealed class PortAudioBackend : IAudioBackend, IDisposable
         foreach (var d in devices) parts.Add(d.Id + "/" + d.Name + "/" + d.Input + "/" + d.Output);
         return string.Join("|", parts);
     }
+
+    /// <summary>For the tests: one round of the poll now.</summary>
+    internal void PollNow() => Poll();
+
+    /// <summary>How many times PortAudio has been started (for the tests: never on a timer).</summary>
+    internal int Starts { get; private set; }
 
     public void Dispose()
     {

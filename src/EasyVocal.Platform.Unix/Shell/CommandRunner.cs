@@ -26,7 +26,14 @@ public interface ICommandRunner
     Task<CommandResult> RunAsync(string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default,
         IReadOnlyDictionary<string, string>? environment = null);
 
-    /// <summary>The full path of <paramref name="program"/> on PATH or in <paramref name="extraFolders"/>, or null.</summary>
+    /// <summary>
+    /// Runs a program that keeps printing (<c>pactl subscribe</c>): <paramref name="line"/> gets each line of its output as
+    /// it comes (on a background thread) until it exits or <paramref name="ct"/> stops it (it is killed then). The exit
+    /// code; -1 when it couldn't start or was stopped. Never throws.
+    /// </summary>
+    Task<int> StreamAsync(string program, IReadOnlyList<string> arguments, Action<string> line, CancellationToken ct);
+
+    /// <summary>The full path of the executable <paramref name="program"/> on PATH or in <paramref name="extraFolders"/>, or null.</summary>
     string? Find(string program, params string[] extraFolders);
 
     /// <summary>Starts a program and doesn't wait for it (opening a link, the update helper). False when it couldn't start.</summary>
@@ -36,11 +43,16 @@ public interface ICommandRunner
 /// <summary>The real one: <see cref="Process"/>, output in the C locale (English, so it can be read).</summary>
 public sealed class CommandRunner : ICommandRunner
 {
-    // Every await below says ConfigureAwait(false): the Linux backend calls RunAsync synchronously from the UI thread.
+    // Every await below says ConfigureAwait(false): some callers wait synchronously on another thread.
     public static CommandRunner Instance { get; } = new();
 
-    public async Task<CommandResult> RunAsync(string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default,
-        IReadOnlyDictionary<string, string>? environment = null)
+    /// <summary>
+    /// The locale the tools run in: English labels (they are read) and, on Linux, UTF-8 for the names in them (a device
+    /// called "Fone de ouvido Ñ"). Where a system lacks C.UTF-8 the tool's setlocale fails and it simply stays in C.
+    /// </summary>
+    public static string Locale { get; } = OperatingSystem.IsLinux() ? "C.UTF-8" : "C";
+
+    private static ProcessStartInfo Info(string program, IReadOnlyList<string> arguments, IReadOnlyDictionary<string, string>? environment)
     {
         var psi = new ProcessStartInfo
         {
@@ -53,11 +65,17 @@ public sealed class CommandRunner : ICommandRunner
             StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var a in arguments) psi.ArgumentList.Add(a);
-        psi.Environment["LC_ALL"] = "C"; // pactl & co. print their labels in English then
+        psi.Environment["LC_ALL"] = Locale; // pactl & co. print their labels in English then
         if (environment != null)
             foreach (var (key, value) in environment) psi.Environment[key] = value;
+        return psi;
+    }
+
+    public async Task<CommandResult> RunAsync(string program, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default,
+        IReadOnlyDictionary<string, string>? environment = null)
+    {
         Process? process;
-        try { process = Process.Start(psi); }
+        try { process = Process.Start(Info(program, arguments, environment)); }
         catch (Exception ex) { return CommandResult.Missing(ex.Message); }
         if (process == null) return CommandResult.Missing("did not start");
         using (process)
@@ -80,6 +98,34 @@ public sealed class CommandRunner : ICommandRunner
         }
     }
 
+    public async Task<int> StreamAsync(string program, IReadOnlyList<string> arguments, Action<string> line, CancellationToken ct)
+    {
+        Process? process;
+        try { process = Process.Start(Info(program, arguments, null)); }
+        catch (Exception) { return -1; }
+        if (process == null) return -1;
+        using (process)
+        {
+            try { process.StandardInput.Close(); } catch (Exception) { /* fine */ }
+            _ = process.StandardError.ReadToEndAsync(); // drained, never read
+            using var stop = ct.Register(() =>
+            {
+                try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+            });
+            try
+            {
+                while (await process.StandardOutput.ReadLineAsync(ct).ConfigureAwait(false) is { } text)
+                {
+                    try { line(text); }
+                    catch (Exception ex) { AppLog.Error("Reading " + program + "'s output failed", ex); }
+                }
+                await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                return ct.IsCancellationRequested ? -1 : process.ExitCode;
+            }
+            catch (Exception) { return -1; } // stopped, or the pipe broke
+        }
+    }
+
     private static async Task<string> Quietly(Task<string> read)
     {
         try { return await read.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
@@ -88,18 +134,31 @@ public sealed class CommandRunner : ICommandRunner
 
     public string? Find(string program, params string[] extraFolders)
     {
-        if (program.Contains('/')) return File.Exists(program) ? program : null;
+        if (program.Contains('/')) return IsExecutable(program) ? program : null;
         var folders = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries).Concat(extraFolders);
         foreach (var folder in folders)
         {
             try
             {
                 var path = Path.Combine(folder, program);
-                if (File.Exists(path)) return path;
+                if (IsExecutable(path)) return path;
             }
             catch (ArgumentException) { /* a broken PATH entry */ }
         }
         return null;
+    }
+
+    /// <summary>A file someone may run (an execute bit set; on Windows, the tests' host, any file).</summary>
+    public static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path)) return false;
+        if (OperatingSystem.IsWindows()) return true;
+        try
+        {
+            const UnixFileMode Any = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            return (File.GetUnixFileMode(path) & Any) != 0;
+        }
+        catch (Exception) { return false; }
     }
 
     public bool Start(string program, IReadOnlyList<string> arguments)

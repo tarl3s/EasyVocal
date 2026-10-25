@@ -124,6 +124,7 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
                 AppLog.Info("pactl isn't installed: no virtual microphone (install pipewire-pulse or pulseaudio-utils)");
                 return false;
             }
+            var before = await pactl.DefaultsAsync(ct).ConfigureAwait(false);
             var sink = await pactl.RunAsync(SinkArguments, ct).ConfigureAwait(false);
             var sinkId = sink.Ok ? Pactl.ParseModuleId(sink.Output) : null;
             if (sinkId == null)
@@ -141,6 +142,7 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
                 return false;
             }
             lock (sync) sourceModule = sourceId;
+            await PutDefaultsBackAsync(before, ct).ConfigureAwait(false);
             devicesChanged?.Invoke();
             return true;
         }
@@ -150,6 +152,32 @@ public sealed class PactlVirtualMic : IVirtualMicProvider
             return false;
         }
     }
+
+    /// <summary>
+    /// Some setups make a new sink or source the default (PipeWire with a "follow the newest device" policy,
+    /// module-switch-on-connect): then the computer's sound would go into EasyVocal-Output, or calls would hear
+    /// EasyVocal-Microphone as the default mic. Only that, our own effect, is undone: the defaults from before come back.
+    /// </summary>
+    private async Task PutDefaultsBackAsync(PulseDefaults? before, CancellationToken ct)
+    {
+        if (before == null) return;
+        var after = await pactl.DefaultsAsync(ct).ConfigureAwait(false);
+        if (after == null) return;
+        if (IsOwnDevice(after.Sink) && before.Sink is { } sink && !IsOwnDevice(sink))
+        {
+            AppLog.Info("The new virtual microphone became the default output: putting back " + sink);
+            await pactl.RunAsync(new[] { "set-default-sink", sink }, ct).ConfigureAwait(false);
+        }
+        if (IsOwnDevice(after.Source) && before.Source is { } source && !IsOwnDevice(source))
+        {
+            AppLog.Info("The new virtual microphone became the default input: putting back " + source);
+            await pactl.RunAsync(new[] { "set-default-source", source }, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>One of the devices EasyVocal makes (the sink, its monitor, the remapped source).</summary>
+    private static bool IsOwnDevice(string? device) =>
+        device is SinkName or SourceName or SinkName + ".monitor";
 
     public async Task RemoveAsync(CancellationToken ct)
     {

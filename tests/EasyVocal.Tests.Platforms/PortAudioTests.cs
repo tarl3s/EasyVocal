@@ -99,4 +99,102 @@ public class PortAudioTests(ITestOutputHelper output)
         Assert.NotEqual(PortAudioBackend.Fingerprint(a, "1", null), PortAudioBackend.Fingerprint(a, null, null));
         Assert.NotEqual(PortAudioBackend.Fingerprint(a, "1", null), PortAudioBackend.Fingerprint(a.Append(new SystemDevice("2", "Headset", false, true)), "1", null));
     }
+
+    private static PortAudioBackend.PaDevice Pa(int index, string name, bool input) =>
+        new(index, "pa:x:" + name + "#" + index, name, input ? 1 : 0, input ? 0 : 2, false, false, 0.01, 0.01, 48000);
+
+    [Fact]
+    public void SameNameDevices_AreMatchedInOrder_NotAllToTheFirst()
+    {
+        // Two identical USB headsets: CoreAudio tells them apart by UID, PortAudio only by order.
+        var system = new[]
+        {
+            new SystemDevice("uid-a", "USB Headset", true, true), new SystemDevice("uid-spk", "Speakers", false, true),
+            new SystemDevice("uid-b", "USB Headset", true, true),
+        };
+        var pa = new[] { Pa(0, "USB Headset", false), Pa(1, "USB Headset", true), Pa(2, "Speakers", false), Pa(3, "USB Headset", false), Pa(4, "USB Headset", true) };
+        Assert.Equal(0, PortAudioBackend.MatchSystem(system, pa, "uid-a", input: false)?.Index);
+        Assert.Equal(3, PortAudioBackend.MatchSystem(system, pa, "uid-b", input: false)?.Index);
+        Assert.Equal(1, PortAudioBackend.MatchSystem(system, pa, "uid-a", input: true)?.Index);
+        Assert.Equal(4, PortAudioBackend.MatchSystem(system, pa, "uid-b", input: true)?.Index);
+        Assert.Equal(2, PortAudioBackend.MatchSystem(system, pa, "uid-spk", input: false)?.Index);
+        Assert.Null(PortAudioBackend.MatchSystem(system, pa, "uid-spk", input: true));
+        Assert.Null(PortAudioBackend.MatchSystem(system, pa.Take(2).ToArray(), "uid-b", input: true)); // the second isn't in PortAudio yet
+    }
+
+    [Fact]
+    public void RateConverter_PlaysMono48kAtTheDevicesRate()
+    {
+        // A 1 kHz tone at 48 kHz, pulled at 44.1 kHz: the same tone, the right number of samples consumed.
+        long taken = 0;
+        var converter = new RateConverter(44100, span =>
+        {
+            for (int i = 0; i < span.Length; i++) span[i] = MathF.Sin(2 * MathF.PI * 1000 * (taken + i) / 48000f);
+            taken += span.Length;
+        });
+        var out44 = new float[44100];
+        for (int at = 0; at < out44.Length; at += 441) converter.Pull(out44.AsSpan(at, 441));
+        Assert.InRange(taken, 48000 - 512, 48000 + 512);
+        // Zero crossings going up: about 1000 in a second.
+        int ups = 0;
+        for (int i = 1; i < out44.Length; i++) if (out44[i - 1] < 0 && out44[i] >= 0) ups++;
+        Assert.InRange(ups, 995, 1005);
+    }
+
+    [Fact]
+    public void Alsa_Fingerprint_ChangesWithCardsAndDeviceFiles()
+    {
+        var temp = TestFolders.New("EV_Test_Alsa_");
+        try
+        {
+            var cards = Path.Combine(temp, "cards");
+            var snd = Path.Combine(temp, "snd");
+            Directory.CreateDirectory(snd);
+            File.WriteAllText(cards, " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n");
+            File.WriteAllText(Path.Combine(snd, "pcmC0D0p"), "");
+            var a = EasyVocal.Platform.Linux.AlsaDevices.Fingerprint(cards, snd);
+            Assert.Equal(a, EasyVocal.Platform.Linux.AlsaDevices.Fingerprint(cards, snd));
+            File.WriteAllText(Path.Combine(snd, "pcmC1D0c"), ""); // a USB microphone plugged in
+            Assert.NotEqual(a, EasyVocal.Platform.Linux.AlsaDevices.Fingerprint(cards, snd));
+            Assert.Equal("#", EasyVocal.Platform.Linux.AlsaDevices.Fingerprint(Path.Combine(temp, "none"), Path.Combine(temp, "none")));
+        }
+        finally { TestFolders.Delete(temp); }
+    }
+
+    /// <summary>PortAudio is started again only when the system's devices changed — and open streams then fail, so the engine reopens.</summary>
+    [Fact]
+    public void Real_PortAudioStartsAgainOnlyWhenTheDevicesChange()
+    {
+        string look = "cards: 1";
+        using var backend = new PortAudioBackend(systemFingerprint: () => look);
+        var outputs = backend.Outputs();
+        if (backend.Problem != null || outputs.Count == 0)
+        {
+            output.WriteLine("SKIPPED: PortAudio has no playback device here (" + (backend.Problem ?? "none") + ")");
+            return;
+        }
+        Assert.Equal(1, backend.Starts);
+        backend.PollNow();
+        backend.PollNow();
+        backend.Inputs();
+        Assert.Equal(1, backend.Starts); // nothing changed: never started again on a timer
+
+        Core.Engine.IAudioOutput speaker;
+        try { speaker = backend.OpenSpeaker((outputs.FirstOrDefault(d => d.IsDefault) ?? outputs[0]).Id); }
+        catch (IOException ex)
+        {
+            output.WriteLine("SKIPPED: " + ex.Message);
+            return;
+        }
+        using (speaker)
+        {
+            speaker.Start();
+            look = "cards: 2"; // a card plugged in while the speaker plays
+            backend.PollNow();
+            Assert.Throws<IOException>(() => speaker.Write(new float[480])); // the engine opens everything again
+            Assert.Equal(1, backend.Starts); // not while a stream is open
+        }
+        backend.Inputs();
+        Assert.Equal(2, backend.Starts); // with nothing open: started again, the new card in its list
+    }
 }

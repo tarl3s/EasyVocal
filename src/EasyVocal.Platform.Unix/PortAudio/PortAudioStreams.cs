@@ -197,10 +197,61 @@ internal sealed unsafe class PortAudioMic : PortAudioStream, IAudioInput
     protected override void Fail(Exception why) => Stopped?.Invoke(why);
 }
 
+/// <summary>Fills a span with the next 48 kHz samples.</summary>
+internal delegate void SampleSource(Span<float> into);
+
+/// <summary>
+/// Mono 48 kHz pulled at another rate (a playback device that doesn't take 48 kHz): linear interpolation between the
+/// samples it reads from <see cref="read"/>, its position carried from call to call. No allocation after it is made.
+/// </summary>
+internal sealed class RateConverter
+{
+    private readonly double step; // input samples per output sample
+    private readonly SampleSource read;
+    private readonly float[] chunk = new float[256];
+    private int chunkAt, chunkLength;
+    private float previous, next;
+    private double position = 1; // in [0, 1): between previous and next; 1 = take a sample first
+
+    /// <param name="read">Fills a span with the next 48 kHz samples (silence when there are none).</param>
+    public RateConverter(double outputRate, SampleSource read)
+    {
+        step = AudioFormat.SampleRate / outputRate;
+        this.read = read;
+    }
+
+    private float Take()
+    {
+        if (chunkAt == chunkLength)
+        {
+            read(chunk);
+            chunkAt = 0;
+            chunkLength = chunk.Length;
+        }
+        return chunk[chunkAt++];
+    }
+
+    public void Pull(Span<float> output)
+    {
+        for (int i = 0; i < output.Length; i++)
+        {
+            while (position >= 1)
+            {
+                previous = next;
+                next = Take();
+                position -= 1;
+            }
+            output[i] = previous + (float)position * (next - previous);
+            position += step;
+        }
+    }
+}
+
 /// <summary>
 /// A playback device fed mono 48 kHz: the samples wait in a <see cref="SampleQueue"/> (soft fades and silence when it
-/// runs dry, like the WASAPI speaker) and are copied to every channel. A device that failed makes the next
-/// <see cref="Write"/> throw, which the engine reports as a lost output.
+/// runs dry, like the WASAPI speaker) and are copied to every channel; a device that doesn't take 48 kHz plays at its
+/// own rate through a <see cref="RateConverter"/>. A device that failed makes the next <see cref="Write"/> throw, which
+/// the engine reports as a lost output.
 /// </summary>
 internal sealed unsafe class PortAudioSpeaker : PortAudioStream, IAudioOutput
 {
@@ -211,6 +262,7 @@ internal sealed unsafe class PortAudioSpeaker : PortAudioStream, IAudioOutput
     private readonly SampleQueue queue = new(AudioFormat.SampleRate * CapacityMs / 1000, FadeSamples, PrimeSamples);
     private readonly int channels;
     private readonly float[] mono = new float[8192];
+    private readonly RateConverter? converter;
     private volatile Exception? failure;
 
     /// <summary>Under the backend's lock.</summary>
@@ -218,13 +270,15 @@ internal sealed unsafe class PortAudioSpeaker : PortAudioStream, IAudioOutput
     {
         DeviceName = device.Name;
         double latency = Math.Max(device.LowOutputLatency, 0.005);
+        int stereo = Math.Min(2, device.MaxOutputs);
         var format = FirstSupported(device.Index, input: false, latency,
-            (1, AudioFormat.SampleRate), (Math.Min(2, device.MaxOutputs), AudioFormat.SampleRate))
-            ?? throw new IOException(device.Name + " can't play at 48 kHz.");
+            (1, AudioFormat.SampleRate), (stereo, AudioFormat.SampleRate), (1, device.DefaultRate), (stereo, device.DefaultRate))
+            ?? throw new IOException(device.Name + " can't play in any format EasyVocal knows.");
         channels = format.Channels;
+        if (Math.Abs(format.Rate - AudioFormat.SampleRate) > 0.5) converter = new RateConverter(format.Rate, span => queue.Read(span));
         var p = Parameters(device.Index, channels, latency);
-        Open(null, &p, AudioFormat.SampleRate, AudioFormat.BlockSize);
-        AppLog.Info("Playback device opened: " + device.Name + " (" + channels + " ch, 48000 Hz)");
+        Open(null, &p, format.Rate, Math.Max(1, (int)Math.Round(format.Rate / 100))); // 10 ms
+        AppLog.Info("Playback device opened: " + device.Name + " (" + channels + " ch, " + format.Rate + " Hz)");
     }
 
     public int BufferedSamples => queue.Count;
@@ -247,7 +301,8 @@ internal sealed unsafe class PortAudioSpeaker : PortAudioStream, IAudioOutput
         {
             int n = Math.Min(frames - done, mono.Length);
             var block = mono.AsSpan(0, n);
-            queue.Read(block);
+            if (converter != null) converter.Pull(block);
+            else queue.Read(block);
             float* to = output + done * channels;
             for (int i = 0; i < n; i++)
             {

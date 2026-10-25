@@ -1,4 +1,5 @@
 using EasyVocal.Core.Engine;
+using EasyVocal.Core.Platform;
 using EasyVocal.Platform.Linux;
 using EasyVocal.Platform.Unix;
 using Xunit.Abstractions;
@@ -18,30 +19,36 @@ public class PactlTests(ITestOutputHelper output)
         "\nSource #49\n\tState: SUSPENDED\n\tName: alsa_input.usb-Blue_Yeti-00.analog-stereo\n\tDescription: Yeti Stereo Microphone Analog Stereo\n\tMonitor of Sink: n/a\n" +
         "\nSource #113\n\tState: RUNNING\n\tName: easyvocal_mic\n\tDescription: EasyVocal-Microphone\n\tMonitor of Sink: n/a\n";
 
-    private const string Info = "Server String: /run/user/1000/pulse/native\nServer Name: PulseAudio (on PipeWire 1.0.5)\n" +
-        "Default Sink: alsa_output.pci-0000_00_1f.3.analog-stereo\nDefault Source: alsa_input.usb-Blue_Yeti-00.analog-stereo\n";
+    private const string Speakers = "alsa_output.pci-0000_00_1f.3.analog-stereo";
+    private const string Yeti = "alsa_input.usb-Blue_Yeti-00.analog-stereo";
+
+    private static string Info(string sink = Speakers, string source = Yeti) =>
+        "Server String: /run/user/1000/pulse/native\nServer Name: PulseAudio (on PipeWire 1.0.5)\n" +
+        "Default Sink: " + sink + "\nDefault Source: " + source + "\n";
 
     private static (FakeRunner Runner, Pactl Pactl) Fake(bool installed = true)
     {
         var runner = new FakeRunner();
         if (installed) runner.Installed["pactl"] = "/usr/bin/pactl";
-        runner.Answers["info"] = new CommandResult(0, Info, "");
+        runner.Answers["info"] = new CommandResult(0, Info(), "");
         runner.Answers["list sinks"] = new CommandResult(0, Sinks, "");
         runner.Answers["list sources"] = new CommandResult(0, Sources, "");
-        return (runner, new Pactl(runner));
+        return (runner, new Pactl(runner, json: false));
     }
 
     [Fact]
     public void Parse_DevicesDefaultsAndModules()
     {
         var sinks = Pactl.ParseList(Sinks);
-        Assert.Equal(new[] { "alsa_output.pci-0000_00_1f.3.analog-stereo", "easyvocal_out" }, sinks.Select(d => d.Name));
+        Assert.Equal(new[] { Speakers, "easyvocal_out" }, sinks.Select(d => d.Name));
         Assert.Equal("Built-in Audio Analog Stereo", sinks[0].Description); // not the property "device.description"
         var sources = Pactl.ParseList(Sources);
         Assert.Equal(new[] { true, false, false }, sources.Select(d => d.IsMonitor));
-        Assert.Equal("alsa_output.pci-0000_00_1f.3.analog-stereo", Pactl.ParseDefault(Info, playback: true));
-        Assert.Equal("alsa_input.usb-Blue_Yeti-00.analog-stereo", Pactl.ParseDefault(Info, playback: false));
+        Assert.Equal(Speakers, Pactl.ParseDefault(Info(), playback: true));
+        Assert.Equal(Yeti, Pactl.ParseDefault(Info(), playback: false));
         Assert.Null(Pactl.ParseDefault("Server Name: x\n", playback: true));
+        Assert.Null(Pactl.ParseDefault(Info("@DEFAULT_SINK@", "@DEFAULT_SOURCE@"), playback: true)); // placeholders aren't devices
+        Assert.Null(Pactl.ParseDefault(Info("@DEFAULT_SINK@", "@DEFAULT_SOURCE@"), playback: false));
 
         var modules = Pactl.ParseModules("22\tmodule-null-sink\tsink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output\n" +
             "23\tmodule-remap-source\tmaster=easyvocal_out.monitor source_name=easyvocal_mic\n7\tmodule-x\t\n junk \n");
@@ -55,22 +62,188 @@ public class PactlTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Backend_ListsWhatPactlSays_WithoutMonitors()
+    public void Parse_Json()
     {
-        var (_, pactl) = Fake();
-        var backend = new PulseBackend(pactl, poll: false);
-        Assert.Equal(new[] { "alsa_output.pci-0000_00_1f.3.analog-stereo", "easyvocal_out" }, backend.Outputs().Select(d => d.Id));
-        Assert.Equal(new[] { "alsa_input.usb-Blue_Yeti-00.analog-stereo", "easyvocal_mic" }, backend.Inputs().Select(d => d.Id));
+        // `pactl -f json list sources` / `info` (PulseAudio 16+, PipeWire), trimmed.
+        var sources = Pactl.ParseJsonList("[{\"index\":48,\"name\":\"alsa_output.x.monitor\",\"description\":\"Monitor of Speakers\",\"monitor_of_sink\":\"alsa_output.x\"}," +
+            "{\"index\":49,\"name\":\"alsa_input.yeti\",\"description\":\"Yeti\",\"monitor_of_sink\":null},{\"index\":50,\"name\":\"plain\",\"monitor_of_sink\":\"n/a\"}]");
+        Assert.NotNull(sources);
+        Assert.Equal(new[] { true, false, false }, sources!.Select(d => d.IsMonitor));
+        Assert.Equal("plain", sources[2].Description); // no description: the name
+        Assert.Equal(new PulseDefaults("alsa_output.x", "alsa_input.yeti"),
+            Pactl.ParseJsonInfo("{\"server_name\":\"PulseAudio (on PipeWire 1.0.5)\",\"default_sink_name\":\"alsa_output.x\",\"default_source_name\":\"alsa_input.yeti\"}"));
+        Assert.Equal(new PulseDefaults(null, null), Pactl.ParseJsonInfo("{\"default_sink_name\":\"@DEFAULT_SINK@\"}"));
+        Assert.Null(Pactl.ParseJsonList("Invalid option -- 'f'"));
+        Assert.Null(Pactl.ParseJsonInfo("[]"));
+    }
+
+    [Fact]
+    public void Json_IsUsedWhenPactlKnowsIt_TextOtherwise()
+    {
+        var runner = new FakeRunner();
+        runner.Installed["pactl"] = "/usr/bin/pactl";
+        runner.Answers["-f json info"] = new CommandResult(0, "{\"default_sink_name\":\"s\",\"default_source_name\":\"m\"}", "");
+        runner.Answers["-f json list sinks"] = new CommandResult(0, "[{\"name\":\"s\",\"description\":\"Speakers\"}]", "");
+        runner.Answers["-f json list sources"] = new CommandResult(0, "[{\"name\":\"m\",\"description\":\"Mic\"}]", "");
+        var listing = new Pactl(runner).List();
+        Assert.True(listing.Ok);
+        Assert.Equal("Speakers", listing.Sinks.Single().Description);
+        Assert.DoesNotContain(runner.Lines(), l => l == "list sinks");
+
+        var old = new FakeRunner();
+        old.Installed["pactl"] = "/usr/bin/pactl";
+        old.Answers["-f json info"] = new CommandResult(1, "", "pactl: invalid option -- 'f'");
+        old.Answers["info"] = new CommandResult(0, Info(), "");
+        old.Answers["list sinks"] = new CommandResult(0, Sinks, "");
+        old.Answers["list sources"] = new CommandResult(0, Sources, "");
+        var text = new Pactl(old).List();
+        Assert.True(text.Ok);
+        Assert.Equal(2, text.Sinks.Count);
+        new Pactl(old).List();
+        Assert.Equal(2, old.Lines().Count(l => l == "-f json info")); // asked once per Pactl, then text only
+    }
+
+    [Fact]
+    public void SubscribeLines_ThatMeanTheDevicesChanged()
+    {
+        Assert.True(Pactl.MattersForDevices("Event 'new' on sink #112"));
+        Assert.True(Pactl.MattersForDevices("Event 'remove' on source #49"));
+        Assert.True(Pactl.MattersForDevices("Event 'change' on server #4294967295"));
+        Assert.False(Pactl.MattersForDevices("Event 'change' on sink #47")); // a volume change
+        Assert.False(Pactl.MattersForDevices("Event 'new' on sink-input #300")); // an app started playing
+        Assert.False(Pactl.MattersForDevices("Event 'remove' on source-output #301"));
+        Assert.False(Pactl.MattersForDevices("garbage"));
+    }
+
+    [Fact]
+    public void Backend_ListsWhatPactlSays_WithoutMonitors_AndKeepsTheLastGoodLook()
+    {
+        var (runner, pactl) = Fake();
+        var backend = new PulseBackend(pactl, watch: false);
+        Assert.Empty(backend.Outputs()); // the UI only reads the snapshot: nothing until a look
+        int changes = 0;
+        backend.Changed += () => changes++;
+        backend.Refresh();
+        Assert.Equal(1, changes);
+        Assert.Equal(new[] { Speakers, "easyvocal_out" }, backend.Outputs().Select(d => d.Id));
+        Assert.Equal(new[] { Yeti, "easyvocal_mic" }, backend.Inputs().Select(d => d.Id));
         Assert.True(backend.Outputs()[0].IsDefault);
-        Assert.Equal(new DefaultIds("alsa_output.pci-0000_00_1f.3.analog-stereo", "alsa_output.pci-0000_00_1f.3.analog-stereo"), backend.Defaults(playback: true));
+        Assert.Equal(new DefaultIds(Speakers, Speakers), backend.Defaults(playback: true));
         Assert.False(backend.SetDefault("easyvocal_out")); // never changes the system's defaults
-        // The cable rules on that list: the voice to EasyVocal-Output, the real mic and speakers for the rest.
         Assert.Equal("easyvocal_out", new PactlVirtualMic(pactl).Find(backend.Outputs())?.Id);
-        Assert.Equal("alsa_input.usb-Blue_Yeti-00.analog-stereo", DeviceRules.DefaultMic(CableNames.EasyVocalLinux, backend.Inputs())?.Id);
+        Assert.Equal(Yeti, DeviceRules.DefaultMic(CableNames.EasyVocalLinux, backend.Inputs())?.Id);
+
+        // The server doesn't answer for a moment: the last good snapshot stays (no devices "unplugged").
+        runner.Answers["info"] = new CommandResult(1, "", "Connection failure: Connection refused");
+        backend.Refresh();
+        Assert.Equal(2, backend.Outputs().Count);
+        runner.Answers["info"] = new CommandResult(0, Info(), "");
+        runner.Answers["list sources"] = new CommandResult(1, "", "Connection failure");
+        backend.Refresh();
+        Assert.Equal(2, backend.Inputs().Count);
+        Assert.Equal(1, changes);
 
         var (silent, gone) = Fake(installed: false);
-        Assert.Empty(new PulseBackend(gone, poll: false).Outputs());
+        var none = new PulseBackend(gone, watch: false);
+        none.Refresh();
+        Assert.Empty(none.Outputs());
         Assert.Empty(silent.Calls);
+    }
+
+    /// <summary>A stream as the backend watches it.</summary>
+    private sealed class FakeStream(string device, bool input) : IPulseStream
+    {
+        public string Device { get; } = device;
+        public bool IsInput { get; } = input;
+        public Exception? Failed;
+        public void Fail(Exception why) => Failed ??= why;
+    }
+
+    [Fact]
+    public void Backend_FailsStreamsWhoseDeviceLeft_AndOpensOnlyListedDevices()
+    {
+        var (runner, pactl) = Fake();
+        var backend = new PulseBackend(pactl, watch: false);
+        backend.Refresh();
+        var call = new FakeStream("easyvocal_out", input: false);
+        var mic = new FakeStream(Yeti, input: true);
+        backend.Track(call);
+        backend.Track(mic);
+        backend.Refresh();
+        Assert.Null(call.Failed);
+        // EasyVocal-Output is removed (pactl unload, a crash of the server's module): its stream must not follow the
+        // server to another sink (the voice in the speakers): it fails.
+        runner.Answers["list sinks"] = new CommandResult(0, Sinks[..Sinks.IndexOf("\nSink #112", StringComparison.Ordinal)], "");
+        backend.Refresh();
+        Assert.IsType<IOException>(call.Failed);
+        Assert.Null(mic.Failed);
+
+        Assert.Throws<IOException>(() => backend.OpenSpeaker("easyvocal_out")); // not in the list any more
+        Assert.Throws<IOException>(() => backend.OpenMic("not.a.source"));
+        var own = Assert.Throws<IOException>(() => backend.OpenMic("easyvocal_mic")); // listed, but EasyVocal's own: feedback
+        Assert.Contains("loop", own.Message);
+        Assert.True(PulseBackend.IsOwnDevice(new DeviceInfo("easyvocal_out.monitor", "Monitor of EasyVocal-Output", false)));
+        Assert.False(PulseBackend.IsOwnDevice(new DeviceInfo(Yeti, "Yeti Stereo Microphone Analog Stereo", false)));
+    }
+
+    [Fact]
+    public async Task Backend_LooksAgainWhenPactlSubscribeSaysSo_AndStartsItAgainWhenItEnds()
+    {
+        var (runner, pactl) = Fake();
+        using var backend = new PulseBackend(pactl, watch: true);
+        Assert.True(await backend.FirstLook.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Until(() => backend.Outputs().Count == 2 && backend.Subscribed);
+        runner.Answers["list sinks"] = new CommandResult(0, Sinks + "\nSink #200\n\tName: usb_headset\n\tDescription: USB Headset\n", "");
+        runner.StreamLines.Writer.TryWrite("Event 'change' on sink #47"); // a volume change: nothing to do
+        runner.StreamLines.Writer.TryWrite("Event 'new' on sink #200");
+        await Until(() => backend.Outputs().Any(d => d.Id == "usb_headset")); // looked again after the event
+        Assert.Contains(runner.Lines(), l => l == "subscribe");
+
+        runner.StreamLines.Writer.Complete(); // pactl subscribe ended (the server restarted): it is started again
+        await Until(() => runner.StreamsStarted >= 2);
+    }
+
+    private static async Task Until(Func<bool> condition)
+    {
+        var until = DateTime.UtcNow.AddSeconds(8);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > until) throw new TimeoutException("the condition never came true");
+            await Task.Delay(20);
+        }
+    }
+
+    private sealed class Stand : IAudioBackend
+    {
+        public IReadOnlyList<DeviceInfo> Inputs() => new[] { new DeviceInfo("pa:ALSA:mic", "Mic", true) };
+        public IReadOnlyList<DeviceInfo> Outputs() => Array.Empty<DeviceInfo>();
+        public IAudioInput OpenMic(string id) => throw new IOException();
+        public IAudioOutput OpenSpeaker(string id) => throw new IOException();
+        public DefaultIds Defaults(bool playback) => new(null, null);
+        public bool SetDefault(string id) => false;
+        public event Action? Changed { add { } remove { } }
+    }
+
+    [Fact]
+    public async Task LinuxAudio_SwitchesToPortAudio_WhenNoServerAnswers()
+    {
+        var (runner, pactl) = Fake();
+        runner.Answers["info"] = new CommandResult(1, "", "Connection failure: Connection refused");
+        int made = 0;
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var audio = new LinuxAudio(new PulseBackend(pactl, watch: true), () => { made++; return new Stand(); });
+        audio.Changed += () => changed.TrySetResult();
+        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, made);
+        Assert.IsType<Stand>(audio.Inner);
+        Assert.Equal("pa:ALSA:mic", audio.Inputs().Single().Id);
+
+        // With a server, PulseAudio stays; without pactl or libpulse, PortAudio from the start.
+        var (_, good) = Fake();
+        using var pulse = new LinuxAudio(new PulseBackend(good, watch: false), () => throw new InvalidOperationException("not needed"));
+        Assert.IsType<PulseBackend>(pulse.Inner);
+        using var direct = new LinuxAudio(null, () => new Stand());
+        Assert.IsType<Stand>(direct.Inner);
     }
 
     [Fact]
@@ -102,12 +275,36 @@ public class PactlTests(ITestOutputHelper output)
         {
             "list short modules",
             "unload-module 6", "unload-module 5", // a crashed run's leftovers, the remap first; someone else's sink is left alone
+            "info", // the defaults before
             "load-module module-null-sink sink_name=easyvocal_out sink_properties=device.description=EasyVocal-Output",
             "load-module module-remap-source master=easyvocal_out.monitor source_name=easyvocal_mic source_properties=device.description=EasyVocal-Microphone",
+            "info", // and after: unchanged, so nothing is put back
             "unload-module 536870914", "unload-module 536870913",
         }, runner.Lines());
         Assert.All(runner.Calls, c => Assert.Equal("/usr/bin/pactl", c.Program));
         Assert.Equal(3, changes); // cleaned, made, removed: the device list is read again each time
+    }
+
+    [Fact]
+    public async Task VirtualMic_ThatBecameTheDefault_GivesTheDefaultsBack()
+    {
+        var (runner, pactl) = Fake();
+        runner.Answers[string.Join(" ", PactlVirtualMic.SinkArguments)] = new CommandResult(0, "41\n", "");
+        runner.Answers[string.Join(" ", PactlVirtualMic.SourceArguments)] = new CommandResult(0, "42\n", "");
+        runner.InTurn["info"] = new Queue<CommandResult>(new[]
+        {
+            new CommandResult(0, Info(), ""),                                // before: the person's speakers and mic
+            new CommandResult(0, Info("easyvocal_out", "easyvocal_mic"), ""), // after: the system switched to ours
+        });
+        Assert.True(await new PactlVirtualMic(pactl).CreateAsync(default));
+        Assert.Contains("set-default-sink " + Speakers, runner.Lines());
+        Assert.Contains("set-default-source " + Yeti, runner.Lines());
+
+        // Already ours before (the person chose it): left alone.
+        var (other, mine) = Fake();
+        other.Answers["info"] = new CommandResult(0, Info("easyvocal_out", Yeti), "");
+        await new PactlVirtualMic(mine).CreateAsync(default);
+        Assert.DoesNotContain(other.Lines(), l => l.StartsWith("set-default", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -144,8 +341,9 @@ public class PactlTests(ITestOutputHelper output)
             output.WriteLine("SKIPPED: needs Linux with a PulseAudio/PipeWire server and EV_PULSE_TESTS=1");
             return;
         }
-        var backend = new PulseBackend(poll: false);
-        var mic = new PactlVirtualMic(devicesChanged: backend.Invalidate);
+        using var backend = new PulseBackend(watch: false);
+        backend.Refresh();
+        var mic = new PactlVirtualMic(devicesChanged: () => backend.Refresh());
         await mic.CleanStaleAsync(default);
         Assert.True(await mic.CreateAsync(default), "the virtual microphone was made");
         try
@@ -153,10 +351,10 @@ public class PactlTests(ITestOutputHelper output)
             var call = mic.Find(backend.Outputs());
             Assert.NotNull(call);
             Assert.Contains(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName && d.Name == PactlVirtualMic.SourceDescription);
-            Assert.True(CableNames.EasyVocalLinux.IsCable(backend.Inputs().First(d => d.Id == PactlVirtualMic.SourceName).Name));
+            Assert.Throws<IOException>(() => backend.OpenMic(PactlVirtualMic.SourceName)); // never EasyVocal's own mic as the mic
 
             using var speaker = backend.OpenSpeaker(call!.Id);
-            using var input = backend.OpenMic(PactlVirtualMic.SourceName);
+            using var input = new PulseMic(null, PactlVirtualMic.SourceName); // what a call app hears
             double energy = 0;
             int blocks = 0;
             input.Samples += (buffer, count) =>
@@ -185,7 +383,6 @@ public class PactlTests(ITestOutputHelper output)
         {
             await mic.RemoveAsync(default);
         }
-        backend.Invalidate();
         Assert.DoesNotContain(backend.Outputs(), d => d.Id == PactlVirtualMic.SinkName);
         Assert.DoesNotContain(backend.Inputs(), d => d.Id == PactlVirtualMic.SourceName);
     }
