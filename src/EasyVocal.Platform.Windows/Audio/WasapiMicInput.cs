@@ -3,7 +3,7 @@ using EasyVocal.Core.Engine;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// A microphone through WASAPI (shared mode, event-driven, 20 ms buffer). Whatever format the device uses is

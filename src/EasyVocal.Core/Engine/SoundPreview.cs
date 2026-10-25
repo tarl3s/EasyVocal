@@ -1,8 +1,7 @@
 using System.Threading;
 using EasyVocal.Core.Dsp;
-using EasyVocal.Core.Engine;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Core.Engine;
 
 /// <summary>
 /// Plays one sound on the headphones only (never into the call): the sound editor's "▶ Preview". It owns its own

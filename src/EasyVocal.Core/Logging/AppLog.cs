@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace EasyVocal;
+namespace EasyVocal.Core.Logging;
 
 /// <summary>A small text log (<c>easyvocal.log</c> in the data folder). Never throws.</summary>
 public static class AppLog

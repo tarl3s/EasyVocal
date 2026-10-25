@@ -4,7 +4,6 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using EasyVocal.Audio;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Text;
 
@@ -36,7 +35,7 @@ public partial class SetupWindow : Window
     public SetupWindow(AppController controller, Func<bool>? cableProbe = null)
     {
         this.controller = controller;
-        this.cableProbe = cableProbe ?? (() => DeviceRules.FindVirtualCable(controller.Devices.Outputs()) != null);
+        this.cableProbe = cableProbe ?? (() => controller.Platform.VirtualMic.Find(controller.Devices.Outputs()) != null);
         InitializeComponent();
         DarkTitleBar.Use(this);
         WindowPlacer.Use(this, "setup", controller);
@@ -170,14 +169,14 @@ public partial class SetupWindow : Window
     internal void ShowOfficialPageFallback(bool open = true)
     {
         SetStatus(L.T("Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
-        if (open) VbCableInstaller.OpenOfficialPage();
+        if (open) controller.Platform.VirtualMic.OpenPage();
     }
 
     /// <summary>The downloaded installer isn't signed by VB-Audio: it was not run. Open the official page and say so.</summary>
     internal void ShowNotVerifiedFallback(bool open = true)
     {
         SetStatus(L.T("The download could not be verified as VB-Audio's, so EasyVocal did not run it. Download it from the official page, run VBCABLE_Setup_x64.exe, then come back."), true);
-        if (open) VbCableInstaller.OpenOfficialPage();
+        if (open) controller.Platform.VirtualMic.OpenPage();
     }
 
     /// <summary>Once a second while waiting for the new devices: ready, or give up after a minute.</summary>

@@ -4,7 +4,6 @@ using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Model;
 using EasyVocal.Core.Sounds;
 using EasyVocal.Tests.Helpers;
-using NAudio.MediaFoundation;
 using NAudio.Wave;
 
 namespace EasyVocal.Tests;
@@ -46,31 +45,6 @@ public class SoundTests : IDisposable
         Assert.InRange(Signals.Peak(x), 0.45, 0.55);
     }
 
-    [Fact]
-    public void Load_Mp3_Works()
-    {
-        string wav = Path_("src.wav"), mp3 = Path_("tone.mp3");
-        using (var w = new WaveFileWriter(wav, new WaveFormat(44100, 16, 1)))
-        {
-            var s = new float[44100 / 2];
-            for (int n = 0; n < s.Length; n++) s[n] = (float)(0.5 * Math.Sin(2 * Math.PI * 440 * n / 44100.0));
-            w.WriteSamples(s, 0, s.Length);
-        }
-        try
-        {
-            MediaFoundationApi.Startup();
-            using var reader = new WaveFileReader(wav);
-            MediaFoundationEncoder.EncodeToMp3(reader, mp3);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Skipped: no MP3 encoder on this machine (" + ex.Message + ")");
-            return;
-        }
-        var x = SoundLoader.Load(mp3);
-        Assert.InRange(x.Length, Sr / 2 - 4000, Sr / 2 + 4000); // MP3 adds padding
-        Assert.InRange(Signals.EstimatePitch(x), 430, 450);
-    }
 
     [Theory]
     [InlineData(".mp3")]

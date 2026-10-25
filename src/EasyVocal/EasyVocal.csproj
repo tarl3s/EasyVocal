@@ -15,6 +15,10 @@
     <!-- WinForms is only used by Tray.cs, which names its types in full: keep WPF's Application, Button, ... unambiguous. -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+    <Using Include="EasyVocal.Core.Logging" />
+    <Using Include="EasyVocal.Core.Platform" />
+    <Using Include="EasyVocal.Core.Update" />
+    <Using Include="EasyVocal.Platform.Windows" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <ProjectReference Include="..\EasyVocal.Platform.Windows\EasyVocal.Platform.Windows.csproj" />
   </ItemGroup>
 
 </Project>

@@ -2,26 +2,10 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using EasyVocal.Core.Platform;
+using EasyVocal.Core.Storage;
 
-namespace EasyVocal;
-
-/// <summary>How <see cref="VbCableInstaller.DownloadAndRunAsync"/> ended.</summary>
-public enum InstallStatus
-{
-    /// <summary>The installer ran and was closed (whether the driver is there is up to Windows: the window checks the devices).</summary>
-    Installed,
-    /// <summary>The person said no to the Windows permission prompt.</summary>
-    DeclinedPermission,
-    /// <summary>Stopped by the caller (the window was closed); an installer already running is left alone.</summary>
-    Cancelled,
-    /// <summary>The downloaded installer is not signed by VB-Audio (or the signature is not trusted): it was not run.</summary>
-    NotVerified,
-    /// <summary>Download, unpacking or starting failed; <see cref="InstallResult.Detail"/> says why (for the log).</summary>
-    Failed,
-}
-
-/// <summary>The outcome of an install attempt.</summary>
-public readonly record struct InstallResult(InstallStatus Status, string? Detail = null);
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// Gets VB-CABLE (the free virtual microphone EasyVocal sends the voice to) from its official site: downloads the
@@ -109,16 +93,7 @@ public static class VbCableInstaller
     }
 
     /// <summary>Removes attempt folders older than <paramref name="olderThan"/> (left behind by a cancelled run), never a fresh one.</summary>
-    internal static void CleanStale(string root, TimeSpan olderThan)
-    {
-        try
-        {
-            if (!Directory.Exists(root)) return;
-            foreach (var dir in Directory.EnumerateDirectories(root))
-                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > olderThan) TryDelete(dir);
-        }
-        catch (Exception) { /* a folder in use: the next run tries again */ }
-    }
+    internal static void CleanStale(string root, TimeSpan olderThan) => TempFolders.CleanStale(root, olderThan);
 
     /// <summary>Opens the official download page in the browser.</summary>
     public static void OpenOfficialPage()
@@ -193,9 +168,5 @@ public static class VbCableInstaller
         await process.WaitForExitAsync(ct).ConfigureAwait(false);
     }
 
-    private static void TryDelete(string folder)
-    {
-        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); }
-        catch (Exception) { /* a file still in use: the next run cleans it */ }
-    }
+    private static void TryDelete(string folder) => TempFolders.TryDelete(folder);
 }

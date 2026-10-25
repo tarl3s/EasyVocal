@@ -37,6 +37,8 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Windows' own decoders (Media Foundation) and MP3 encoder for SoundLoader / SoundWriter.
+        WindowsPlatform.UseCodecs();
         var args = AppArgs.Parse(e.Args);
         string dataFolder = args.DataFolder ?? SettingsStore.DefaultFolder;
         bool smokeTest = args.SmokeTest, startHidden = args.StartHidden;
@@ -92,7 +94,10 @@ public partial class App : Application
         // The e2e test plays and records known audio through test devices (VB-CABLE missing at first, then "installed").
         if (args.E2E) e2eDevices = new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
         // A test never changes Windows' real default devices (the smoke test lists the real devices, read-only).
-        controller = new AppController(dataFolder, (Audio.IAudioDevices?)e2eDevices ?? (args.TestMode ? Audio.WindowsAudioDevices.ReadOnlyDefaults : null));
+        // ...and never touch the real "Start with Windows" entry.
+        var platform = WindowsPlatform.Services;
+        if (args.TestMode) platform = platform with { Audio = (IAudioBackend?)e2eDevices ?? WindowsAudioBackend.ReadOnlyDefaults, Startup = SmokeStartup };
+        controller = new AppController(dataFolder, platform);
         // ...and never downloads or runs the VB-CABLE installer: the e2e test "installs" its test cable instead.
         if (args.TestMode) controller.CableInstaller = e2eDevices != null ? e2eDevices.FakeInstallAsync : (_, _) => Task.FromResult(new InstallResult(InstallStatus.Failed, "tests never install VB-CABLE"));
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.
@@ -103,8 +108,6 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.UnloadedEvent, new RoutedEventHandler(OnWindowUnloaded));
         Deactivated += (_, _) => controller?.SetTyping(false);
         controller.TypingProbe = () => Keyboard.FocusedElement is TextBoxBase { IsVisible: true };
-        // The tests must never touch the real "Start with Windows" entry.
-        if (args.TestMode) controller.Startup = SmokeStartup;
         controller.RefreshStartup();
         var language = L.Resolve(controller.Settings.Language);
         L.Load(language == "en" ? null : ReadLanguage(language), language);
@@ -121,7 +124,7 @@ public partial class App : Application
         Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
             if (quitting || window == null) return;
-            started.Start(window);
+            started.Start(new WpfHotkeys(window));
             // The tests must never touch the real Start menu.
             if (!args.TestMode) OfferStartMenuShortcut(started, startHidden ? null : window);
             // First run: the setup comes first (not in the tests: the smoke test opens it itself, and they must never download anything).
@@ -139,7 +142,8 @@ public partial class App : Application
     private static void OfferStartMenuShortcut(AppController controller, Window? owner)
     {
         var settings = controller.Settings;
-        var shortcut = StartMenuShortcut.Default;
+        var shortcut = controller.Platform.Shortcut;
+        if (!shortcut.Supported) return;
         if (!settings.StartMenuAsked)
         {
             if (owner == null) return; // ask when the person opens it, not at sign-in

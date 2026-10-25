@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using EasyVocal.Core.Engine;
 using NAudio.CoreAudioApi;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// Windows' default playback and recording devices. Reading uses NAudio; changing uses IPolicyConfig, the

@@ -6,7 +6,7 @@ using EasyVocal.Core.Engine;
 using NAudio.CoreAudioApi;
 using NAudio.CoreAudioApi.Interfaces;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// The active microphones and playback devices, and <see cref="Changed"/> when one is plugged in, removed,

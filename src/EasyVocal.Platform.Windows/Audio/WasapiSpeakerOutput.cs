@@ -6,7 +6,7 @@ using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// A playback device through WASAPI (shared mode, event sync, 20 ms latency) fed mono 48 kHz float. The samples

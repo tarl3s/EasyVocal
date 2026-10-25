@@ -1,13 +1,14 @@
+using EasyVocal.Core.Platform;
 using Microsoft.Win32;
 
-namespace EasyVocal;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// "Start with Windows": a value in the current user's Run key (no admin rights needed) that launches
 /// <c>"&lt;exe&gt;" --tray</c>, so EasyVocal comes up hidden in the tray at sign-in. The key path and value name can be
 /// changed so tests and the smoke test use a throwaway key instead of the real one.
 /// </summary>
-public sealed class StartupRegistration
+public sealed class StartupRegistration : IStartupService
 {
     public const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     public const string DefaultValueName = "EasyVocal";

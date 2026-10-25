@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Everything EasyVocal needs from Windows, behind EasyVocal.Core.Platform's interfaces: WASAPI devices and Windows'
+       default devices, Media Foundation decoding / MP3 export, RegisterHotKey, the Run key, the Start menu shortcut,
+       VB-CABLE's installer (with its Authenticode check) and the updater's PowerShell helper. No WPF. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="EasyVocal.Core.Logging" />
+    <InternalsVisibleTo Include="EasyVocal.Tests.Windows" />
+  </ItemGroup>
+
+</Project>

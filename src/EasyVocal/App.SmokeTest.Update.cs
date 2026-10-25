@@ -62,7 +62,7 @@ public partial class App
         var current = UpdateRules.RunningVersion(typeof(App).Assembly);
         var source = new SmokeUpdateSource(SmokeReleaseJson("v9.9.0"), zip);
         var launcher = new SmokeLauncher();
-        var service = new UpdateService(source, launcher, current, exe, Path.Combine(folder, "work"), AppLog.Info);
+        var service = new UpdateService(WindowsPlatform.Updater, source, launcher, current, exe, Path.Combine(folder, "work"), AppLog.Info);
         var release = UpdateRules.ParseRelease(source.Json)!;
         var asset = release.Assets[0];
         string? skippedBefore = c.Settings.SkippedUpdateVersion;

@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- The portable tests: Core only, so `dotnet test` runs them on Windows, macOS and Linux.
+       Windows-only tests (WASAPI, Media Foundation, registry, .lnk, Authenticode, PowerShell, the e2e run) are in
+       EasyVocal.Tests.Windows. -->
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
@@ -16,18 +19,16 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EasyVocal.Core\EasyVocal.Core.csproj" />
-    <!-- Built first, not referenced: E2ETests runs this configuration's EasyVocal.exe, which must never be a stale one. -->
-    <ProjectReference Include="..\..\src\EasyVocal\EasyVocal.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Plain classes of the app (no WPF), compiled here so they can be tested without referencing the app. -->
-    <Compile Include="..\..\src\EasyVocal\StartupRegistration.cs" Link="Linked\StartupRegistration.cs" />
-    <Compile Include="..\..\src\EasyVocal\VbCableInstaller.cs" Link="Linked\VbCableInstaller.cs" />
-    <Compile Include="..\..\src\EasyVocal\Authenticode.cs" Link="Linked\Authenticode.cs" />
+    <!-- Plain classes of the app (no UI), compiled here so they can be tested without referencing the app. -->
     <Compile Include="..\..\src\EasyVocal\AppArgs.cs" Link="Linked\AppArgs.cs" />
-    <Compile Include="..\..\src\EasyVocal\StartMenuShortcut.cs" Link="Linked\StartMenuShortcut.cs" />
-    <Compile Include="..\..\src\EasyVocal\Updater.cs" Link="Linked\Updater.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Small decoder fixtures (a 440 Hz tone): MP3 made with Windows' encoder, OGG with OggVorbisEncoder. -->
+    <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures" />
   </ItemGroup>
 
   <ItemGroup>

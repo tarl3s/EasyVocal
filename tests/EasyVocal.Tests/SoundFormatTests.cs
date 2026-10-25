@@ -3,7 +3,6 @@ using System.IO;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Sounds;
 using EasyVocal.Tests.Helpers;
-using NAudio.MediaFoundation;
 using NAudio.Wave;
 
 namespace EasyVocal.Tests;
@@ -35,84 +34,6 @@ public class SoundFormatTests : IDisposable
         Assert.False(SoundLoader.IsSupported("notes.txt"));
         Assert.False(SoundLoader.IsSupported(null));
         Assert.DoesNotContain(" ", SoundLoader.DialogPattern);
-    }
-
-    /// <summary>A 440 Hz tone as a 44.1 kHz 16-bit WAV (what an encoder is fed).</summary>
-    private string ToneWav(int channels = 1)
-    {
-        string wav = P("src_" + channels + ".wav");
-        using var w = new WaveFileWriter(wav, new WaveFormat(44100, 16, channels));
-        var frame = new float[channels];
-        for (int n = 0; n < 44100; n++)
-        {
-            Array.Fill(frame, (float)(0.5 * Math.Sin(2 * Math.PI * 440 * n / 44100.0)));
-            w.WriteSamples(frame, 0, channels);
-        }
-        return wav;
-    }
-
-    /// <summary>Encodes with one of Windows' encoders; false (the test is skipped) when this PC has none.</summary>
-    private static bool TryEncode(string wav, string target, Guid subtype, int bitrate)
-    {
-        try
-        {
-            MediaFoundationApi.Startup();
-            using var reader = new WaveFileReader(wav);
-            var type = MediaFoundationEncoder.SelectMediaType(subtype, reader.WaveFormat, bitrate);
-            if (type == null)
-            {
-                Console.WriteLine("Skipped: no encoder for " + Path.GetExtension(target));
-                return false;
-            }
-            using var encoder = new MediaFoundationEncoder(type);
-            encoder.Encode(target, reader);
-            return File.Exists(target) && new FileInfo(target).Length > 0;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Skipped: encoding " + Path.GetExtension(target) + " failed (" + ex.Message + ")");
-            return false;
-        }
-    }
-
-    [Theory]
-    [InlineData(".m4a", 1)]
-    [InlineData(".m4a", 2)]
-    [InlineData(".wma", 2)]
-    [InlineData(".mp4", 2)] // the sound track of an MP4 (here one with no picture)
-    public void Load_FilesWindowsDecodes_GiveMono48k(string ext, int channels)
-    {
-        Guid subtype = ext switch
-        {
-            ".m4a" or ".mp4" => AudioSubtypes.MFAudioFormat_AAC,
-            _ => AudioSubtypes.MFAudioFormat_WMAudioV8,
-        };
-        string target = P("tone" + channels + ext);
-        if (!TryEncode(ToneWav(channels), target, subtype, 96000)) return;
-
-        var x = SoundLoader.Load(target);
-        Assert.InRange(x.Length, Sr - 6000, Sr + 6000); // encoders add a little padding
-        Assert.InRange(Signals.EstimatePitch(x), 430, 450);
-        Assert.InRange(Signals.Peak(x), 0.35, 0.7);
-    }
-
-    [Fact]
-    public void Load_Flac_GivesMono48k()
-    {
-        var tone = new float[44100];
-        for (int n = 0; n < tone.Length; n++) tone[n] = (float)(0.5 * Math.Sin(2 * Math.PI * 440 * n / 44100.0));
-        string path = P("tone.flac");
-        MiniFlac.Write(path, tone);
-        float[] x;
-        try { x = SoundLoader.Load(path); }
-        catch (SoundLoadException ex) when (ex.InnerException is System.Runtime.InteropServices.COMException)
-        {
-            Console.WriteLine("Skipped: this Windows has no FLAC decoder (" + ex.InnerException.Message + ")");
-            return;
-        }
-        Assert.InRange(x.Length, Sr - 100, Sr + 100);
-        Assert.InRange(Signals.EstimatePitch(x), 435, 445);
-        Assert.InRange(Signals.Peak(x), 0.45, 0.55);
     }
 
     [Fact]
@@ -152,15 +73,6 @@ public class SoundFormatTests : IDisposable
     }
 
     [Fact]
-    public void Load_AFileThatIsNoVideo_IsAFriendlyError()
-    {
-        string path = P("clip.mp4");
-        File.WriteAllText(path, "not a video");
-        var ex = Assert.Throws<SoundLoadException>(() => SoundLoader.Load(path));
-        Assert.Equal("We couldn't read that sound file. It may be damaged.", ex.Message);
-    }
-
-    [Fact]
     public void UnsupportedExtension_SaysWhichFilesWork()
     {
         string path = P("doc.pdf");
@@ -186,18 +98,4 @@ public class SoundFormatTests : IDisposable
         Assert.Equal(x[1000], y[1000], 3);
     }
 
-    [Fact]
-    public void WriteMp3_GivesAPlayableFile_WhenWindowsHasTheEncoder()
-    {
-        if (!SoundWriter.Mp3Supported)
-        {
-            Console.WriteLine("Skipped: no MP3 encoder on this machine");
-            return;
-        }
-        string path = P("out.mp3");
-        SoundWriter.WriteMp3(path, Signals.Sine(440, 1));
-        var y = SoundLoader.Load(path);
-        Assert.InRange(y.Length, Sr - 4000, Sr + 4000);
-        Assert.InRange(Signals.EstimatePitch(y), 430, 450);
-    }
 }

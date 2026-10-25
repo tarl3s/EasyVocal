@@ -47,6 +47,7 @@
   "We couldn't read that sound file. It may be damaged.": "Não conseguimos ler esse arquivo de som. Ele pode estar danificado.",
   "That sound file is empty.": "Esse arquivo de som está vazio.",
   "That sound is too long. Please pick one shorter than 10 minutes.": "Esse som é longo demais. Escolha um com menos de 10 minutos.",
+  "EasyVocal can't open this kind of file by itself on this computer. Install the free program ffmpeg and try again.": "O EasyVocal não consegue abrir esse tipo de arquivo sozinho neste computador. Instale o programa gratuito ffmpeg e tente de novo.",
 
   "Voice filter": "Filtro de voz",
   "Name": "Nome",

@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-namespace EasyVocal;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>What <see cref="Authenticode.Check"/> found out about a program file.</summary>
 internal enum SignatureCheck

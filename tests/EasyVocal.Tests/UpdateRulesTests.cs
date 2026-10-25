@@ -4,8 +4,18 @@ using EasyVocal.Core.Update;
 namespace EasyVocal.Tests;
 
 /// <summary>The portable rules of the updater: versions, GitHub's answer, which file, when to ask, source builds, notes.</summary>
-public class UpdateRulesTests
+public class UpdateRulesTests : IDisposable
 {
+    private readonly string temp = Path.Combine(Path.GetTempPath(), "EV_Test_UpdateRules_" + Guid.NewGuid().ToString("N"));
+
+    public UpdateRulesTests() => Directory.CreateDirectory(temp);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(temp, recursive: true); }
+        catch (Exception) { /* best effort */ }
+    }
+
     // ---------- versions ----------
 
     [Theory]
@@ -68,7 +78,7 @@ public class UpdateRulesTests
     {
         var props = File.ReadAllText(Path.Combine(RepoRoot(), "Directory.Build.props"));
         var expected = AppVersion.Parse(Regex.Match(props, @"<Version>([^<]+)</Version>").Groups[1].Value);
-        Assert.Equal(expected, UpdateRules.RunningVersion(typeof(UpdaterTests).Assembly)); // informational "0.2.0+commit" included
+        Assert.Equal(expected, UpdateRules.RunningVersion(typeof(UpdateRulesTests).Assembly)); // informational "0.2.0+commit" included
     }
 
     // ---------- GitHub's answer ----------
@@ -232,6 +242,7 @@ public class UpdateRulesTests
         Assert.True(ReleaseNotes.ToLines(string.Join("\n", Enumerable.Repeat("- x", 1000))).Count <= 200);
     }
 
+    // ---------- helpers ----------
 
     private static string RepoRoot()
     {

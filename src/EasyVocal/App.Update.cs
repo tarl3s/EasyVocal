@@ -16,8 +16,8 @@ public partial class App
     private static UpdateService RealUpdateService()
     {
         var current = UpdateRules.RunningVersion(typeof(App).Assembly);
-        var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, UpdateRules.ExeName);
-        return new UpdateService(new GitHubUpdateSource("EasyVocal-updater/" + current), new PowerShellLauncher(), current, exe,
+        var exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, WindowsPlatform.Updater.ExeName);
+        return new UpdateService(WindowsPlatform.Updater, new GitHubUpdateSource("EasyVocal-updater/" + current), new PowerShellLauncher(), current, exe,
             UpdateService.DefaultWorkRoot, AppLog.Info);
     }
 
@@ -32,7 +32,7 @@ public partial class App
             balloon: (text, click) => tray?.ShowBalloon(text, click),
             quit: () => Quit(ask: false),
             logFile: Path.Combine(dataFolder, "update.log"),
-            relaunchArguments: HelperScript.RelaunchArguments(args.DataFolder));
+            relaunchArguments: WindowsPlatform.Updater.RelaunchArguments(args.DataFolder));
         c.Updates = updates;
         if (sourceBuild) AppLog.Info("Running from the source code: updates are " + (args.UpdateCheck ? "only checked (--update-check)" : "off"));
     }
@@ -96,7 +96,7 @@ public partial class App
         if (check.Status == UpdateStatus.UpToDate) return 0;
         if (check.Status != UpdateStatus.Available || check.Asset == null) return 1;
         var exe = await service.DownloadAsync(check.Asset, null, CancellationToken.None);
-        service.StartInstall(exe, Environment.ProcessId, Path.Combine(dataFolder, "update.log"), HelperScript.RelaunchArguments(args.DataFolder));
+        service.StartInstall(exe, Environment.ProcessId, Path.Combine(dataFolder, "update.log"), WindowsPlatform.Updater.RelaunchArguments(args.DataFolder));
         return 0;
     }
 }

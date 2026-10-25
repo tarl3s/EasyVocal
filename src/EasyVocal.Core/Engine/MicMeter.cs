@@ -1,8 +1,8 @@
 using System;
 using System.Threading;
-using EasyVocal.Core.Engine;
+using EasyVocal.Core.Platform;
 
-namespace EasyVocal.Audio;
+namespace EasyVocal.Core.Engine;
 
 /// <summary>
 /// Listens to one microphone only to show how loud it is (the setup window's level bar), whether or not the voice
@@ -15,7 +15,7 @@ public sealed class MicMeter : IDisposable
 
     /// <param name="devices">Where the microphone is opened (the controller's devices: the real ones, or the e2e test's).</param>
     /// <param name="deviceId">The endpoint id of the microphone to listen to.</param>
-    public MicMeter(IAudioDevices devices, string deviceId)
+    public MicMeter(IAudioBackend devices, string deviceId)
     {
         try
         {

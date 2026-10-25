@@ -187,7 +187,7 @@ public partial class MainWindow : Window
     private void UpdateMeter()
     {
         if (WindowState == WindowState.Minimized) return;
-        meterShown = Audio.MicMeter.NextFill(meterShown, controller.InputLevel);
+        meterShown = Core.Engine.MicMeter.NextFill(meterShown, controller.InputLevel);
         MeterBar.Width = Math.Max(0, MeterTrack.ActualWidth * meterShown);
     }
 

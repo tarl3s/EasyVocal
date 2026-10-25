@@ -4,15 +4,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
-using EasyVocal.Audio;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
+using EasyVocal.Core.Logging;
 using EasyVocal.Core.Model;
+using EasyVocal.Core.Platform;
 using EasyVocal.Core.Sounds;
 using EasyVocal.Core.Storage;
 using EasyVocal.Core.Text;
-using EasyVocal.Hotkeys;
 
 namespace EasyVocal;
 
@@ -37,9 +37,9 @@ public sealed class AppController : IDisposable
     private readonly SoundMixer mixer = new();
     private readonly AudioEngine engine;
     private readonly SettingsFile settingsFile;
-    private readonly IAudioDevices devices;
+    private readonly IAudioBackend devices;
     private readonly DispatcherTimer saveTimer, recoverTimer, deviceTimer;
-    private GlobalHotkeys? hotkeys;
+    private IGlobalHotkeys? hotkeys;
     private IReadOnlyList<string> hotkeyProblems = Array.Empty<string>();
     private HashSet<string> refusedActions = new();
     private int captureSuspends;
@@ -58,11 +58,14 @@ public sealed class AppController : IDisposable
     private bool started, disposed, savePending;
 
     /// <param name="dataFolder">Where settings.json and the Sounds folder live (normally <see cref="SettingsStore.DefaultFolder"/>).</param>
-    /// <param name="devices">The microphones and playback devices to use; null = the real ones (the e2e test passes its own).</param>
-    public AppController(string dataFolder, IAudioDevices? devices = null)
+    /// <param name="platform">The system's devices, startup entry and virtual mic (the tests swap in their own devices and a throwaway startup entry).</param>
+    public AppController(string dataFolder, PlatformServices platform)
     {
         ui = Dispatcher.CurrentDispatcher;
-        this.devices = devices ?? WindowsAudioDevices.Instance;
+        Platform = platform;
+        devices = platform.Audio;
+        Startup = platform.Startup;
+        CableInstaller = platform.VirtualMic.InstallAsync;
         DataFolder = dataFolder;
         SoundsFolder = Path.Combine(dataFolder, "Sounds");
         FirstRun = !File.Exists(Path.Combine(dataFolder, "settings.json"));
@@ -87,7 +90,10 @@ public sealed class AppController : IDisposable
     public bool FirstRun { get; }
 
     /// <summary>The microphones and playback devices every window lists and opens (the e2e test swaps in its own).</summary>
-    public IAudioDevices Devices => devices;
+    public IAudioBackend Devices => devices;
+
+    /// <summary>This platform's services (shortcut, virtual mic, updater…).</summary>
+    public PlatformServices Platform { get; }
 
     public AppSettings Settings { get; }
 
@@ -112,10 +118,14 @@ public sealed class AppController : IDisposable
 
     // ---------- start / stop ----------
 
-    /// <summary>Opens the audio, registers the hotkeys (on <paramref name="hotkeyOwner"/>'s window handle) and loads the sounds.</summary>
-    public void Start(Window hotkeyOwner)
+    /// <summary>Opens the audio, takes over <paramref name="globalHotkeys"/> (registers the keys, disposes it at the end) and loads the sounds.</summary>
+    public void Start(IGlobalHotkeys globalHotkeys)
     {
-        if (started || disposed) return;
+        if (started || disposed)
+        {
+            globalHotkeys.Dispose();
+            return;
+        }
         started = true;
 
         if (FirstRun) Save(); // settings.json exists from now on
@@ -130,7 +140,7 @@ public sealed class AppController : IDisposable
         mixer.PlayingChanged += OnPlayingChanged;
         engine.StateChanged += OnEngineStateChanged;
 
-        hotkeys = new GlobalHotkeys(hotkeyOwner);
+        hotkeys = globalHotkeys;
         hotkeys.Pressed += OnHotkey;
         RebuildHotkeys();
 
@@ -138,7 +148,7 @@ public sealed class AppController : IDisposable
         deviceFingerprint = DeviceFingerprint();
         engine.Start();
         AppLog.Info("Audio started: " + engine.State);
-        if (RemembersDefaults && DeviceRules.FindVirtualCable(devices.Outputs()) == null)
+        if (RemembersDefaults && Platform.VirtualMic.Find(devices.Outputs()) == null)
         {
             AppLog.Info("VB-CABLE never showed up: the default devices remembered for its install are forgotten");
             ForgetDefaultsBeforeCable();
@@ -279,7 +289,7 @@ public sealed class AppController : IDisposable
     // ---------- start with Windows ----------
 
     /// <summary>Where "Start with Windows" is written: the real Run key, or a throwaway one in the smoke test.</summary>
-    public StartupRegistration Startup { get; set; } = StartupRegistration.Default;
+    public IStartupService Startup { get; set; }
 
     /// <summary>Turns "Start with Windows" on or off. False (nothing changed) when Windows refused the registry write.</summary>
     public bool SetStartWithWindows(bool on)
@@ -923,7 +933,7 @@ public sealed class AppController : IDisposable
     // ---------- Windows' default devices (VB-CABLE may take them) ----------
 
     /// <summary>How the VB-CABLE install is run (the e2e test fakes it; the smoke test never downloads anything).</summary>
-    public Func<IProgress<double>, CancellationToken, Task<InstallResult>> CableInstaller { get; set; } = VbCableInstaller.DownloadAndRunAsync;
+    public Func<IProgress<double>, CancellationToken, Task<InstallResult>> CableInstaller { get; set; }
 
     /// <summary>Windows sends the PC's sound into the virtual cable (its default playback device is VB-CABLE): the person hears nothing.</summary>
     public bool SoundGoesToCable { get; private set; }
@@ -967,7 +977,7 @@ public sealed class AppController : IDisposable
         if (RemembersDefaults)
         {
             var now = DateTime.UtcNow;
-            if (restoreUntil == null && DeviceRules.FindVirtualCable(outputs) != null) restoreUntil = now + RestoreWindow;
+            if (restoreUntil == null && Platform.VirtualMic.Find(outputs) != null) restoreUntil = now + RestoreWindow;
             if (restoreUntil is { } until && now > until)
             {
                 AppLog.Info("The default devices remembered for the VB-CABLE install are forgotten");

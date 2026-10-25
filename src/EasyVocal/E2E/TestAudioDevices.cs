@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
-using EasyVocal.Audio;
 using EasyVocal.Core.Dsp;
 using EasyVocal.Core.Engine;
 
@@ -12,7 +11,7 @@ namespace EasyVocal.E2E;
 /// (when "installed") VB-CABLE, both recording what they are given. The test plugs and unplugs them and the
 /// controller sees it through <see cref="Changed"/>, raised on another thread like Windows does.
 /// </summary>
-internal sealed class TestAudioDevices : IAudioDevices
+internal sealed class TestAudioDevices : IAudioBackend
 {
     public const string MicId = "e2e-mic";
     public const string HeadphonesId = "e2e-headphones";

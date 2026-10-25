@@ -8,12 +8,15 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using EasyVocal.Core.Platform;
+using EasyVocal.Core.Storage;
 
-namespace EasyVocal;
+namespace EasyVocal.Core.Update;
 
-// The in-app updater, minus its windows (UpdateWindow, UpdateCoordinator): no WPF here, so the tests compile this file.
+// The in-app updater, minus its windows (UpdateWindow, UpdateCoordinator) and its platform part (IUpdaterPlatform:
+// which release file, which program, the helper script; Windows: EasyVocal.Platform.Windows.WindowsUpdaterPlatform).
 // EasyVocal asks GitHub for the latest release; when it is newer, the person is asked, the release's zip is downloaded,
-// checked and its EasyVocal.exe unpacked to %TEMP%, and a small PowerShell script (it waits for EasyVocal to close)
+// checked and its EasyVocal.exe unpacked to %TEMP%, and a small helper script (it waits for EasyVocal to close; PowerShell on Windows)
 // swaps the exe — keeping a .old copy until the new one is in place — and opens EasyVocal again.
 // The network and the script launch go through IUpdateSource and IHelperLauncher, so the tests use fakes.
 
@@ -105,7 +108,6 @@ public static class UpdateRules
     public const string Repo = "tarl3s/EasyVocal";
     public const string LatestUrl = "https://api.github.com/repos/" + Repo + "/releases/latest";
     public const string PageUrl = "https://github.com/" + Repo + "/releases/latest";
-    public const string ExeName = "EasyVocal.exe";
     /// <summary>The release zip is under 80 MB; anything far bigger is not ours.</summary>
     public const long MaxDownloadBytes = 200L * 1024 * 1024;
     /// <summary>Notes longer than this are cut (a release body can be anything).</summary>
@@ -173,15 +175,9 @@ public static class UpdateRules
         return -1;
     }
 
-    /// <summary>The zip for this PC: <c>EasyVocal-win-x64.zip</c> (also on ARM PCs, which run x64 programs), or null.</summary>
-    public static ReleaseAsset? PickAsset(ReleaseInfo release, Architecture os)
+    /// <summary>The first of <paramref name="names"/> (the platform's release files, best first) the release has, or null.</summary>
+    public static ReleaseAsset? PickAsset(ReleaseInfo release, IReadOnlyList<string> names)
     {
-        string[] names = os switch
-        {
-            Architecture.X64 => new[] { "EasyVocal-win-x64.zip" },
-            Architecture.Arm64 => new[] { "EasyVocal-win-arm64.zip", "EasyVocal-win-x64.zip" },
-            _ => Array.Empty<string>(),
-        };
         foreach (var name in names)
             foreach (var a in release.Assets)
                 if (string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) return a;
@@ -273,10 +269,10 @@ public static class UpdatePackage
 
     /// <summary>
     /// Checks <paramref name="zipPath"/> (a zip; no entry outside its folder; an EasyVocal.exe at its top or in its one
-    /// top folder that is a Windows program) and writes that exe to <paramref name="folder"/>. Returns its path.
+    /// top folder that is a program for this system) and writes that exe to <paramref name="folder"/>. Returns its path.
     /// A cancellation while it is written stops it and removes what was written.
     /// </summary>
-    public static string ExtractExe(string zipPath, string folder, CancellationToken ct = default)
+    public static string ExtractExe(string zipPath, string folder, IUpdaterPlatform platform, CancellationToken ct = default)
     {
         var root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         ZipArchive archive;
@@ -299,20 +295,20 @@ public static class UpdatePackage
                     throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a file outside its folder: " + entry.FullName);
                 total += Math.Max(0, entry.Length);
                 if (total > MaxUnpackedBytes) throw new UpdateException(UpdateProblem.TooBig, "The download unpacks to more than expected.");
-                if (!string.Equals(entry.Name, UpdateRules.ExeName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(entry.Name, platform.ExeName, StringComparison.OrdinalIgnoreCase)) continue;
                 int depth = entry.FullName.Replace('\\', '/').Trim('/').Split('/').Length;
                 if (depth <= 2 && depth < exeDepth) { exe = entry; exeDepth = depth; }
             }
-            if (exe == null) throw new UpdateException(UpdateProblem.MissingExe, "The download doesn't contain EasyVocal.exe.");
+            if (exe == null) throw new UpdateException(UpdateProblem.MissingExe, "The download doesn't contain " + platform.ExeName + ".");
 
             Directory.CreateDirectory(root);
-            var dest = Path.Combine(root, UpdateRules.ExeName);
+            var dest = Path.Combine(root, platform.ExeName);
             ct.ThrowIfCancellationRequested();
             CopyOut(exe, dest, ct);
-            if (!LooksLikeProgram(dest))
+            if (!platform.LooksLikeProgram(dest))
             {
                 TryDelete(dest);
-                throw new UpdateException(UpdateProblem.NotAnExe, "The EasyVocal.exe in the download is not a Windows program.");
+                throw new UpdateException(UpdateProblem.NotAnExe, "The EasyVocal.exe in the download is not a program for this computer.");
             }
             return dest;
         }
@@ -333,17 +329,6 @@ public static class UpdatePackage
         ct.ThrowIfCancellationRequested();
     }
 
-    /// <summary>A Windows program starts with "MZ".</summary>
-    internal static bool LooksLikeProgram(string path)
-    {
-        try
-        {
-            using var f = File.OpenRead(path);
-            return f.Length > 2 && f.ReadByte() == 'M' && f.ReadByte() == 'Z';
-        }
-        catch (IOException) { return false; }
-    }
-
     internal static void TryDelete(string file)
     {
         try { if (File.Exists(file)) File.Delete(file); }
@@ -355,135 +340,6 @@ public static class UpdatePackage
 /// <see cref="TargetExe"/> (with a .old copy until it worked), open EasyVocal again, delete <see cref="StagingFolder"/>.</summary>
 public sealed record HelperPlan(int WaitPid, string TargetExe, string NewExe, string? StagingFolder, string LogFile,
     bool Relaunch, string RelaunchArguments);
-
-/// <summary>The helper script (Windows PowerShell 5.1, present on every Windows 10/11).</summary>
-public static class HelperScript
-{
-    /// <summary>The script's file encoding: Windows PowerShell reads a file without a BOM in the ANSI code page,
-    /// which would break paths like "Área de Trabalho".</summary>
-    public static readonly Encoding FileEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-
-    /// <summary>A PowerShell single-quoted literal: every kind of single quote PowerShell knows is doubled.</summary>
-    public static string Quote(string value)
-    {
-        var sb = new StringBuilder(value.Length + 2).Append('\'');
-        foreach (char c in value)
-        {
-            sb.Append(c);
-            if (c is '\'' or '\u2018' or '\u2019' or '\u201A' or '\u201B') sb.Append(c);
-        }
-        return sb.Append('\'').ToString();
-    }
-
-    /// <summary>The command line EasyVocal gets when the helper opens it again (e.g. <c>--data "C:\x y"</c>).</summary>
-    public static string RelaunchArguments(string? dataFolder) =>
-        dataFolder == null ? "" : "--data " + QuoteArgument(Path.TrimEndingDirectorySeparator(dataFolder));
-
-    /// <summary>
-    /// One argument in double quotes, read back exactly by Windows' command-line rules: backslashes right before a
-    /// quote (the closing one included, as in <c>"D:\\"</c>) are doubled and a quote inside is escaped.
-    /// </summary>
-    public static string QuoteArgument(string value)
-    {
-        var sb = new StringBuilder(value.Length + 4).Append('"');
-        int slashes = 0;
-        foreach (char c in value)
-        {
-            if (c == '\\')
-            {
-                slashes++;
-                continue;
-            }
-            if (c == '"') sb.Append('\\', 2 * slashes + 1);
-            else sb.Append('\\', slashes);
-            sb.Append(c);
-            slashes = 0;
-        }
-        return sb.Append('\\', 2 * slashes).Append('"').ToString();
-    }
-
-    public static string Build(HelperPlan plan)
-    {
-        var sb = new StringBuilder();
-        sb.Append("# EasyVocal update helper: written by EasyVocal, runs once after it closes, then removes its folder.\r\n");
-        sb.Append("$WaitPid = ").Append(plan.WaitPid.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
-        sb.Append("$Target = ").Append(Quote(plan.TargetExe)).Append("\r\n");
-        sb.Append("$NewExe = ").Append(Quote(plan.NewExe)).Append("\r\n");
-        sb.Append("$Staging = ").Append(Quote(plan.StagingFolder ?? "")).Append("\r\n");
-        sb.Append("$Log = ").Append(Quote(plan.LogFile)).Append("\r\n");
-        sb.Append("$Relaunch = ").Append(plan.Relaunch ? "$true" : "$false").Append("\r\n");
-        sb.Append("$RelaunchArgs = ").Append(Quote(plan.RelaunchArguments)).Append("\r\n");
-        sb.Append(Body);
-        return sb.ToString();
-    }
-
-    /// <summary>How to run the script: Windows PowerShell, hidden, no profile, this script only.</summary>
-    public static ProcessStartInfo StartInfo(string scriptPath)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = Path.GetTempPath(),
-        };
-        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath })
-            psi.ArgumentList.Add(a);
-        return psi;
-    }
-
-    // Plain ASCII; the paths are the literals above it.
-    private const string Body = """
-$ErrorActionPreference = 'Stop'
-function Write-Log([string]$Text) {
-    try { Add-Content -LiteralPath $Log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' [update helper] ' + $Text) -Encoding UTF8 } catch { }
-}
-function Start-EasyVocal {
-    if (-not $Relaunch) { return }
-    try {
-        $dir = Split-Path -Parent $Target
-        if ($RelaunchArgs) { Start-Process -FilePath $Target -WorkingDirectory $dir -ArgumentList $RelaunchArgs }
-        else { Start-Process -FilePath $Target -WorkingDirectory $dir }
-    } catch { Write-Log ('could not open EasyVocal again: ' + $_) }
-}
-function Remove-Staging {
-    if ($Staging) { try { Remove-Item -LiteralPath $Staging -Recurse -Force } catch { } }
-}
-
-Write-Log ('updating ' + $Target)
-if ($WaitPid -gt 0) {
-    $proc = Get-Process -Id $WaitPid -ErrorAction SilentlyContinue
-    if ($proc -and -not $proc.WaitForExit(60000)) { Write-Log 'EasyVocal did not close: nothing was changed'; Remove-Staging; exit 4 }
-}
-$Backup = $Target + '.old'
-$moved = $false
-for ($i = 0; $i -lt 40 -and -not $moved; $i++) {
-    try {
-        if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Force }
-        Move-Item -LiteralPath $Target -Destination $Backup -Force
-        $moved = $true
-    } catch { Start-Sleep -Milliseconds 250 }
-}
-if (-not $moved) { Write-Log 'could not move the old version aside: nothing was changed'; Start-EasyVocal; Remove-Staging; exit 2 }
-try {
-    Copy-Item -LiteralPath $NewExe -Destination $Target -Force
-} catch {
-    Write-Log ('the copy failed, the old version is put back: ' + $_)
-    try { if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Force } } catch { }
-    try { Move-Item -LiteralPath $Backup -Destination $Target -Force } catch { Write-Log ('could not put the old version back: ' + $_) }
-    Start-EasyVocal
-    Remove-Staging
-    exit 3
-}
-try { Remove-Item -LiteralPath $Backup -Force } catch { Write-Log ('the old copy stays for now: ' + $_) }
-Write-Log 'updated'
-Start-EasyVocal
-Remove-Staging
-exit 0
-
-""";
-}
-
 /// <summary>Where releases come from (GitHub; a fake in the tests).</summary>
 public interface IUpdateSource
 {
@@ -545,16 +401,6 @@ public sealed class GitHubUpdateSource(string userAgent) : IUpdateSource
     }
 }
 
-/// <summary>Runs the helper with Windows PowerShell, hidden. It outlives EasyVocal.</summary>
-public sealed class PowerShellLauncher : IHelperLauncher
-{
-    public void Start(string scriptPath)
-    {
-        using var p = Process.Start(HelperScript.StartInfo(scriptPath))
-            ?? throw new UpdateException(UpdateProblem.Launch, "PowerShell did not start.");
-    }
-}
-
 /// <summary>How a check ended.</summary>
 public enum UpdateStatus { UpToDate, Available, Failed }
 
@@ -565,14 +411,16 @@ public sealed class UpdateService
 {
     private static readonly TimeSpan StaleAfter = TimeSpan.FromDays(1);
     private readonly IUpdateSource source;
+    private readonly IUpdaterPlatform platform;
     private readonly IHelperLauncher launcher;
     private readonly Action<string> log;
 
     /// <param name="workRoot">Where downloads are unpacked, one folder per attempt (<c>%TEMP%\EasyVocal_update</c>).</param>
-    public UpdateService(IUpdateSource source, IHelperLauncher launcher, AppVersion current, string exePath, string workRoot,
+    public UpdateService(IUpdaterPlatform platform, IUpdateSource source, IHelperLauncher launcher, AppVersion current, string exePath, string workRoot,
         Action<string>? log = null)
     {
         this.source = source;
+        this.platform = platform;
         this.launcher = launcher;
         this.log = log ?? (_ => { });
         Current = current;
@@ -607,7 +455,7 @@ public sealed class UpdateService
             log($"Update check: latest is {release.Tag}, this is {Current}: nothing to do");
             return new UpdateCheck(UpdateStatus.UpToDate, release);
         }
-        var asset = UpdateRules.PickAsset(release, RuntimeInformation.OSArchitecture);
+        var asset = UpdateRules.PickAsset(release, platform.AssetNames(RuntimeInformation.OSArchitecture));
         if (asset == null)
         {
             log($"Update check: {release.Tag} has no zip for this PC ({RuntimeInformation.OSArchitecture})");
@@ -622,7 +470,7 @@ public sealed class UpdateService
     public async Task<string> DownloadAsync(ReleaseAsset asset, IProgress<double>? progress, CancellationToken ct)
     {
         if (asset.Size > UpdateRules.MaxDownloadBytes) throw new UpdateException(UpdateProblem.TooBig, "The download is bigger than expected.");
-        VbCableInstaller.CleanStale(WorkRoot, StaleAfter);
+        TempFolders.CleanStale(WorkRoot, StaleAfter);
         var folder = Path.Combine(WorkRoot, Guid.NewGuid().ToString("N"));
         try
         {
@@ -634,7 +482,7 @@ public sealed class UpdateService
                 throw new UpdateException(UpdateProblem.Download, ex.GetType().Name + ": " + ex.Message, ex);
             }
             ct.ThrowIfCancellationRequested();
-            var exe = UpdatePackage.ExtractExe(zip, Path.Combine(folder, "new"), ct);
+            var exe = UpdatePackage.ExtractExe(zip, Path.Combine(folder, "new"), platform, ct);
             UpdatePackage.TryDelete(zip);
             log("Update downloaded and checked: " + exe);
             return exe;
@@ -672,9 +520,9 @@ public sealed class UpdateService
     {
         if (!CanReplaceExe()) throw new UpdateException(UpdateProblem.FolderNotWritable, "The folder of EasyVocal.exe can't be written.");
         var staging = StagingOf(newExe);
-        var script = Path.Combine(staging, "update.ps1");
+        var script = Path.Combine(staging, platform.HelperFileName);
         var plan = new HelperPlan(waitPid, ExePath, newExe, staging, logFile, relaunch, relaunchArguments);
-        File.WriteAllText(script, HelperScript.Build(plan), HelperScript.FileEncoding);
+        File.WriteAllText(script, platform.BuildHelper(plan), platform.HelperEncoding);
         try { launcher.Start(script); }
         catch (Exception ex) when (ex is not UpdateException)
         {
@@ -699,7 +547,7 @@ public sealed class UpdateService
     /// <summary>Removes old attempts' folders and the .old copy a finished update could not delete.</summary>
     public void CleanStale()
     {
-        VbCableInstaller.CleanStale(WorkRoot, StaleAfter);
+        TempFolders.CleanStale(WorkRoot, StaleAfter);
         UpdatePackage.TryDelete(ExePath + ".old");
     }
 

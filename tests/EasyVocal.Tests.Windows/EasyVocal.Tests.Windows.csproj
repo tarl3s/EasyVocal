@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Windows-only tests: the platform project (registry, Start menu .lnk, VB-CABLE installer and Authenticode,
+       Media Foundation, the updater's PowerShell helper) and the e2e run of the built app. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <ProjectReference Include="..\..\src\EasyVocal.Platform.Windows\EasyVocal.Platform.Windows.csproj" />
+    <!-- Built first, not referenced: E2ETests runs this configuration's EasyVocal.exe, which must never be a stale one. -->
+    <ProjectReference Include="..\..\src\EasyVocal\EasyVocal.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The portable tests' helpers (signals, WAV files, the FLAC writer…). -->
+    <Compile Include="..\EasyVocal.Tests\Helpers\*.cs" Link="Helpers\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

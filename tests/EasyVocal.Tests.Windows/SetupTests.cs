@@ -1,6 +1,8 @@
 using System.IO;
 using System.IO.Compression;
 using EasyVocal.Core.Engine;
+using EasyVocal.Core.Platform;
+using EasyVocal.Platform.Windows;
 using Microsoft.Win32;
 
 namespace EasyVocal.Tests;

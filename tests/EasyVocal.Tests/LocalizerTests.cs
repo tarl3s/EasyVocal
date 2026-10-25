@@ -124,6 +124,7 @@ public class LocalizerTests
     private static readonly Regex XamlLiteral = new(@"\{loc:T\s+(?:'([^']*)'|([^}]*))\}", RegexOptions.Compiled);
     private static readonly Regex SoundLoadMessage = new(@"new\s+SoundLoadException\(\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
     private static readonly Regex SoundLoadFactory = new(@"SoundLoadException\s+\w+\(\)\s*=>\s*new\(\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
+    private static readonly Regex MessageConst = new(@"public\s+const\s+string\s+\w+\s*=\s*""((?:[^""\\]|\\.)*)""", RegexOptions.Compiled);
 
     /// <summary>Every English text the person can see: literals in the app's sources plus built-in names.</summary>
     private static IEnumerable<string> UiStrings()
@@ -154,6 +155,9 @@ public class LocalizerTests
             var code = File.ReadAllText(file);
             foreach (Match m in SoundLoadMessage.Matches(code)) yield return Unescape(m.Groups[1].Value);
             foreach (Match m in SoundLoadFactory.Matches(code)) yield return Unescape(m.Groups[1].Value);
+            // SoundLoader's messages kept as constants (Damaged, NeedsFfmpeg) are shown the same way.
+            if (Path.GetFileName(file) == "SoundLoader.cs")
+                foreach (Match m in MessageConst.Matches(code)) yield return Unescape(m.Groups[1].Value);
         }
         // Built-in names are translated where they are shown.
         foreach (var v in BuiltInVoices.All()) yield return v.Name;

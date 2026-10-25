@@ -1,5 +1,5 @@
 using System.IO;
-using EasyVocal;
+using EasyVocal.Platform.Windows;
 
 namespace EasyVocal.Tests;
 

@@ -1,12 +1,13 @@
 using System.IO;
+using EasyVocal.Core.Platform;
 
-namespace EasyVocal;
+namespace EasyVocal.Platform.Windows;
 
 /// <summary>
 /// The "EasyVocal" entry in the current user's Start menu (a .lnk in their Programs folder; no admin rights needed).
 /// The folder can be changed so tests use a throwaway one instead of the real Start menu.
 /// </summary>
-public sealed class StartMenuShortcut
+public sealed class StartMenuShortcut : IShortcutService
 {
     public const string FileName = "EasyVocal.lnk";
 
@@ -23,6 +24,9 @@ public sealed class StartMenuShortcut
         this.folder = folder ?? Environment.GetFolderPath(Environment.SpecialFolder.Programs);
         this.exePath = exePath;
     }
+
+    /// <summary>Windows always has a Start menu.</summary>
+    public bool Supported => true;
 
     public string ShortcutPath => Path.Combine(folder, FileName);
 

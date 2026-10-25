@@ -4,11 +4,12 @@ using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using EasyVocal;
+using EasyVocal.Core.Update;
+using EasyVocal.Platform.Windows;
 
 namespace EasyVocal.Tests;
 
-/// <summary>The updater without the network: versions, GitHub's answer, the zip, the helper script (run for real on
+/// <summary>The updater on Windows, without the network: the release zip, the helper script (run for real on
 /// throwaway folders whose names have spaces, accents and quotes) and the service with a fake source and launcher.</summary>
 public class UpdaterTests : IDisposable
 {
@@ -26,6 +27,8 @@ public class UpdaterTests : IDisposable
         }
     }
 
+    private static readonly WindowsUpdaterPlatform Win = WindowsUpdaterPlatform.Instance;
+
     private static readonly byte[] FakeExe = Encoding.ASCII.GetBytes("MZ this stands in for EasyVocal.exe");
 
     // ---------- which file (Windows' names) ----------
@@ -33,7 +36,13 @@ public class UpdaterTests : IDisposable
     private static ReleaseInfo WithAssets(params string[] names) => new(new AppVersion(0, 3, 0), "v0.3.0", "",
         names.Select(n => new ReleaseAsset(n, "https://example.com/" + n, 10)).ToList(), false, false, UpdateRules.PageUrl);
 
-    private static ReleaseAsset? Pick(ReleaseInfo r, Architecture os) => UpdateRules.PickAsset(r, Platform.AssetNames(os));
+    /// <summary>GitHub's answer for a release (same as UpdateRulesTests').</summary>
+    private static string ReleaseJson(string tag = "v0.3.0", string extra = "", string? assets = null) =>
+        "{ \"tag_name\": \"" + tag + "\", \"name\": \"EasyVocal " + tag + "\", \"body\": \"## New\\n- Updates itself\"," +
+        " \"html_url\": \"https://github.com/tarl3s/EasyVocal/releases/tag/" + tag + "\"," + extra +
+        " \"assets\": " + (assets ?? "[{ \"name\": \"EasyVocal-win-x64.zip\", \"size\": 70000000, \"browser_download_url\": \"https://github.com/tarl3s/EasyVocal/releases/download/" + tag + "/EasyVocal-win-x64.zip\" }]") + " }";
+
+    private static ReleaseAsset? Pick(ReleaseInfo r, Architecture os) => UpdateRules.PickAsset(r, Win.AssetNames(os));
 
     [Fact]
     public void PickAsset_TakesThisPlatformsZip()
@@ -64,20 +73,20 @@ public class UpdaterTests : IDisposable
     public void ExtractExe_TakesTheExeOut()
     {
         var zip = MakeZip("ok.zip", ("EasyVocal.exe", FakeExe), ("README.txt", new byte[] { 1 }));
-        var exe = UpdatePackage.ExtractExe(zip, Path.Combine(temp, "out"));
+        var exe = UpdatePackage.ExtractExe(zip, Path.Combine(temp, "out"), Win);
         Assert.Equal(Path.Combine(temp, "out", "EasyVocal.exe"), exe);
         Assert.Equal(FakeExe, File.ReadAllBytes(exe));
         Assert.False(File.Exists(Path.Combine(temp, "out", "README.txt"))); // only the exe is unpacked
 
         var nested = MakeZip("nested.zip", ("EasyVocal-0.3.0/EasyVocal.exe", FakeExe));
-        Assert.Equal(FakeExe, File.ReadAllBytes(UpdatePackage.ExtractExe(nested, Path.Combine(temp, "out2"))));
+        Assert.Equal(FakeExe, File.ReadAllBytes(UpdatePackage.ExtractExe(nested, Path.Combine(temp, "out2"), Win)));
     }
 
     [Fact]
     public void ExtractExe_RefusesBadZips()
     {
         void Fails(UpdateProblem problem, string zip) =>
-            Assert.Equal(problem, Assert.Throws<UpdateException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "x"))).Problem);
+            Assert.Equal(problem, Assert.Throws<UpdateException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "x"), Win)).Problem);
 
         Fails(UpdateProblem.MissingExe, MakeZip("none.zip", ("Other.exe", FakeExe)));
         Fails(UpdateProblem.MissingExe, MakeZip("deep.zip", ("a/b/EasyVocal.exe", FakeExe)));
@@ -279,7 +288,7 @@ public class UpdaterTests : IDisposable
         File.WriteAllText(exe, "MZ old");
         var source = new FakeSource();
         var launcher = new FakeLauncher();
-        return (new UpdateService(source, launcher, new AppVersion(0, 2, 0), exe, Path.Combine(temp, "work")), source, launcher, exe);
+        return (new UpdateService(Win, source, launcher, new AppVersion(0, 2, 0), exe, Path.Combine(temp, "work")), source, launcher, exe);
     }
 
     [Fact]
@@ -364,7 +373,7 @@ public class UpdaterTests : IDisposable
         var zip = MakeZip("big.zip", ("EasyVocal.exe", FakeExe));
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
-        Assert.ThrowsAny<OperationCanceledException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "cancelled"), cancel.Token));
+        Assert.ThrowsAny<OperationCanceledException>(() => UpdatePackage.ExtractExe(zip, Path.Combine(temp, "cancelled"), Win, cancel.Token));
         Assert.False(File.Exists(Path.Combine(temp, "cancelled", "EasyVocal.exe")));
     }
 
@@ -412,5 +421,4 @@ public class UpdaterTests : IDisposable
     {
         public void Report(double value) => report(value);
     }
-
 }
