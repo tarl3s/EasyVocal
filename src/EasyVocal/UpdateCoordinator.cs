@@ -49,10 +49,10 @@ public sealed class UpdateCoordinator
         if (!CanCheck || !(controller.Settings.CheckForUpdates || ForceCheck)) return;
         if (CanInstall) service.CleanStale();
         var check = await service.CheckAsync(controller.Settings.SkippedUpdateVersion, manual: false);
-        if (check.Status != UpdateStatus.Available) return;
+        if (check.Status != UpdateStatus.Available || controller.IsDisposed) return;
         var window = visibleWindow();
         if (window != null) await OfferAsync(window, check);
-        else balloon(L.F("EasyVocal {0} is available — click to update", check.Release!.Version), () => _ = OfferAsync(visibleWindow(), check));
+        else balloon(L.F("EasyVocal {0} is available — click to update", check.Release!.Version), () => FireAndForget.Watch(OfferAsync(visibleWindow(), check), "The update dialog"));
     }
 
     /// <summary>Settings' "Check now": the text to show there, or null when the update dialog was shown instead.</summary>
@@ -79,6 +79,12 @@ public sealed class UpdateCoordinator
         {
             var dialog = new UpdateWindow(controller, service, check.Release, check.Asset, CanInstall);
             await dialog.ShowAsync(owner);
+            if (controller.IsDisposed)
+            {
+                // EasyVocal quit while the dialog was up: nothing is installed, and a download nobody will use goes.
+                if (dialog.PreparedExe != null) service.Discard(dialog.PreparedExe);
+                return;
+            }
             if (dialog.PreparedExe != null) await InstallAsync(dialog.PreparedExe, owner);
         }
         finally

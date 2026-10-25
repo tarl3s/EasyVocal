@@ -30,7 +30,7 @@ internal sealed partial class AppSession
             canCheck: !sourceBuild || args.UpdateCheck, canInstall: !sourceBuild, forceCheck: args.UpdateCheck,
             visibleWindow: VisibleUpdateOwner,
             balloon: (text, click) => tray?.ShowBalloon(text, click),
-            quit: () => _ = QuitAsync(ask: false),
+            quit: () => FireAndForget.Watch(QuitAsync(ask: false), "Quitting for the update"),
             logFile: Path.Combine(dataFolder, "update.log"),
             relaunchArguments: c.Platform.Updater.RelaunchArguments(args.DataFolder));
         c.Updates = updates;

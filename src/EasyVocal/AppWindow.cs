@@ -121,6 +121,13 @@ public class AppWindow : Window
         if (owner is not { IsVisible: true }) owner = MainWindowSource?.Invoke() is { IsVisible: true } main && !ReferenceEquals(main, this) ? main : null;
         if (owner != null)
         {
+            // A minimised owner (closing minimises where there is no tray) has no place on screen to centre on, and a
+            // modal dialog over it would block an app the person can't see: it comes back first.
+            if (owner.WindowState == WindowState.Minimized)
+            {
+                owner.WindowState = WindowState.Normal;
+                owner.Activate();
+            }
             WindowStartupLocation = WindowStartupLocation is WindowStartupLocation.Manual ? WindowStartupLocation.Manual : WindowStartupLocation.CenterOwner;
             return ShowDialog(owner);
         }

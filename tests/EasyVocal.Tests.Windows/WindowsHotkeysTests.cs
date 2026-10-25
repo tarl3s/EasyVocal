@@ -43,3 +43,25 @@ public class WindowsHotkeysTests
         Assert.Equal(HotkeyCheck.Free, second.Check(Rare));
     }
 }
+
+public class WindowsHotkeysFailureTests
+{
+    [Fact]
+    public void AHandlerThatThrows_DoesNotEscapeIntoWindows()
+    {
+        using var hotkeys = new WindowsGlobalHotkeys();
+        var rare = new Hotkey(HotkeyMods.Ctrl | HotkeyMods.Alt | HotkeyMods.Shift, 0x87); // Ctrl+Alt+Shift+F24
+        if (hotkeys.Check(rare) != HotkeyCheck.Free)
+        {
+            Console.WriteLine("Skipped: another app owns Ctrl+Alt+Shift+F24");
+            return;
+        }
+        int calls = 0;
+        hotkeys.Pressed += _ => { calls++; throw new InvalidOperationException("a handler bug"); };
+        Assert.True(hotkeys.Register("general:muteMic", rare));
+        // SendMessage runs the window procedure right here: an exception escaping it would end the test process.
+        Assert.True(((IHotkeyTestHooks)hotkeys).SimulatePress("general:muteMic"));
+        Assert.True(((IHotkeyTestHooks)hotkeys).SimulatePress("general:muteMic"));
+        Assert.Equal(2, calls);
+    }
+}

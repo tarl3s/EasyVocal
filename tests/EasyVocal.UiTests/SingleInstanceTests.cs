@@ -90,4 +90,52 @@ public class SingleInstanceTests : IDisposable
         Assert.NotEqual(a, SingleInstance.ShortPipeName("bob"));
         Assert.Equal(a, SingleInstance.ShortPipeName("alice"));
     }
+
+    [Fact]
+    public void Portable_AFirstLaunch_DoesNotWaitForAnswersNobodyGives()
+    {
+        var names = Names(portable: true);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var first = SingleInstance.TryAcquire(names);
+        watch.Stop();
+        Assert.NotNull(first);
+        Assert.False(first!.WithoutLock);
+        // Only a quick look (none at all where the pipe is a socket file), never the 500 ms a held lock gets.
+        Assert.True(watch.ElapsedMilliseconds < 400, "took " + watch.ElapsedMilliseconds + " ms");
+    }
+
+    [Fact]
+    public void Portable_IsRunning_AsksWithoutShowingTheWindow_AndIgnoresAStaleLock()
+    {
+        var names = Names(portable: true);
+        using (var stranger = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            Assert.False(SingleInstance.IsRunning(names)); // a lock nobody answers for: no EasyVocal to wait for
+        Assert.False(SingleInstance.IsRunning(names));
+
+        using var first = SingleInstance.TryAcquire(names);
+        Assert.NotNull(first);
+        int shows = 0;
+        first!.OnShowRequested(() => Interlocked.Increment(ref shows));
+        Assert.True(SingleInstance.IsRunning(names));
+        Assert.True(SingleInstance.IsRunning(names));
+        Thread.Sleep(300);
+        Assert.Equal(0, Volatile.Read(ref shows));
+    }
+
+    [Fact]
+    public void Portable_AClientThatNeverWrites_CantBlockTheListener()
+    {
+        var names = Names(portable: true);
+        using var first = SingleInstance.TryAcquire(names);
+        Assert.NotNull(first);
+        using var shown = new ManualResetEventSlim();
+        first!.OnShowRequested(shown.Set);
+        using var silent = new System.IO.Pipes.NamedPipeClientStream(".", names.PipeName, System.IO.Pipes.PipeDirection.Out);
+        silent.Connect(2000); // and then says nothing, and stays connected
+        var until = DateTime.UtcNow.AddSeconds(8);
+        bool woke = false;
+        while (!woke && DateTime.UtcNow < until) woke = SingleInstance.WakeFirst(names);
+        Assert.True(woke, "a later launch got through");
+        Assert.True(shown.Wait(TimeSpan.FromSeconds(5)));
+    }
 }

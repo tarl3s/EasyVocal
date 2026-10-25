@@ -254,7 +254,7 @@ public partial class MainWindow : AppWindow
             card.Button.Click += (_, _) =>
             {
                 if (s.Hidden) controller.SetSoundHidden(id, false);
-                else if (controller.IsSoundBroken(id)) _ = AskDialog.TellAsync(this, L.T("This sound file couldn't be opened"));
+                else if (controller.IsSoundBroken(id)) FireAndForget.Watch(AskDialog.TellAsync(this, L.T("This sound file couldn't be opened")), "A message");
                 else controller.ToggleSound(id);
             };
             soundCards[id] = card;
@@ -484,27 +484,27 @@ public partial class MainWindow : AppWindow
     /// <summary>A built-in voice opens as a copy ("Save as new filter").</summary>
     private void EditVoice(string id)
     {
-        if (VoiceById(id) is { } v) _ = new FilterEditorWindow(controller, v).ShowAsync(this);
+        if (VoiceById(id) is { } v) FireAndForget.Watch(new FilterEditorWindow(controller, v).ShowAsync(this), "The filter editor");
     }
 
     private void EditSound(string id)
     {
-        if (SoundById(id) is { } s) _ = new SoundEditorWindow(controller, s, null).ShowAsync(this);
+        if (SoundById(id) is { } s) FireAndForget.Watch(new SoundEditorWindow(controller, s, null).ShowAsync(this), "The sound editor");
     }
 
     private void EditSoundAudio(string id)
     {
-        if (SoundById(id) is { } s) _ = AudioEditorWindow.EditSavedSoundAsync(this, controller, s);
+        if (SoundById(id) is { } s) FireAndForget.Watch(AudioEditorWindow.EditSavedSoundAsync(this, controller, s), "The audio editor");
     }
 
     private void SetVoiceHotkey(string id)
     {
-        if (VoiceById(id) is { } v) _ = AssignHotkeyAsync("voice:" + id, AppController.DisplayName(v), v.Hotkey, key => v.Hotkey = key);
+        if (VoiceById(id) is { } v) FireAndForget.Watch(AssignHotkeyAsync("voice:" + id, AppController.DisplayName(v), v.Hotkey, key => v.Hotkey = key), "Assigning a hotkey");
     }
 
     private void SetSoundHotkey(string id)
     {
-        if (SoundById(id) is { } s) _ = AssignHotkeyAsync("sound:" + id, AppController.DisplayName(s), s.Hotkey, key => s.Hotkey = key);
+        if (SoundById(id) is { } s) FireAndForget.Watch(AssignHotkeyAsync("sound:" + id, AppController.DisplayName(s), s.Hotkey, key => s.Hotkey = key), "Assigning a hotkey");
     }
 
     /// <summary>
@@ -539,12 +539,12 @@ public partial class MainWindow : AppWindow
     private async Task<bool> ConfirmDeleteAsync(string name) =>
         (await AskDialog.AskAsync(this, L.F("Delete “{0}”? This can't be undone.", name), L.T("Delete"), L.T("Cancel"), null)).Yes;
 
-    private void NewFilter_Click(object? sender, RoutedEventArgs e) => _ = new FilterEditorWindow(controller, null).ShowAsync(this);
+    private void NewFilter_Click(object? sender, RoutedEventArgs e) => FireAndForget.Watch(new FilterEditorWindow(controller, null).ShowAsync(this), "The filter editor");
 
     private void AddSound_Click(object? sender, RoutedEventArgs e) => OpenSoundEditor(null);
 
     /// <summary>The sound editor for a new sound, starting from <paramref name="path"/> when given (the e2e test uses it with a file).</summary>
-    internal void OpenSoundEditor(string? path) => _ = new SoundEditorWindow(controller, null, path).ShowAsync(this);
+    internal void OpenSoundEditor(string? path) => FireAndForget.Watch(new SoundEditorWindow(controller, null, path).ShowAsync(this), "The sound editor");
 
     // ---------- drag and drop: sound files dropped on the window add sounds ----------
 
@@ -579,7 +579,7 @@ public partial class MainWindow : AppWindow
 
     private void HearMeButton_Click(object? sender, RoutedEventArgs e) => controller.HearMe = HearMeButton.IsChecked == true;
 
-    private void SettingsButton_Click(object? sender, RoutedEventArgs e) => _ = SettingsWindow.OpenAsync(controller, this);
+    private void SettingsButton_Click(object? sender, RoutedEventArgs e) => FireAndForget.Watch(SettingsWindow.OpenAsync(controller, this), "Settings");
 
     private async void FixButton_Click(object? sender, RoutedEventArgs e)
     {
@@ -592,7 +592,7 @@ public partial class MainWindow : AppWindow
             await AskDialog.TellAsync(this, L.T("Windows didn't let EasyVocal change it. Pick your headphones or speakers in the Windows sound settings."));
     }
 
-    private void MicButton_Click(object? sender, RoutedEventArgs e) => _ = SettingsWindow.OpenAsync(controller, this);
+    private void MicButton_Click(object? sender, RoutedEventArgs e) => FireAndForget.Watch(SettingsWindow.OpenAsync(controller, this), "Settings");
 
     private void StopAllButton_Click(object? sender, RoutedEventArgs e) => controller.StopAllSounds();
 

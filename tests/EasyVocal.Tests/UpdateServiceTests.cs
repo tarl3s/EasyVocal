@@ -169,6 +169,48 @@ public class UpdateServiceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(temp, "evil.txt")));
     }
 
+    [Fact]
+    public void ExtractAll_AFileWhereAFolderShouldBe_IsABrokenDownload()
+    {
+        void Fails(string archive) =>
+            Assert.Equal(UpdateProblem.UnsafeZip, Assert.Throws<UpdateException>(() => UpdatePackage.ExtractAll(archive, Path.Combine(temp, "nested-" + Path.GetFileName(archive)))).Problem);
+
+        Fails(MakeZip("nested.zip", ("EasyVocal/a", new byte[] { 1 }), ("EasyVocal/a/b", new byte[] { 2 })));
+        Fails(MakeTarGz("nested.tar.gz", tar =>
+        {
+            AddFile(tar, "EasyVocal/a", new byte[] { 1 }, Plain);
+            AddFile(tar, "EasyVocal/a/b", new byte[] { 2 }, Plain);
+        }));
+    }
+
+    [Fact]
+    public void ExtractAll_KeepsOnlyTheReadWriteExecuteBits()
+    {
+        var tgz = MakeTarGz("suid.tar.gz", tar => AddFile(tar, "EasyVocal/EasyVocal-test", Prog, Exec | UnixFileMode.SetUser | UnixFileMode.SetGroup | UnixFileMode.StickyBit));
+        var path = Path.Combine(temp, "suid.zip");
+        using (var zip = ZipFile.Open(path, ZipArchiveMode.Create))
+        {
+            var e = zip.CreateEntry("EasyVocal/run.sh");
+            e.ExternalAttributes = (0x8000 | 0xFED) << 16; // a regular file, rwxr-xr-x plus setuid, setgid and sticky
+            using var s = e.Open();
+            s.WriteByte(1);
+        }
+        var dest = Path.Combine(temp, "suid");
+        UpdatePackage.ExtractAll(tgz, dest);
+        UpdatePackage.ExtractAll(path, dest);
+        if (OperatingSystem.IsWindows())
+        {
+            output.WriteLine("SKIPPED (Windows has no Unix permission bits): the setuid check");
+            return;
+        }
+        foreach (var file in new[] { Path.Combine(dest, "EasyVocal", "EasyVocal-test"), Path.Combine(dest, "EasyVocal", "run.sh") })
+        {
+            var mode = File.GetUnixFileMode(file);
+            Assert.True(mode.HasFlag(UnixFileMode.UserExecute), file);
+            Assert.False(mode.HasFlag(UnixFileMode.SetUser) || mode.HasFlag(UnixFileMode.SetGroup) || mode.HasFlag(UnixFileMode.StickyBit), file + ": " + mode);
+        }
+    }
+
     // ---------- the service ----------
 
     private static string ReleaseJson(string tag, string? assets = null) =>
@@ -338,5 +380,37 @@ public class UpdateServiceTests : IDisposable
         Assert.False(File.Exists(exe + ".old"));
         Assert.True(File.Exists(exe));
         Assert.True(service.CanSelfUpdate());
+    }
+
+    [Fact]
+    public void CleanStale_RemovesAnOldFolder_ForPlatformsThatReplaceAFolder()
+    {
+        var (service, _, _, exe) = MakeService(wholeArchive: true); // the install root is the app's folder (macOS .app, Linux)
+        var old = Path.GetDirectoryName(exe) + ".old";
+        Directory.CreateDirectory(Path.Combine(old, "lib"));
+        File.WriteAllText(Path.Combine(old, "lib", "x.dll"), "left by an update");
+        service.CleanStale();
+        Assert.False(Directory.Exists(old));
+        Assert.True(File.Exists(exe));
+    }
+
+    [Fact]
+    public async Task StartInstall_APayloadOutsideTheUpdatersFolder_IsRefused()
+    {
+        var (service, source, platform, exe) = MakeService();
+        // The helper deletes its staging folder at the end: for a payload elsewhere that could be any folder above it.
+        foreach (var payload in new[] { exe, Path.Combine(Work, "EasyVocal-test"), Path.Combine(temp, "workX", "a", "EasyVocal-test") })
+        {
+            var ex = Assert.Throws<UpdateException>(() => service.StartInstall(payload, 1, Path.Combine(temp, "u.log"), ""));
+            Assert.Equal(UpdateProblem.Launch, ex.Problem);
+        }
+        Assert.Empty(platform.FakeLauncher.Started);
+        Assert.True(File.Exists(exe));
+
+        source.ArchivePath = MakeZip("release.zip", ("EasyVocal-test", Prog));
+        var real = await service.DownloadAsync(new ReleaseAsset("EasyVocal-test.zip", "https://example.com/e.zip", 1000), null, default);
+        var script = service.StartInstall(real, 1, Path.Combine(temp, "u.log"), "");
+        Assert.Equal(Path.GetFullPath(Work), Path.GetDirectoryName(Path.GetDirectoryName(script)));
+        Assert.Contains("staging=" + Path.GetDirectoryName(script), File.ReadAllText(script));
     }
 }

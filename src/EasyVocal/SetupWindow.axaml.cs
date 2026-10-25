@@ -115,20 +115,26 @@ public partial class SetupWindow : AppWindow
     {
         if (installing || installingAnywhere) return; // never two installers at once
         installing = installingAnywhere = true;
-        waiting = false;
-        waitTimer.Stop();
-        InstallButton.IsEnabled = false;
-        DoneButton.IsEnabled = false; // finishing now would leave the installer running behind a closed window
-        ProgressTrack.IsVisible = true;
-        SetProgress(0);
-        SetStatus(L.T(MicTexts.Downloading), false);
-        cancelInstall = new CancellationTokenSource();
-        // VB-CABLE may make itself the system's default playback device and microphone: what the person has now is put back.
-        controller.RememberDefaultsBeforeCable();
         InstallResult result;
         try
         {
+            // Everything from here on is inside the try: a throw must never leave the "an installer runs" guard set.
+            waiting = false;
+            waitTimer.Stop();
+            InstallButton.IsEnabled = false;
+            DoneButton.IsEnabled = false; // finishing now would leave the installer running behind a closed window
+            ProgressTrack.IsVisible = true;
+            SetProgress(0);
+            SetStatus(L.T(MicTexts.Downloading), false);
+            cancelInstall = new CancellationTokenSource();
+            // VB-CABLE may make itself the system's default playback device and microphone: what the person has now is put back.
+            controller.RememberDefaultsBeforeCable();
             result = await controller.CableInstaller(new Progress<double>(OnInstallProgress), cancelInstall.Token);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("The virtual microphone's install failed", ex);
+            result = new InstallResult(InstallStatus.Failed, ex.GetType().Name + ": " + ex.Message);
         }
         finally
         {

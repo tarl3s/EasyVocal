@@ -1,3 +1,4 @@
+using EasyVocal.Core.Update;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using EasyVocal.Core.Sounds;
@@ -125,5 +126,92 @@ public class WindowBehaviourTests
         Assert.Single(AppWindow.OpenWindows.OfType<SetupWindow>());
         setup.Close();
         Assert.True(again.IsCompleted);
+    }
+
+    [AvaloniaFact]
+    public void Dialog_OverAMinimisedMainWindow_BringsTheWindowBackFirst()
+    {
+        using var f = new Fixture();
+        f.Main.CanHideToTray = false; // no tray: closing minimises
+        f.Main.Show();
+        f.Main.Close();
+        Assert.Equal(WindowState.Minimized, f.Main.WindowState);
+
+        var settings = new SettingsWindow(f.Controller);
+        _ = settings.ShowAsync(null);
+        Assert.Same(f.Main, settings.Owner);
+        Assert.Equal(WindowState.Normal, f.Main.WindowState); // a modal dialog over a window nobody can see would block it
+        settings.Close();
+    }
+
+    [AvaloniaFact]
+    public void Setup_AnInstallerThatThrows_DoesNotBlockTheNextInstall()
+    {
+        using var f = new Fixture();
+        int calls = 0;
+        f.Controller.CableInstaller = (_, _) =>
+        {
+            calls++;
+            throw new InvalidOperationException("a broken installer");
+        };
+        var setup = new SetupWindow(f.Controller, () => false);
+        _ = setup.ShowAsync(null);
+        Ui.Click(setup.InstallButton);
+        Assert.Equal(1, calls);
+        Assert.True(setup.InstallButton.IsEnabled);
+        Ui.Click(setup.InstallButton); // the "an installer runs" guard was let go
+        Assert.Equal(2, calls);
+        setup.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task UpdateDialog_EasyVocalQuitWhileDownloading_InstallsNothing()
+    {
+        using var f = new Fixture();
+        var work = Path.Combine(f.Data, "work");
+        var exe = Path.Combine(f.Data, "app", "EasyVocal-test");
+        Directory.CreateDirectory(Path.GetDirectoryName(exe)!);
+        File.WriteAllBytes(exe, FakeUpdaterPlatform.Program);
+        var zip = Path.Combine(f.Data, "release.zip");
+        using (var archive = System.IO.Compression.ZipFile.Open(zip, System.IO.Compression.ZipArchiveMode.Create))
+        using (var s = archive.CreateEntry("EasyVocal-test").Open())
+            s.Write(FakeUpdaterPlatform.Program);
+        var platform = new FakeUpdaterPlatform();
+        var source = new FakeUpdateSource { ArchivePath = zip, Gate = new TaskCompletionSource() };
+        var service = new UpdateService(platform, source, platform.Launcher, new AppVersion(0, 2, 0), exe, work);
+        int quits = 0;
+        var coordinator = new UpdateCoordinator(f.Controller, service, canCheck: true, canInstall: true, forceCheck: false,
+            () => null, (_, _) => { }, () => quits++, Path.Combine(f.Data, "update.log"), "");
+        var release = new ReleaseInfo(new AppVersion(9, 9, 0), "v9.9.0", "",
+            new[] { new ReleaseAsset("EasyVocal-test.zip", "https://example.com/e.zip", 1000) }, false, false, "https://example.com");
+        var offer = coordinator.OfferAsync(null, new UpdateCheck(UpdateStatus.Available, release, release.Assets[0]));
+        var dialog = AppWindow.OpenWindows.OfType<UpdateWindow>().Single();
+        Ui.Click(dialog.UpdateButton);
+        f.Controller.Dispose(); // quit from the tray while it downloads
+        source.Gate.SetResult();
+        await offer.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, quits);
+        Assert.Empty(platform.FakeLauncher.Started);
+        Assert.True(!Directory.Exists(work) || Directory.GetFileSystemEntries(work).Length == 0, "the download was discarded");
+    }
+
+    [Fact]
+    public async Task FireAndForget_ReportsAFailureAtOnce_AndTellsWhenEverythingIsDone()
+    {
+        var failures = new List<Exception>();
+        void OnFailed(Exception e) { lock (failures) failures.Add(e); }
+        FireAndForget.Failed += OnFailed;
+        try
+        {
+            var gate = new TaskCompletionSource();
+            FireAndForget.Watch(Task.Run(async () => { await gate.Task; throw new InvalidOperationException("boom"); }), "A test task");
+            FireAndForget.Watch(Task.FromCanceled(new CancellationToken(true)), "A cancelled task"); // not a failure
+            Assert.False(await FireAndForget.SettleAsync(TimeSpan.FromMilliseconds(50)));
+            gate.SetResult();
+            Assert.True(await FireAndForget.SettleAsync(TimeSpan.FromSeconds(5)));
+            lock (failures) Assert.Contains(failures, e => e.Message == "boom");
+            lock (failures) Assert.Single(failures);
+        }
+        finally { FireAndForget.Failed -= OnFailed; }
     }
 }

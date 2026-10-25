@@ -99,8 +99,20 @@ public sealed class WindowsGlobalHotkeys : IGlobalHotkeys, IHotkeyTestHooks
         }
     }
 
-    private IntPtr OwnWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam) =>
-        ProcessMessage((int)msg, wParam) ? IntPtr.Zero : DefWindowProcW(hWnd, msg, wParam, lParam);
+    /// <summary>Called by Windows: an exception must never cross back into it (that ends the process).</summary>
+    private IntPtr OwnWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        try
+        {
+            if (ProcessMessage((int)msg, wParam)) return IntPtr.Zero;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("A hotkey press failed", ex);
+            return IntPtr.Zero;
+        }
+        return DefWindowProcW(hWnd, msg, wParam, lParam);
+    }
 
     /// <summary>Windows always has global hotkeys.</summary>
     public bool Available => true;

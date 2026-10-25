@@ -1006,45 +1006,74 @@ public sealed class AppController : IDisposable
     // ---------- the virtual mic EasyVocal makes itself (Linux) ----------
 
     private static readonly TimeSpan VirtualMicWait = TimeSpan.FromSeconds(5);
-    private bool virtualMicCreated;
+    private Task<bool>? virtualMicTask; // the creation of this session's virtual mic (null: the platform doesn't make one)
     private readonly CancellationTokenSource loadCancel = new();
+
+    /// <summary>The platform is still making this session's virtual mic (the banner doesn't call it missing yet).</summary>
+    public bool PreparingVirtualMic => virtualMicTask is { IsCompleted: false };
 
     /// <summary>
     /// Where the platform makes the virtual mic (CanCreate): removes one a crashed run left, then creates this session's,
-    /// before any device is opened. Waits at most a few seconds; a failure is logged (the setup then shows it missing).
+    /// off the UI thread (the window keeps painting; the audio waits for it like for a cable being installed). Once it is
+    /// there the audio is brought up at once; a failure is logged (the setup then shows it missing).
     /// </summary>
     private void PrepareVirtualMic()
     {
         var vm = Platform.VirtualMic;
         if (!vm.CanCreate) return;
-        try
+        var task = Task.Run(async () =>
         {
-            var task = Task.Run(async () =>
+            try
             {
                 using var cts = new CancellationTokenSource(VirtualMicWait);
                 await vm.CleanStaleAsync(cts.Token).ConfigureAwait(false);
                 return await vm.CreateAsync(cts.Token).ConfigureAwait(false);
-            });
-            virtualMicCreated = task.Wait(VirtualMicWait + TimeSpan.FromSeconds(1)) && task.Result;
-        }
-        catch (Exception ex) { AppLog.Error("Creating the virtual microphone failed", ex); }
-        AppLog.Info(virtualMicCreated ? vm.Name + " created" : vm.Name + " could not be created");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("Creating the virtual microphone failed", ex);
+                return false;
+            }
+        });
+        virtualMicTask = task;
+        task.ContinueWith(t => ui.Post(() =>
+        {
+            AppLog.Info(t.Result ? vm.Name + " created" : vm.Name + " could not be created");
+            if (disposed) return; // quitting: Dispose removes it
+            if (t.Result) Recover(); // opens the call device now instead of at the next 2 s round
+            RaiseChanged();
+        }), TaskScheduler.Default);
     }
 
-    /// <summary>On quit: removes the virtual mic this session created (waits a few seconds at most).</summary>
+    /// <summary>
+    /// On quit: removes the virtual mic this session created — also one whose creation was still running (it is waited
+    /// for, then removed). Waits a few seconds at most.
+    /// </summary>
     private void RemoveVirtualMic()
     {
-        if (!virtualMicCreated) return;
-        virtualMicCreated = false;
+        var task = virtualMicTask;
+        if (task == null) return;
+        virtualMicTask = null;
         var vm = Platform.VirtualMic;
         try
         {
-            Task.Run(async () =>
+            var removal = Task.Run(async () =>
             {
+                bool made;
+                try { made = await task.WaitAsync(VirtualMicWait).ConfigureAwait(false); }
+                catch (TimeoutException)
+                {
+                    // Still being made: remove it whenever it is done (the process may end first; the next start cleans it).
+                    _ = task.ContinueWith(async t => { if (t.Result) await vm.RemoveAsync(CancellationToken.None).ConfigureAwait(false); },
+                        TaskScheduler.Default);
+                    return;
+                }
+                if (!made) return;
                 using var cts = new CancellationTokenSource(VirtualMicWait);
                 await vm.RemoveAsync(cts.Token).ConfigureAwait(false);
-            }).Wait(VirtualMicWait + TimeSpan.FromSeconds(1));
-            AppLog.Info(vm.Name + " removed");
+                AppLog.Info(vm.Name + " removed");
+            });
+            if (!removal.Wait(VirtualMicWait * 2 + TimeSpan.FromSeconds(1))) AppLog.Info(vm.Name + " is still being removed");
         }
         catch (Exception ex) { AppLog.Error("Removing the virtual microphone failed", ex); }
     }

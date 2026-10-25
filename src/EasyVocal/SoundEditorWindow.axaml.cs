@@ -74,8 +74,8 @@ public partial class SoundEditorWindow : AppWindow
         };
         Opened += (_, _) =>
         {
-            if (droppedPath != null) _ = LoadFileAsync(droppedPath);
-            else if (editing != null) _ = LoadFileAsync(controller.SoundPath(editing.FileName), existing: true);
+            if (droppedPath != null) FireAndForget.Watch(LoadFileAsync(droppedPath), "Loading a sound file");
+            else if (editing != null) FireAndForget.Watch(LoadFileAsync(controller.SoundPath(editing.FileName), existing: true), "Loading a sound file");
         };
     }
 
@@ -112,7 +112,7 @@ public partial class SoundEditorWindow : AppWindow
         var path = e.DataTransfer.TryGetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().FirstOrDefault();
         if (path == null) return;
         e.Handled = true;
-        _ = LoadFileAsync(path);
+        FireAndForget.Watch(LoadFileAsync(path), "Loading a sound file");
     }
 
     private bool CanTakeFile => editing is not { BuiltIn: true };

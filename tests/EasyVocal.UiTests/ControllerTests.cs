@@ -1,3 +1,4 @@
+using EasyVocal.Core.Platform;
 using EasyVocal.Core.Engine;
 using EasyVocal.Core.Hotkeys;
 using EasyVocal.Core.Sounds;
@@ -132,5 +133,109 @@ public class ControllerTests
             Assert.True(Hotkey.TryParse(name, out var key), name);
             Assert.Contains(Enum.GetValues<Avalonia.Input.Key>(), k => KeyMap.VirtualKey(k) == key.VirtualKey);
         }
+    }
+
+    /// <summary>A virtual mic EasyVocal makes itself (like Linux'), whose creation finishes when the test says so.</summary>
+    private sealed class GatedVirtualMic : IVirtualMicProvider
+    {
+        public readonly TaskCompletionSource<bool> Created = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Creates, Removes, Cleans;
+        public string Name => "Test mic";
+        public string CallAppDeviceName => "Test mic";
+        public VirtualMicTexts Texts { get; } = new("", "", "", "", "", "", "");
+        public string PageUrl => "https://example.com";
+        public DeviceInfo? Find(IReadOnlyList<DeviceInfo> outputs) => null;
+        public bool CanInstall => false;
+        public bool TakesDefaultsOnInstall => false;
+        public Task<InstallResult> InstallAsync(IProgress<double> progress, CancellationToken ct) => Task.FromResult(new InstallResult(InstallStatus.Failed));
+        public bool CanCreate => true;
+        public Task CleanStaleAsync(CancellationToken ct) { Interlocked.Increment(ref Cleans); return Task.CompletedTask; }
+        public Task<bool> CreateAsync(CancellationToken ct) { Interlocked.Increment(ref Creates); return Created.Task; }
+        public Task RemoveAsync(CancellationToken ct) { Interlocked.Increment(ref Removes); return Task.CompletedTask; }
+        public void OpenPage() { }
+    }
+
+    private static string NewData()
+    {
+        var data = Path.Combine(Path.GetTempPath(), "EV_UiController_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(data);
+        return data;
+    }
+
+    private static void DeleteData(string data)
+    {
+        for (int attempt = 0; attempt < 10 && Directory.Exists(data); attempt++)
+        {
+            try { Directory.Delete(data, recursive: true); }
+            catch (IOException) { Thread.Sleep(200); }
+        }
+    }
+
+    [Fact]
+    public void VirtualMic_IsMadeOffTheUiThread_AndRemovedOnQuit()
+    {
+        var data = NewData();
+        var ui = new ManualDispatcher();
+        var mic = new GatedVirtualMic();
+        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        try
+        {
+            using (var c = new AppController(data, platform, ui))
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                c.Start(); // the creation hangs: Start must not wait for it
+                Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), "Start took " + watch.Elapsed);
+                Assert.True(c.PreparingVirtualMic);
+                mic.Created.SetResult(true);
+                for (int i = 0; i < 200 && c.PreparingVirtualMic; i++) Thread.Sleep(10);
+                ui.Pump();
+                Assert.False(c.PreparingVirtualMic);
+                Assert.Equal(1, mic.Cleans);
+                Assert.Equal(1, mic.Creates);
+                Assert.Equal(0, mic.Removes);
+            }
+            Assert.Equal(1, mic.Removes);
+        }
+        finally { DeleteData(data); }
+    }
+
+    [Fact]
+    public void VirtualMic_StillBeingMadeWhenEasyVocalQuits_IsRemovedOnceItIsThere()
+    {
+        var data = NewData();
+        var ui = new ManualDispatcher();
+        var mic = new GatedVirtualMic();
+        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        try
+        {
+            var c = new AppController(data, platform, ui);
+            c.Start();
+            Assert.True(c.PreparingVirtualMic);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                mic.Created.SetResult(true); // finishes while Dispose is waiting for it
+            });
+            c.Dispose();
+            Assert.Equal(1, mic.Removes);
+        }
+        finally { DeleteData(data); }
+    }
+
+    [Fact]
+    public void VirtualMic_ThatCouldNotBeMade_IsNotRemoved()
+    {
+        var data = NewData();
+        var ui = new ManualDispatcher();
+        var mic = new GatedVirtualMic();
+        mic.Created.SetResult(false);
+        var platform = TestPlatform.Create(new TestAudioDevices(cablePresent: true), new FakeUpdaterPlatform(), SoundDecoders.Default) with { VirtualMic = mic };
+        try
+        {
+            using (var c = new AppController(data, platform, ui)) c.Start();
+            Assert.Equal(1, mic.Creates);
+            Assert.Equal(0, mic.Removes);
+        }
+        finally { DeleteData(data); }
     }
 }

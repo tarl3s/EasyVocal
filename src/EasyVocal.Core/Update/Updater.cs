@@ -298,12 +298,30 @@ public static class UpdatePackage
             }
             if (found == null) throw new UpdateException(UpdateProblem.MissingExe, "The download doesn't contain " + fileName + ".");
 
-            Directory.CreateDirectory(root);
             var dest = Path.Combine(root, fileName);
             ct.ThrowIfCancellationRequested();
-            using (var from = found.Open()) CopyOut(from, dest, ct);
+            long budget = MaxUnpackedBytes;
+            Writing(fileName, () =>
+            {
+                Directory.CreateDirectory(root);
+                using var from = found.Open();
+                CopyOut(from, dest, ref budget, ct);
+            });
             SetMode(dest, UnixMode(found));
             return dest;
+        }
+    }
+
+    /// <summary>
+    /// One write of the unpacking. A file system error (a file where the archive wants a folder, as with the entries "a"
+    /// and "a/b"; a name the system refuses) means a broken download, not a crash.
+    /// </summary>
+    private static void Writing(string entryName, Action write)
+    {
+        try { write(); }
+        catch (Exception ex) when (ex is (IOException and not EndOfStreamException) or UnauthorizedAccessException)
+        {
+            throw new UpdateException(UpdateProblem.UnsafeZip, "The download's " + entryName + " can't be written: " + ex.Message, ex);
         }
     }
 
@@ -333,6 +351,7 @@ public static class UpdatePackage
                 total += Math.Max(0, entry.Length);
                 if (total > MaxUnpackedBytes) throw TooBig();
             }
+            long budget = MaxUnpackedBytes; // the sizes above are what the zip claims; this counts what really comes out
             foreach (var entry in archive.Entries)
             {
                 ct.ThrowIfCancellationRequested();
@@ -342,11 +361,15 @@ public static class UpdatePackage
                     throw new UpdateException(UpdateProblem.UnsafeZip, "The download contains a link: " + entry.FullName);
                 if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
                 {
-                    Directory.CreateDirectory(target);
+                    Writing(entry.FullName, () => Directory.CreateDirectory(target));
                     continue;
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                using (var from = entry.Open()) CopyOut(from, target, ct);
+                Writing(entry.FullName, () =>
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    using var from = entry.Open();
+                    CopyOut(from, target, ref budget, ct);
+                });
                 SetMode(target, mode);
             }
         }
@@ -359,7 +382,7 @@ public static class UpdatePackage
             using var file = File.OpenRead(path);
             using var gzip = new GZipStream(file, CompressionMode.Decompress);
             using var tar = new TarReader(gzip);
-            long total = 0;
+            long total = 0, budget = MaxUnpackedBytes;
             while (tar.GetNextEntry() is { } entry)
             {
                 ct.ThrowIfCancellationRequested();
@@ -367,14 +390,17 @@ public static class UpdatePackage
                 switch (entry.EntryType)
                 {
                     case TarEntryType.Directory:
-                        Directory.CreateDirectory(target);
+                        Writing(entry.Name, () => Directory.CreateDirectory(target));
                         continue;
                     case TarEntryType.RegularFile or TarEntryType.V7RegularFile or TarEntryType.ContiguousFile:
                         total += Math.Max(0, entry.Length);
                         if (total > MaxUnpackedBytes) throw TooBig();
-                        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                        if (entry.DataStream is { } data) CopyOut(data, target, ct);
-                        else File.WriteAllBytes(target, Array.Empty<byte>());
+                        Writing(entry.Name, () =>
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                            if (entry.DataStream is { } data) CopyOut(data, target, ref budget, ct);
+                            else File.WriteAllBytes(target, Array.Empty<byte>());
+                        });
                         SetMode(target, (int)entry.Mode);
                         continue;
                     case TarEntryType.SymbolicLink or TarEntryType.HardLink:
@@ -424,22 +450,40 @@ public static class UpdatePackage
         return mode == 0 ? null : mode;
     }
 
+    /// <summary>The permission bits kept from an archive: read/write/execute only (never setuid, setgid or sticky).</summary>
+    public const int KeptModeBits = 0x1FF;
+
     /// <summary>Keeps the permission bits (the executable one above all) where the system has them.</summary>
     private static void SetMode(string path, int? mode)
     {
         if (mode is not { } m || OperatingSystem.IsWindows()) return;
-        try { File.SetUnixFileMode(path, (UnixFileMode)(m & 0xFFF)); }
+        try { File.SetUnixFileMode(path, (UnixFileMode)(m & KeptModeBits)); }
         catch (Exception) { /* a file system without permissions: nothing to keep */ }
     }
 
-    /// <summary>Writes the stream to <paramref name="dest"/> in chunks, so a cancellation stops it quickly (the exe is ~80 MB).</summary>
-    private static void CopyOut(Stream from, string dest, CancellationToken ct)
+    /// <summary>
+    /// Writes the stream to <paramref name="dest"/> in chunks, so a cancellation stops it quickly (the exe is ~80 MB).
+    /// <paramref name="budget"/> is what may still be written for the whole archive: an entry that unpacks to more than
+    /// its header said (a lying zip) is stopped there.
+    /// </summary>
+    private static void CopyOut(Stream from, string dest, ref long budget, CancellationToken ct)
     {
+        bool tooBig = false;
         using (var to = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             var buffer = new byte[81920];
             int n;
-            while (!ct.IsCancellationRequested && (n = from.Read(buffer, 0, buffer.Length)) > 0) to.Write(buffer, 0, n);
+            while (!ct.IsCancellationRequested && (n = from.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                budget -= n;
+                if (budget < 0) { tooBig = true; break; }
+                to.Write(buffer, 0, n);
+            }
+        }
+        if (tooBig)
+        {
+            TryDelete(dest);
+            throw TooBig();
         }
         if (!ct.IsCancellationRequested) return;
         TryDelete(dest);
@@ -450,6 +494,17 @@ public static class UpdatePackage
     {
         try { if (File.Exists(file)) File.Delete(file); }
         catch (Exception) { /* in use: the stale-folder cleanup gets it later */ }
+    }
+
+    /// <summary>Deletes a file or a whole folder (a .app bundle, an app folder). Never throws.</summary>
+    public static void TryDeletePath(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+            else if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception) { /* in use: the next cleanup gets it */ }
     }
 }
 
@@ -625,7 +680,9 @@ public sealed class UpdateService
     {
         if (!CanSelfUpdate())
             throw new UpdateException(UpdateProblem.FolderNotWritable, "EasyVocal can't replace " + platform.ExeName + ": its folder can't be written.");
-        var staging = StagingOf(newPayload);
+        // The helper deletes its staging folder when it is done: it must be one of our attempts, never a folder above them.
+        var staging = StagingOf(newPayload)
+            ?? throw new UpdateException(UpdateProblem.Launch, "The update to install is not one this updater downloaded: " + newPayload);
         var script = Path.Combine(staging, platform.HelperFileName);
         var plan = new HelperPlan(waitPid, platform.InstallRoot(ExePath), newPayload, staging, logFile, relaunch, relaunchArguments);
         File.WriteAllText(script, platform.BuildHelper(plan), platform.HelperEncoding);
@@ -641,27 +698,36 @@ public sealed class UpdateService
     /// <summary>A downloaded payload nobody will install (the window closed while it was checked): its folder goes.</summary>
     public void Discard(string newPayload)
     {
-        var staging = StagingOf(newPayload);
-        var root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (PathCompare.IsUnder(Path.GetFullPath(staging), root)) TryDeleteFolder(staging);
+        if (StagingOf(newPayload) is { } staging) TryDeleteFolder(staging);
         log("Update download discarded: " + newPayload);
     }
 
-    /// <summary>The attempt's own folder: the child of <see cref="WorkRoot"/> the payload is in.</summary>
-    private string StagingOf(string newPayload)
+    /// <summary>
+    /// The attempt's own folder: the child of <see cref="WorkRoot"/> the payload is in. Null when the payload is not under
+    /// <see cref="WorkRoot"/> (then there is nothing of ours to delete or write into).
+    /// </summary>
+    private string? StagingOf(string newPayload)
     {
-        var root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar);
-        var dir = Path.GetDirectoryName(Path.GetFullPath(newPayload));
+        string root, full;
+        try
+        {
+            root = Path.GetFullPath(WorkRoot).TrimEnd(Path.DirectorySeparatorChar);
+            full = Path.GetFullPath(newPayload);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
+        if (!PathCompare.IsUnder(full, root + Path.DirectorySeparatorChar)) return null;
+        var dir = Path.GetDirectoryName(full);
         while (dir != null && Path.GetDirectoryName(dir) is { } parent && !PathCompare.Same(parent.TrimEnd(Path.DirectorySeparatorChar), root))
             dir = parent;
-        return dir ?? Path.GetDirectoryName(newPayload)!;
+        // dir is now a child of root (the payload sat at least one folder below it); the payload itself in root: none.
+        return dir != null && PathCompare.Same(Path.GetDirectoryName(dir)?.TrimEnd(Path.DirectorySeparatorChar), root) ? dir : null;
     }
 
-    /// <summary>Removes old attempts' folders and the .old copy a finished update could not delete.</summary>
+    /// <summary>Removes old attempts' folders and the .old copy (a file, a .app bundle or a folder) a finished update could not delete.</summary>
     public void CleanStale()
     {
         TempFolders.CleanStale(WorkRoot, StaleAfter);
-        UpdatePackage.TryDelete(platform.InstallRoot(ExePath) + ".old");
+        UpdatePackage.TryDeletePath(platform.InstallRoot(ExePath) + ".old");
     }
 
     private static void TryDeleteFolder(string folder)

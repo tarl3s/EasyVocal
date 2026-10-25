@@ -193,7 +193,7 @@ public partial class SettingsWindow : AppWindow
             var button = new Button { MinWidth = 130, Margin = new Thickness(0, 3, 0, 3) };
             ToolTip.SetTip(button, L.T("Set hotkey…"));
             var key = id;
-            button.Click += (_, _) => _ = AssignGeneralAsync(key);
+            button.Click += (_, _) => FireAndForget.Watch(AssignGeneralAsync(key), "Assigning a hotkey");
             Grid.SetRow(text, row);
             Grid.SetRow(button, row);
             Grid.SetColumn(button, 1);

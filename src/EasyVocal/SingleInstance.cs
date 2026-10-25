@@ -31,7 +31,14 @@ public sealed class SingleInstance : IDisposable
 
     /// <summary>After this many pipe failures in a row the listener gives up (a second launch then just starts).</summary>
     private const int MaxPipeFailures = 5;
+    /// <summary>The lock is held: an EasyVocal is (very likely) there, maybe still starting its listener — wait for it.</summary>
     private static readonly TimeSpan WakeTimeout = TimeSpan.FromMilliseconds(500);
+    /// <summary>Only checking (we got the lock): a listener that exists answers at once.</summary>
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(100);
+    /// <summary>A client that connects and never writes can't hold the listener longer than this.</summary>
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(2);
+    /// <summary>The byte a second launch writes: "show your window". A connection without it (<see cref="IsRunning"/>) only asks.</summary>
+    private const byte ShowByte = 1;
 
     private readonly Names names;
     private readonly Mutex? mutex;
@@ -114,50 +121,102 @@ public sealed class SingleInstance : IDisposable
             WakeFirst(names);
             return null;
         }
-        FileStream file;
+        switch (TakeLock(names, out var file, out var problem))
+        {
+            case LockState.Held:
+                // Held by the running EasyVocal, or by something else. Only an answer on the pipe says another one runs
+                // (waiting a little: it may be starting its listener right now).
+                if (Knock(names, show: true, WakeTimeout)) return null;
+                AppLog.Info("The single-instance lock couldn't be taken and no EasyVocal answered: running without it (" + problem + ")");
+                return new SingleInstance(names, null);
+            case LockState.Unusable:
+                if (Knock(names, show: true, ProbeTimeout)) return null;
+                AppLog.Info("The single-instance lock can't be used here and no EasyVocal answered: running without it (" + problem + ")");
+                return new SingleInstance(names, null);
+            default:
+                // Locking may do nothing here (NFS, DOTNET_SYSTEM_IO_DISABLEFILELOCKING): an EasyVocal that answers wins.
+                // Usually there is none, so this is only a quick look (no wait at all when nobody ever listened).
+                if (Knock(names, show: true, ProbeTimeout))
+                {
+                    file!.Dispose();
+                    return null;
+                }
+                return new SingleInstance(names, file);
+        }
+    }
+
+    private enum LockState { Taken, Held, Unusable }
+
+    /// <summary>Tries the lock file: taken (the stream holds it), held by another process, or unusable (no rights...).</summary>
+    private static LockState TakeLock(Names names, out FileStream? file, out string? problem)
+    {
+        file = null;
+        problem = null;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(names.LockPath)!);
             file = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            return LockState.Taken;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (IOException ex)
         {
-            // Held by the running EasyVocal — or a lock we can't use. Only an answer on the pipe says another one runs.
-            if (WakeFirst(names)) return null;
-            AppLog.Info("The single-instance lock couldn't be taken and no EasyVocal answered: running without it (" + ex.Message + ")");
-            return new SingleInstance(names, null);
+            problem = ex.Message;
+            return LockState.Held;
         }
-        // Locking may do nothing here (NFS, DOTNET_SYSTEM_IO_DISABLEFILELOCKING): an EasyVocal that answers wins.
-        if (WakeFirst(names))
+        catch (UnauthorizedAccessException ex)
         {
-            file.Dispose();
-            return null;
+            problem = ex.Message;
+            return LockState.Unusable;
         }
-        return new SingleInstance(names, file);
     }
 
     /// <summary>A second launch: asks the running EasyVocal to show its window. True when one was there. Never throws.</summary>
     public static bool WakeFirst(Names? names = null)
     {
         names ??= Names.Default;
-        try
+        if (UsesMutex(names))
         {
-            if (UsesMutex(names))
+            try
             {
                 if (!EventWaitHandle.TryOpenExisting(names.ShowEventName, out var signal)) return false;
                 using (signal) signal.Set();
                 return true;
             }
+            catch (Exception) { return false; }
+        }
+        return Knock(names, show: true, WakeTimeout);
+    }
+
+    /// <summary>
+    /// Connects to the running EasyVocal's pipe; with <paramref name="show"/> asks it to show its window, else only looks
+    /// (nothing happens there). Where the pipe is a socket file (macOS, Linux) a missing file answers at once, without
+    /// waiting <paramref name="timeout"/>. True when an EasyVocal answered. Never throws.
+    /// </summary>
+    internal static bool Knock(Names names, bool show, TimeSpan timeout)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows() && !File.Exists(SocketPath(names.PipeName))) return false;
             using var pipe = new NamedPipeClientStream(".", names.PipeName, PipeDirection.Out);
-            pipe.Connect((int)WakeTimeout.TotalMilliseconds);
-            pipe.WriteByte(1);
-            pipe.Flush();
+            pipe.Connect((int)timeout.TotalMilliseconds);
+            if (show)
+            {
+                pipe.WriteByte(ShowByte);
+                pipe.Flush();
+            }
             return true;
         }
         catch (Exception) { return false; } // nobody listens (or it is closing): nothing to show
     }
 
-    /// <summary>Another EasyVocal runs now (for <c>--update-now</c>).</summary>
+    /// <summary>Where .NET puts a pipe's Unix socket (macOS, Linux): the temp folder, "CoreFxPipe_" and the name.</summary>
+    internal static string SocketPath(string pipeName) => Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + pipeName);
+
+    /// <summary>
+    /// Another EasyVocal runs now (for <c>--update-now</c>, which must neither swap files under a running one nor refuse
+    /// because of a stale lock). The same rules as <see cref="TryAcquire"/>: only an EasyVocal that answers its pipe
+    /// counts (asked without showing its window), whether the lock was free, held or unusable.
+    /// </summary>
     public static bool IsRunning(Names? names = null)
     {
         names ??= Names.Default;
@@ -167,13 +226,9 @@ public sealed class SingleInstance : IDisposable
             running.Dispose();
             return true;
         }
-        try
-        {
-            using var file = new FileStream(names.LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        }
-        catch (IOException) { return true; }
-        catch (UnauthorizedAccessException) { return false; }
-        return false;
+        var state = TakeLock(names, out var file, out _);
+        file?.Dispose();
+        return Knock(names, show: false, state == LockState.Held ? WakeTimeout : ProbeTimeout);
     }
 
     /// <summary>
@@ -186,19 +241,39 @@ public sealed class SingleInstance : IDisposable
         return "ev-" + Convert.ToHexString(hash, 0, 6).ToLowerInvariant();
     }
 
+    /// <summary>Connections read at the same time; while they are all busy the next one waits.</summary>
+    private const int MaxClients = 3;
+
     private async Task ListenAsync(CancellationToken ct)
     {
         int failures = 0;
+        using var slots = new SemaphoreSlim(MaxClients, MaxClients);
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                using var server = new NamedPipeServerStream(names.PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
-                var buffer = new byte[1];
-                _ = await server.ReadAsync(buffer, ct).ConfigureAwait(false);
+                await slots.WaitAsync(ct).ConfigureAwait(false);
+                NamedPipeServerStream server;
+                try
+                {
+                    // Several instances: the next one listens while a connection is still being read, so a client that
+                    // connects and says nothing never makes a real second launch wait (nor loses its wake).
+                    server = new NamedPipeServerStream(names.PipeName, PipeDirection.In, MaxClients + 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                }
+                catch
+                {
+                    slots.Release();
+                    throw;
+                }
+                try { await server.WaitForConnectionAsync(ct).ConfigureAwait(false); }
+                catch
+                {
+                    server.Dispose();
+                    slots.Release();
+                    throw;
+                }
                 failures = 0;
-                RaiseShow();
+                _ = ReadOneAsync(server, slots, ct);
             }
             catch (OperationCanceledException) { return; }
             catch (Exception ex)
@@ -214,6 +289,30 @@ public sealed class SingleInstance : IDisposable
             }
         }
     }
+
+    /// <summary>Reads one connection's byte (at most <see cref="ReadTimeout"/>), then frees its slot. Never throws.</summary>
+    private async Task ReadOneAsync(NamedPipeServerStream server, SemaphoreSlim slots, CancellationToken ct)
+    {
+        try
+        {
+            var buffer = new byte[1];
+            int read;
+            using (var patience = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                patience.CancelAfter(ReadTimeout);
+                try { read = await server.ReadAsync(buffer, patience.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { read = 0; } // connected and never wrote, or quitting
+            }
+            if (read == 1 && buffer[0] == ShowByte && !ct.IsCancellationRequested) RaiseShow(); // a mere look (IsRunning) shows nothing
+        }
+        catch (Exception ex) { AppLog.Info("A 'show the window' connection failed: " + ex.Message); }
+        finally
+        {
+            server.Dispose();
+            try { slots.Release(); } catch (ObjectDisposedException) { /* the listener has stopped */ }
+        }
+    }
+
 
     public void Dispose()
     {

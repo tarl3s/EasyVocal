@@ -93,7 +93,7 @@ internal sealed partial class AppSession
         window = new MainWindow(controller);
         if (!options.Hosted)
         {
-            try { tray = new Tray(controller, ShowMainWindow, () => _ = QuitAsync(ask: true)); }
+            try { tray = new Tray(controller, ShowMainWindow, () => FireAndForget.Watch(QuitAsync(ask: true), "Quitting")); }
             catch (Exception ex) { AppLog.Error("The tray icon could not be made", ex); }
         }
         // No tray icon to come back from: closing the window minimises it instead of hiding it.
@@ -142,6 +142,19 @@ internal sealed partial class AppSession
         return real with { Audio = audio, Startup = SmokeStartup() };
     }
 
+    /// <summary>An exception reached the UI thread or a watched task (any thread): the session's tests fail on it.</summary>
+    private static void CountUiError()
+    {
+        if (Current is { } session) Interlocked.Increment(ref session.uiErrors);
+    }
+
+    /// <summary>For the tests at their end: what the UI started without waiting has finished (its failures counted).</summary>
+    private static async Task SettleBackgroundAsync()
+    {
+        if (!await FireAndForget.SettleAsync(TimeSpan.FromSeconds(10)))
+            AppLog.Info(FireAndForget.Running + " background task(s) still running at the end of the test");
+    }
+
     /// <summary>App-wide hooks, once per process (a hosted relaunch starts a second session in the same process).</summary>
     private static void HookProcessOnce()
     {
@@ -150,14 +163,16 @@ internal sealed partial class AppSession
         Dispatcher.UIThread.UnhandledException += (_, e) =>
         {
             AppLog.Error("UI", e.Exception);
-            if (Current != null) Current.uiErrors++;
+            CountUiError();
             e.Handled = true; // keep running: the voice in the call matters more than one failed click
         };
         AppDomain.CurrentDomain.UnhandledException += (_, ev) => AppLog.Error("Unhandled", ev.ExceptionObject as Exception);
+        // What the UI starts and doesn't wait for goes through Background.Watch: its failures count right away.
+        FireAndForget.Failed += _ => CountUiError();
         TaskScheduler.UnobservedTaskException += (_, ev) =>
         {
             AppLog.Error("Background task", ev.Exception);
-            if (Current != null) Current.uiErrors++;
+            CountUiError();
             ev.SetObserved();
         };
         // Typing in one of our own boxes must not fire a plain-key hotkey: they are let go while a box has the keyboard.

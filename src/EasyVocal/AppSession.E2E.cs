@@ -507,6 +507,7 @@ internal sealed partial class AppSession
             E2ELog("FAIL quitting: " + ex.Message);
         }
         watcher.Stop();
+        await SettleBackgroundAsync();
         Record11("no exception reached the UI thread in the first run (" + uiErrors + " did)", uiErrors == 0);
         Record11("11 quit the normal way: the question, 'Don't ask again', everything closed", quitOk);
 
@@ -599,6 +600,7 @@ internal sealed partial class AppSession
             Expect(c.IsPlaying(soundId) && at700 > 0.25, "the custom sound plays on the call");
         });
 
+        await SettleBackgroundAsync();
         Record11("no exception reached the UI thread after the relaunch (" + uiErrors + " did)", uiErrors == 0);
         E2ELog(e2eFailed == 0 ? $"Relaunch passed: {e2ePassed} step(s)" : $"Relaunch FAILED: {e2eFailed} step(s)");
         Environment.ExitCode = e2eFailed == 0 ? 0 : 1;
