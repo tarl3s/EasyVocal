@@ -236,7 +236,11 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   makes the whole pack from `BaseModels` (RVC's Hugging Face files, SHA-256 = their LFS ids) with no Python.
 - **Pack install** (`Store/PackInstaller.cs`): the pack is a release of its own (tag `PackSource.Tag` = `ai-pack-v1`;
   assets `EasyVocal-AI-win-x64.zip`, `-macos-arm64.zip`, `-macos-x64.zip`, `-linux-x64.zip`; SHA-256 from the asset's
-  `digest` or a `<asset>.sha256` next to it, none = refused). Downloaded to `<data>/AI.download/` (resumable with a
+  `digest` or a `<asset>.sha256` next to it, none = refused). The release is looked up through api.github.com (60 requests an hour per
+  network without an account: shared addresses like the macOS CI runners get HTTP 403); when it refuses or can't be
+  reached, `PackSource.DirectBase` (the release's direct links: `<asset>.sha256` + a one-byte range for the size) is
+  used (`ApiFailure` says why). Each failure says what happened (no connection, timeout, too many requests, server
+  error, refusal) and keeps the URL, status, rate-limit headers and body in its inner exception for the log. Downloaded to `<data>/AI.download/` (resumable with a
   range; the `.part` records the SHA-256 it is meant to become in `.part.sha256`, a part of another file is dropped;
   wrong bytes never resumed; a whole zip left from before is hashed off the UI thread, "Checking the download…"),
   unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE (fp16-stored or not), base generator,
