@@ -181,7 +181,7 @@ public class StreamingTests
         output.WriteLine($"slowest Process {maxMs:0.000} ms, allocated {allocated} bytes on the audio thread; {c.Stats}");
         Assert.True(maxMs < (Helpers.RealModels.OnCi ? 25 : 8), $"Process took {maxMs} ms");
         Assert.True(allocated < 2048, $"allocated {allocated} bytes");
-        Assert.True(c.Stats.Overloads + c.Stats.Underruns > 0, "the slow worker shows in the stats");
+        Assert.True(c.Stats.Overloads + c.Stats.Underruns > 0 || !c.Stats.Ready, "the slow worker shows in the stats (gaps, or it never got ready)");
         Assert.All(x, v => Assert.True(float.IsFinite(v)));
     }
 

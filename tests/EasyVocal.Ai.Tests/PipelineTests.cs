@@ -106,7 +106,8 @@ public class PipelineTests
                          $"overloads {st.Overloads}, clicks {clicks * 100:0.00} %, pitch spread {spread:0} cents (voiced {voiced:0.00}), " +
                          $"timbre to offline {dStream:0.0} (input {dInput:0.0}); slowest Process {maxMs:0.00} ms; {st.Provider}, {st.Pitch}");
 
-        Assert.True(st.Ready && st.Error == null, st.ToString());
+        Assert.True(st.Error == null, st.ToString());
+        Assert.True(st.Ready || st.Overloads > 0, "it plays, or the runner is too slow for this level (it skipped ahead): " + st);
         Assert.True(Signals.AllFinite(y));
         // a runner too slow for this level (overloads, many under-runs: the last converted audio fills in) can only show that nothing breaks
         bool keptUp = st.Overloads == 0 && st.Underruns <= 3;
@@ -154,12 +155,13 @@ public class PipelineTests
         var st = conv.Stats;
         int gaps = st.Underruns - warmUnderruns;
         output.WriteLine($"Light on the CPU: {st}; gaps after warming up {gaps}; reported latency {conv.LatencyMs:0} ms; benchmark: {light}");
-        Assert.True(st.Ready && st.Error == null, st.ToString());
+        Assert.True(st.Error == null, st.ToString());
         if (light is not { RealTime: true })
         {
             output.WriteLine("this computer can't run Light in real time (benchmark): only reported");
             return;
         }
+        Assert.True(st.Ready, st.ToString());
         Assert.Equal(0, st.Overloads);
         Assert.True(gaps == 0, $"{gaps} gaps after warming up");
         Assert.True(conv.LatencyMs <= 450, $"Light reports {conv.LatencyMs:0} ms, over its 450 ms budget");
