@@ -29,6 +29,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The tiny AI test models: the headless e2e run tests the AI voices with them. -->
+    <None Include="..\EasyVocal.Ai.Tests\Fixtures\tiny.pth;..\EasyVocal.Ai.Tests\Fixtures\tiny_hubert.onnx;..\EasyVocal.Ai.Tests\Fixtures\tiny_rmvpe.onnx;..\EasyVocal.Ai.Tests\Fixtures\tiny_enc.onnx.gz;..\EasyVocal.Ai.Tests\Fixtures\tiny_dec.onnx.gz"
+          LinkBase="AiFixtures" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

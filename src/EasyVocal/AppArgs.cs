@@ -31,11 +31,14 @@ internal sealed class AppArgs
     /// The tests add and remove items: they may only run on a scratch folder given with <c>--data</c>, never on
     /// the person's real settings. When this is false the app must refuse to start (exit code 2).
     /// </summary>
+    /// <summary><c>--e2e-ai &lt;folder&gt;</c>: the tiny AI test models (tests/EasyVocal.Ai.Tests/Fixtures): the e2e run also tests the AI voices.</summary>
+    public string? AiFixtures { get; private init; }
+
     public bool Allowed => !TestMode || DataFolder != null;
 
     public static AppArgs Parse(IReadOnlyList<string> args)
     {
-        string? data = null;
+        string? data = null, aiFixtures = null;
         bool smoke = false, e2e = false, relaunch = false, hidden = false, updateCheck = false, updateNow = false;
         for (int i = 0; i < args.Count; i++)
         {
@@ -43,11 +46,12 @@ internal sealed class AppArgs
             else if (args[i] == "--smoketest") smoke = true;
             else if (args[i] == "--e2e") e2e = true;
             else if (args[i] == "--e2e-relaunch") e2e = relaunch = true;
+            else if (args[i] == "--e2e-ai" && i + 1 < args.Count) aiFixtures = Path.GetFullPath(args[++i]);
             else if (args[i] == "--tray") hidden = true;
             else if (args[i] == "--update-check") updateCheck = true;
             else if (args[i] == "--update-now") updateNow = true;
         }
         return new AppArgs { DataFolder = data, SmokeTest = smoke, E2E = e2e, E2ERelaunch = relaunch, StartHidden = hidden,
-            UpdateCheck = updateCheck, UpdateNow = updateNow };
+            UpdateCheck = updateCheck, UpdateNow = updateNow, AiFixtures = aiFixtures };
     }
 }

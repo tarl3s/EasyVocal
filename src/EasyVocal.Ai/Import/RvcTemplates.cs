@@ -79,6 +79,8 @@ public static class RvcTemplates
     /// <summary>Speaker <paramref name="index"/> of a generator's speaker table (256 values).</summary>
     public static float[] SpeakerVector(Weight table, int index)
     {
+        if (table.Shape.Length != 2 || table.Shape[1] < 1 || table.Shape[0] < 1 || table.Count != table.Shape[0] * table.Shape[1])
+            throw new InvalidDataException("The voice's speaker table has the wrong shape.");
         int dim = (int)table.Shape[^1];
         int count = (int)(table.Count / dim);
         if (index < 0 || index >= count) throw new ArgumentOutOfRangeException(nameof(index));

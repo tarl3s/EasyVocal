@@ -70,6 +70,7 @@ public class HeadlessAppTests
         {
             Hosted = true,
             Platform = Platform(devices),
+            AiFixtures = mode == "--e2e" ? Path.Combine(AppContext.BaseDirectory, "AiFixtures") : null,
             RelaunchHosted = async relaunch =>
             {
                 Environment.ExitCode = 0;

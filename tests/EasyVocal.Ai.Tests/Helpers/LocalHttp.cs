@@ -20,6 +20,7 @@ public sealed class LocalHttp : IDisposable
 
     public LocalHttp()
     {
+        EasyVocal.Ai.Store.Downloader.AllowLoopbackHttp = true; // only the tests download over plain http (to this computer)
         listener.Start();
         _ = Task.Run(AcceptLoop);
     }

@@ -46,6 +46,13 @@ public sealed class TorchCheckpoint
     private sealed class Opaque { public object? Cls, Args, State; }
     private sealed class Mark { }
 
+    /// <summary>Largest data.pkl read (an RVC .pth's is a few kB; HuBERT's well under 1 MB).</summary>
+    private const long MaxPickleBytes = 8L * 1024 * 1024;
+    /// <summary>Most bytes all tensors' storages may take together once unpacked.</summary>
+    public const long MaxTotalBytes = 1536L * 1024 * 1024;
+    /// <summary>Most objects / stack entries / memo entries the pickle machine keeps (a real checkpoint: thousands).</summary>
+    private const int MaxObjects = 4_000_000, MaxStack = 1_000_000, MaxMemo = 1_000_000;
+
     public static TorchCheckpoint Load(string path, CancellationToken ct = default)
     {
         ZipArchive zip;
@@ -56,12 +63,23 @@ public sealed class TorchCheckpoint
             var pkl = zip.Entries.FirstOrDefault(e => e.FullName.EndsWith("data.pkl", StringComparison.Ordinal))
                       ?? throw new InvalidDataException("No data.pkl inside: not a PyTorch checkpoint.");
             string prefix = pkl.FullName[..^"data.pkl".Length];
-            var root = Unpickle(ReadAll(pkl, 64L * 1024 * 1024));
+            var root = Unpickle(ReadAll(pkl, pkl.Length, MaxPickleBytes));
             var ck = new TorchCheckpoint();
             if (root is Dictionary<object, object?> d)
                 foreach (var kv in d) ck.Root[kv.Key.ToString() ?? ""] = kv.Value;
             object? sdObj = ck.Root.GetValueOrDefault("weight") ?? ck.Root.GetValueOrDefault("model") ?? ck.Root.GetValueOrDefault("state_dict") ?? root;
             if (sdObj is not Dictionary<object, object?> sd) throw new InvalidDataException("No weights (state dict) inside.");
+            // What each storage must hold for the tensors that use it: only that much is ever read.
+            var needed = new Dictionary<string, long>();
+            foreach (var kv in sd)
+                if (kv.Value is TensorRef t)
+                    needed[t.Storage] = Math.Max(needed.GetValueOrDefault(t.Storage), BytesNeeded(t));
+            long total = 0;
+            foreach (var n in needed.Values)
+            {
+                total = checked(total + n);
+                if (total > MaxTotalBytes) throw new InvalidDataException("The model is too big.");
+            }
             var storages = new Dictionary<string, byte[]>();
             foreach (var kv in sd)
             {
@@ -70,7 +88,7 @@ public sealed class TorchCheckpoint
                 if (!storages.TryGetValue(t.Storage, out var raw))
                 {
                     var e = zip.GetEntry(prefix + "data/" + t.Storage) ?? throw new InvalidDataException("Missing storage " + t.Storage);
-                    storages[t.Storage] = raw = ReadAll(e, 2L * 1024 * 1024 * 1024 - 64);
+                    storages[t.Storage] = raw = ReadAll(e, needed[t.Storage], int.MaxValue - 64);
                 }
                 ck.Tensors[kv.Key.ToString() ?? ""] = new Weight(Materialize(raw, t), t.Size);
             }
@@ -78,11 +96,36 @@ public sealed class TorchCheckpoint
         }
     }
 
-    private static byte[] ReadAll(ZipArchiveEntry e, long max)
+    /// <summary>
+    /// The bytes of its storage a tensor reaches (offset + the farthest element), checked: sizes and strides must be
+    /// non-negative, and a tensor at most <see cref="MaxElements"/> elements.
+    /// </summary>
+    private static long BytesNeeded(TensorRef t)
     {
-        if (e.Length > max) throw new InvalidDataException("A part of the file is too big.");
+        if (t.Size.Length != t.Stride.Length || t.Offset < 0) throw new InvalidDataException("Bad tensor layout.");
+        long n = 1, far = t.Offset;
+        try
+        {
+            for (int i = 0; i < t.Size.Length; i++)
+            {
+                if (t.Size[i] < 0 || t.Stride[i] < 0) throw new InvalidDataException("Bad tensor layout.");
+                n = checked(n * t.Size[i]);
+                if (n > MaxElements) throw new InvalidDataException("A tensor is too big.");
+                if (t.Size[i] > 0) far = checked(far + (t.Size[i] - 1) * t.Stride[i]);
+            }
+            return n == 0 ? 0 : checked((far + 1) * ElementSize(t.Dtype));
+        }
+        catch (OverflowException) { throw new InvalidDataException("Bad tensor layout."); }
+    }
+
+    /// <summary>The first <paramref name="want"/> bytes of an entry (it must have them); at most <paramref name="max"/>.</summary>
+    private static byte[] ReadAll(ZipArchiveEntry e, long want, long max)
+    {
+        if (want > max) throw new InvalidDataException("A part of the file is too big.");
+        long take = Math.Min(want, e.Length);
+        if (take < want) throw new InvalidDataException("A tensor points outside its storage.");
         using var s = e.Open();
-        var b = new byte[e.Length];
+        var b = new byte[take];
         int at = 0;
         while (at < b.Length)
         {
@@ -171,6 +214,7 @@ public sealed class TorchCheckpoint
     {
         var stack = new List<object?>();
         var memo = new Dictionary<long, object?>();
+        int ops = 0;
         int p = 0;
         object? Pop()
         {
@@ -200,6 +244,7 @@ public sealed class TorchCheckpoint
         {
             Need(1);
             byte op = b[p++];
+            if (++ops > MaxObjects || stack.Count > MaxStack || memo.Count > MaxMemo) throw new InvalidDataException("Damaged pickle (too many objects).");
             switch (op)
             {
                 case 0x80: Need(1); p++; break;                                           // PROTO

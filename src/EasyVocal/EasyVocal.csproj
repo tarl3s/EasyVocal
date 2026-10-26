@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Lang\*.json" LogicalName="EasyVocal.Lang.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\THIRD-PARTY-NOTICES.md" LogicalName="EasyVocal.THIRD-PARTY-NOTICES.md" />
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 

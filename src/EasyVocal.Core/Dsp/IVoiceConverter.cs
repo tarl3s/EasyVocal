@@ -49,6 +49,9 @@ public interface IVoiceConverterSource
     /// <summary>Loads the voice (seconds: models are read and prepared) off the caller's thread.</summary>
     Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct);
 
+    /// <summary>The same, on the processor only when <paramref name="cpuOnly"/> (the retry after a graphics card failed).</summary>
+    Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) => CreateAsync(aiVoiceId, quality, ct);
+
     /// <summary>Adds a voice card (<see cref="Model.VoiceKind.Ai"/>) for each installed AI voice that has none; true when it added one.</summary>
     bool SyncPresets(Model.AppSettings settings);
 }

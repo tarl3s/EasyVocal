@@ -175,6 +175,8 @@ public static class SettingsStore
     private static AppSettings Normalize(AppSettings s)
     {
         s.GeneralHotkeys ??= new();
+        s.Ai ??= new();
+        s.Ai.MeasuredBlockMs ??= new();
         s.WindowPlacements = KeepSaneBoxes(s.WindowPlacements);
         s.Voices = MergeVoices(s.Voices ?? new());
         s.Sounds = MergeSounds(s.Sounds ?? new());
@@ -193,7 +195,7 @@ public static class SettingsStore
             b.Hotkey = f.Hotkey;
         }, v =>
         {
-            v.BuiltIn = false;
+            if (v.Kind != VoiceKind.Ai) v.BuiltIn = false; // a bundled AI voice's card stays built-in (hidden, never deleted)
             v.Sliders = (v.Sliders ?? new VoiceSliders()).Clamp();
         });
 

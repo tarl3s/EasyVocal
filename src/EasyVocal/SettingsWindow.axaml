@@ -36,11 +36,36 @@
                     <TextBlock x:Name="UpdateStatus" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" Classes="dim" />
                 </DockPanel>
 
+                <StackPanel x:Name="AiPanel" IsVisible="False">
+                    <TextBlock Text="{loc:T 'AI voices'}" Classes="section" Margin="0,22,0,0" />
+                    <TextBlock x:Name="AiMissingText" Text="{loc:T 'AI mode isn’t installed. Download it from the Voices tab.'}" Classes="dim"
+                               TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <StackPanel x:Name="AiControls">
+                        <TextBlock Text="{loc:T 'AI quality'}" Classes="label" Margin="0,10,0,0" />
+                        <ComboBox x:Name="AiQualityBox" Margin="0,6,0,0" HorizontalAlignment="Stretch" SelectionChanged="AiQualityBox_SelectionChanged" />
+                        <TextBlock Text="{loc:T 'Device'}" Classes="label" Margin="0,14,0,0" />
+                        <ComboBox x:Name="AiDeviceBox" Margin="0,6,0,0" HorizontalAlignment="Stretch" SelectionChanged="AiDeviceBox_SelectionChanged" />
+                        <CheckBox x:Name="HearAiBox" Margin="0,14,0,0" Click="HearAiBox_Click">
+                            <TextBlock Text="{loc:T 'Hear me plays the AI voice itself (it comes a little late, which makes talking harder)'}" TextWrapping="Wrap" />
+                        </CheckBox>
+                        <DockPanel Margin="0,12,0,0" LastChildFill="True">
+                            <Button x:Name="TestPcButton" DockPanel.Dock="Left" Content="{loc:T 'Test my PC'}" Click="TestPcButton_Click" />
+                            <TextBlock x:Name="TestPcText" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" Classes="dim" />
+                        </DockPanel>
+                        <DockPanel Margin="0,10,0,0" LastChildFill="True">
+                            <Button x:Name="RemoveAiButton" DockPanel.Dock="Left" Content="{loc:T 'Remove AI mode…'}" Click="RemoveAiButton_Click" />
+                            <TextBlock x:Name="AiSizeText" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" Classes="dim" />
+                        </DockPanel>
+                    </StackPanel>
+                </StackPanel>
+
                 <TextBlock Text="{loc:T 'Hotkeys'}" Classes="section" Margin="0,22,0,0" />
                 <Grid x:Name="HotkeyGrid" Margin="0,8,0,0" ColumnDefinitions="*,Auto" />
 
-                <Button x:Name="SetupAgainButton" HorizontalAlignment="Left" Margin="0,22,0,0" Content="{loc:T 'Open setup again'}"
-                        Click="SetupAgainButton_Click" />
+                <WrapPanel Margin="0,22,0,0">
+                    <Button x:Name="SetupAgainButton" Margin="0,0,8,8" Content="{loc:T 'Open setup again'}" Click="SetupAgainButton_Click" />
+                    <Button x:Name="CreditsButton" Margin="0,0,8,8" Content="{loc:T 'Credits and licences'}" Click="CreditsButton_Click" />
+                </WrapPanel>
             </StackPanel>
         </ScrollViewer>
 

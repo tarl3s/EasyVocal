@@ -48,9 +48,16 @@ public sealed class VoiceImporter
         var work = WorkFolder();
         try
         {
-            var path = Path.Combine(work, fileName);
+            var path = Path.Combine(work, "download.bin");
             var p = progress == null ? null : new InlineProgress<DownloadProgress>(d => progress.Report(new ImportProgress(ImportStage.Downloading, d.Done, d.Total)));
-            await Downloader.DownloadAsync(url, path, MaxDownloadBytes, null, p, ct, client).ConfigureAwait(false);
+            var info = new DownloadInfo();
+            await Downloader.DownloadAsync(url, path, MaxDownloadBytes, null, p, ct, client, info).ConfigureAwait(false);
+            // The name it is known by: the server's, else the link's; a name without a voice extension is told by its bytes.
+            string name0 = info.ServerFileName ?? fileName;
+            if (!Known(name0) && Downloader.Sniff(path) is string ext) name0 = Path.GetFileNameWithoutExtension(name0) + ext;
+            var named = Path.Combine(work, Core.Storage.FileNames.IsPlain(name0) ? name0 : "download" + Path.GetExtension(name0));
+            File.Move(path, named);
+            path = named;
             return await Task.Run(() => ImportFiles(new[] { path }, name, emoji, url.ToString(), progress, ct), ct).ConfigureAwait(false);
         }
         finally
@@ -58,6 +65,8 @@ public sealed class VoiceImporter
             Core.Storage.Cleanup.TryDelete(work);
         }
     }
+
+    private static bool Known(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() is ".pth" or ".onnx" or ".index" or ".zip";
 
     private string WorkFolder()
     {
@@ -120,12 +129,18 @@ public sealed class VoiceImporter
             else
             {
                 foreach (var o in onnx) CheckSize(o, MaxModelBytes);
-                var kinds = onnx.Select(o => (Path: o, Inputs: OnnxRewriter.InputNames(File.ReadAllBytes(o)))).ToList();
+                var kinds = onnx.Select(o =>
+                {
+                    var bytes = File.ReadAllBytes(o);
+                    if (OnnxRewriter.HasExternalData(bytes)) throw new NotSupportedException("This ONNX voice keeps its weights in separate files, which EasyVocal doesn't open. Use the voice's .pth file instead.");
+                    return (Path: o, Inputs: OnnxRewriter.InputNames(bytes));
+                }).ToList();
                 var enc = kinds.FirstOrDefault(k => k.Inputs.Contains("phone") && k.Inputs.Contains("lengths") && !k.Inputs.Contains("ds"));
                 var dec = kinds.FirstOrDefault(k => k.Inputs.Contains("z_p") && k.Inputs.Contains("nsff0"));
                 if (enc.Path != null && dec.Path != null)
                 {
-                    int sr = ProbeRate(dec.Path, pair: true);
+                    int sr = ProbeRate(dec.Path);
+                    RunOnce(enc.Path); // the encoder must run too
                     m.Kind = VoiceKinds.OnnxPair;
                     m.SampleRate = sr;
                     copies.Add((enc.Path, "enc", "enc.onnx"));
@@ -145,7 +160,7 @@ public sealed class VoiceImporter
                         throw new NotSupportedException("This ONNX file isn't an RVC voice EasyVocal knows (inputs: " + string.Join(", ", kinds[0].Inputs) + ").");
                     }
                     m.Kind = VoiceKinds.OnnxSingle;
-                    m.SampleRate = ProbeRate(single.Path, pair: false);
+                    m.SampleRate = ProbeRate(single.Path);
                     copies.Add((single.Path, "model", "model.onnx"));
                 }
             }
@@ -195,33 +210,56 @@ public sealed class VoiceImporter
         if (len > max) throw new InvalidDataException($"{Path.GetFileName(path)} is too big ({len / 1048576} MB).");
     }
 
-    /// <summary>The model files inside a zip, written under our own names (the zip's paths are never used).</summary>
+    /// <summary>Most entries a voice's zip may list (a voice has a handful of files).</summary>
+    public const int MaxZipEntries = 2000;
+
+    /// <summary>
+    /// The model files inside a zip, written under our own names (the zip's paths are never used): only the ones an
+    /// import would pick (the biggest .pth, the .onnx files, the best .index, speaker.f32), each and all together
+    /// within the size limits, checked while unpacking too (a zip may lie about its sizes).
+    /// </summary>
     private static List<string> Unzip(string zipPath, string work, CancellationToken ct)
     {
         var o = new List<string>();
         using var zip = ZipFile.OpenRead(zipPath);
+        if (zip.Entries.Count > MaxZipEntries) throw new InvalidDataException("This zip has too many files to be a voice.");
+        static string Ext(ZipArchiveEntry e) => Path.GetExtension(e.Name).ToLowerInvariant();
+        static bool Speaker(ZipArchiveEntry e) => e.Name.Equals("speaker.f32", StringComparison.OrdinalIgnoreCase);
+        var models = zip.Entries.Where(e => e.Name.Length > 0 && !e.Name.StartsWith("D_", StringComparison.Ordinal) && !e.Name.StartsWith("G_", StringComparison.Ordinal)).ToList(); // G_/D_: training checkpoints
+        var picked = new List<ZipArchiveEntry>();
+        if (models.Where(e => Ext(e) == ".pth").MaxBy(e => e.Length) is { } pth) picked.Add(pth);
+        picked.AddRange(models.Where(e => Ext(e) == ".onnx").Take(4));
+        if (models.Where(e => Ext(e) == ".index").MaxBy(e => (e.Name.StartsWith("added", StringComparison.OrdinalIgnoreCase) ? 1L << 40 : 0) + e.Length) is { } index) picked.Add(index);
+        if (models.FirstOrDefault(Speaker) is { } spk) picked.Add(spk);
+        long total = 0;
+        foreach (var e in picked)
+        {
+            long max = Ext(e) == ".index" ? MaxIndexBytes : MaxModelBytes;
+            if (e.Length > max) throw new InvalidDataException($"{e.Name} is too big ({e.Length / 1048576} MB).");
+            total += e.Length;
+        }
+        if (total > MaxDownloadBytes) throw new InvalidDataException("What is in this zip is too big.");
+        long written = 0;
         int n = 0;
-        foreach (var e in zip.Entries)
+        foreach (var e in picked)
         {
             ct.ThrowIfCancellationRequested();
-            var ext = Path.GetExtension(e.Name).ToLowerInvariant();
-            if (ext is not (".pth" or ".onnx" or ".index") && !e.Name.Equals("speaker.f32", StringComparison.OrdinalIgnoreCase)) continue;
-            if (e.Name.StartsWith("D_", StringComparison.Ordinal) || e.Name.StartsWith("G_", StringComparison.Ordinal)) continue; // training checkpoints
+            var ext = Ext(e);
             long max = ext == ".index" ? MaxIndexBytes : MaxModelBytes;
-            if (e.Length > max) throw new InvalidDataException($"{e.Name} is too big ({e.Length / 1048576} MB).");
-            var safe = e.Name.Equals("speaker.f32", StringComparison.OrdinalIgnoreCase) ? "speaker.f32" : $"{n++}_{Sanitize(Path.GetFileNameWithoutExtension(e.Name))}{ext}";
+            var safe = Speaker(e) ? "speaker.f32" : $"{n++}_{Sanitize(Path.GetFileNameWithoutExtension(e.Name))}{ext}";
             var dst = Path.Combine(work, safe);
             using (var src = e.Open())
-            using (var f = File.Create(dst))
+            using (var file = File.Create(dst))
             {
                 var buf = new byte[1 << 16];
-                long total = 0;
+                long got = 0;
                 int r;
                 while ((r = src.Read(buf, 0, buf.Length)) > 0)
                 {
-                    total += r;
-                    if (total > max) throw new InvalidDataException($"{e.Name} is too big.");
-                    f.Write(buf, 0, r);
+                    got += r;
+                    written += r;
+                    if (got > max || got > e.Length || written > MaxDownloadBytes) throw new InvalidDataException($"{e.Name} is too big.");
+                    file.Write(buf, 0, r);
                 }
             }
             o.Add(dst);
@@ -256,21 +294,21 @@ public sealed class VoiceImporter
     }
 
     /// <summary>The output rate of an ONNX generator: run it once on 10 frames and divide the samples by 10 ms.</summary>
-    private static int ProbeRate(string path, bool pair)
+    private static int ProbeRate(string path) => Rate(RunOnce(path) / ProbeFrames);
+
+    private const int ProbeFrames = 10;
+
+    /// <summary>
+    /// Runs a voice's ONNX graph once on <see cref="ProbeFrames"/> frames of silence (inputs filled by their RVC names)
+    /// and checks it gives finite numbers; returns how many output values came out. Only float32 / int64 inputs.
+    /// </summary>
+    private static int RunOnce(string path)
     {
         using var model = OrtRuntime.CreateFromFile("import check", path, AiDevice.Cpu, 2);
         foreach (var (name, meta) in model.InputMetadata)
             if (meta.ElementDataType is not (TensorElementType.Float or TensorElementType.Int64))
-                throw new NotSupportedException($"This ONNX voice uses {meta.ElementDataType} inputs ({name}); only float32 models are supported (use the .pth).");
-        const int frames = 10;
-        if (pair)
-        {
-            using var zp = OrtValue.CreateTensorValueFromMemory(new float[RvcGenerator.Inter * frames], new long[] { 1, RvcGenerator.Inter, frames });
-            using var f0 = OrtValue.CreateTensorValueFromMemory(new float[frames], new long[] { 1, frames });
-            using var gv = OrtValue.CreateTensorValueFromMemory(new float[RvcGenerator.Gin], new long[] { 1, RvcGenerator.Gin, 1 });
-            using var r = model.Run(new[] { "z_p", "nsff0", "g" }, new[] { zp, f0, gv }, new[] { model.OutputNames[0] });
-            return Rate(r.First().GetTensorDataAsSpan<float>().Length / frames);
-        }
+                throw new NotSupportedException("This ONNX voice isn't stored as float32 (it is fp16 or another type). Use the voice's .pth file instead.");
+        const int frames = ProbeFrames;
         var names = model.InputNames;
         var ins = new List<OrtValue>();
         try
@@ -281,22 +319,26 @@ public sealed class VoiceImporter
                 long[] shape = n switch
                 {
                     "phone" or "feats" => new long[] { 1, frames, ContentEncoder.Dim },
-                    "rnd" => new long[] { 1, RvcGenerator.Inter, frames },
+                    "rnd" or "z_p" => new long[] { 1, RvcGenerator.Inter, frames },
                     "pitch" or "pitchf" or "nsff0" => new long[] { 1, frames },
+                    "g" => new long[] { 1, RvcGenerator.Gin, 1 },
                     _ => new long[] { 1 },
                 };
                 long count = shape.Aggregate(1L, (a, b) => a * b);
                 if (meta.ElementDataType == TensorElementType.Int64)
                 {
                     var data = new long[count];
-                    if (n is "phone_lengths" or "p_len") data[0] = frames;
+                    if (n is "phone_lengths" or "p_len" or "lengths") data[0] = frames;
                     if (n == "pitch") Array.Fill(data, 1L);
                     ins.Add(OrtValue.CreateTensorValueFromMemory(data, shape));
                 }
                 else ins.Add(OrtValue.CreateTensorValueFromMemory(new float[count], shape));
             }
             using var r = model.Run(names.ToArray(), ins.ToArray(), new[] { model.OutputNames[0] });
-            return Rate(r.First().GetTensorDataAsSpan<float>().Length / frames);
+            var outp = r.First().GetTensorDataAsSpan<float>();
+            foreach (var v in outp)
+                if (!float.IsFinite(v)) throw new InvalidDataException("The voice's model gives broken audio.");
+            return outp.Length;
         }
         finally
         {

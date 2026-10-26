@@ -67,6 +67,7 @@ public partial class MainWindow : AppWindow
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
 
+        SizeChanged += (_, _) => UpdateAiReadout(); // a narrow window keeps the level meter instead
         controller.Changed += UpdateAll;
         UpdateAll();
     }
@@ -147,9 +148,9 @@ public partial class MainWindow : AppWindow
     private string LayoutKey()
     {
         var sb = new StringBuilder();
-        sb.Append(showHidden).Append('|').Append(L.Language).Append('|');
+        sb.Append(showHidden).Append('|').Append(L.Language).Append('|').Append(controller.Ai == null ? "-" : controller.Ai.PackInstalled ? "ai" : "noai").Append('|');
         foreach (var v in controller.Settings.Voices)
-            sb.Append(v.Id).Append(',').Append(v.Name).Append(',').Append(v.Emoji).Append(',').Append(v.Hidden).Append(',').Append(v.Hotkey).Append(';');
+            sb.Append(v.Id).Append(',').Append(v.Name).Append(',').Append(v.Emoji).Append(',').Append(v.Hidden).Append(',').Append(v.Hotkey).Append(',').Append(v.Kind).Append(';');
         sb.Append('#');
         foreach (var s in controller.Settings.Sounds)
             sb.Append(s.Id).Append(',').Append(s.Name).Append(',').Append(s.Emoji).Append(',').Append(s.Hidden).Append(',').Append(s.Hotkey)
@@ -167,6 +168,7 @@ public partial class MainWindow : AppWindow
         ShowHiddenVoices.IsChecked = showHidden;
         ShowHiddenSounds.IsChecked = showHidden;
         SoundsUseVoiceBox.IsChecked = controller.SoundsUseVoice;
+        UpdateAiReadout();
 
         var problems = controller.HotkeyProblems;
         HotkeyNote.IsVisible = problems.Count > 0;
@@ -211,14 +213,16 @@ public partial class MainWindow : AppWindow
                 ShowBanner(L.F("Your microphone isn't connected, so EasyVocal is using {0} for now.", standIn), fix: false, chooseMic: true);
                 break;
             default:
-                Banner.IsVisible = false;
+                if (controller.AiProblem is string ai) ShowBanner("🧠 " + AiText.Friendly(ai), fix: false, chooseMic: false, dismiss: true);
+                else Banner.IsVisible = false;
                 break;
         }
     }
 
-    private void ShowBanner(string text, bool fix, bool chooseMic, bool privacy = false)
+    private void ShowBanner(string text, bool fix, bool chooseMic, bool privacy = false, bool dismiss = false)
     {
         BannerText.Text = text;
+        DismissButton.IsVisible = dismiss;
         FixButton.IsVisible = fix;
         MicButton.IsVisible = chooseMic;
         PrivacyButton.IsVisible = privacy;
@@ -245,8 +249,10 @@ public partial class MainWindow : AppWindow
     {
         VoicePanel.Children.Clear();
         voiceCards.Clear();
+        aiCardIds.Clear();
         foreach (var v in ItemOps.VisibleVoices(controller.Settings, showHidden))
         {
+            if (v.Kind == VoiceKind.Ai) continue; // in the AI section
             var id = v.Id;
             var card = MakeCard(v.Emoji, AppController.DisplayName(v), v.Hotkey, v.Hidden, () => VoiceMenu(v));
             card.Button.Click += (_, _) =>
@@ -259,7 +265,7 @@ public partial class MainWindow : AppWindow
             VoicePanel.Children.Add(card.Button);
         }
         VoicePanel.Children.Add(MakeAddCard(L.T("New filter"), NewFilter_Click));
-        VoicePanel.Children.Add(MakeComingLaterCard());
+        BuildAiSection();
     }
 
     private void BuildSounds()
@@ -291,6 +297,7 @@ public partial class MainWindow : AppWindow
         var active = controller.ActiveVoice.Id;
         foreach (var (id, card) in voiceCards)
             card.Button.BorderBrush = id == active ? accent : Brushes.Transparent;
+        UpdateAiCards();
         foreach (var (id, card) in soundCards)
         {
             bool playing = controller.IsPlaying(id);
@@ -445,29 +452,9 @@ public partial class MainWindow : AppWindow
         return button;
     }
 
-    /// <summary>Keeps the AI pack's place: a disabled card.</summary>
-    private static Border MakeComingLaterCard()
-    {
-        var dim = Res.Brush("TextDim");
-        var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-        stack.Children.Add(EmojiPlate("🧠", 26, 38, 0.5));
-        stack.Children.Add(new TextBlock { Text = L.T("AI voices"), FontSize = 12.5, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
-        stack.Children.Add(new TextBlock { Text = L.T("coming later"), FontSize = 11, Foreground = dim, HorizontalAlignment = HorizontalAlignment.Center });
-        var card = new Border
-        {
-            Width = 110,
-            Height = 96,
-            Margin = new Thickness(0, 0, 8, 8),
-            CornerRadius = new CornerRadius(8),
-            Background = Res.Brush("Bg1"),
-            Child = stack,
-        };
-        ToolTip.SetTip(card, L.T("Realistic AI voices will be an optional download in a later version."));
-        return card;
-    }
-
     private ContextMenu VoiceMenu(VoicePreset v)
     {
+        if (v.Kind == VoiceKind.Ai) return AiVoiceMenu(v);
         var id = v.Id;
         var menu = new ContextMenu();
         menu.Items.Add(MenuItem(L.T("Edit…"), () => EditVoice(id)));

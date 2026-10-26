@@ -3,8 +3,8 @@
   "base": "rvc-v2-40k",
   "baseSha256": "3b2c44035e782c4b14ddc0bede9e2f4a724d025cd073f736d4f43708453adfcb",
   "source": "RVC v2 base generator f0G40k (lj1995/VoiceConversionWebUI), speaker vectors blended",
-  "licence": "Voice data: CC BY 4.0 (CSTR VCTK Corpus). Model: MIT (RVC-Project).",
-  "attribution": "Derived from the CSTR VCTK Corpus (Junichi Yamagishi, Christophe Veaux, Kirsten MacDonald; University of Edinburgh, Centre for Speech Technology Research), CC BY 4.0, https://doi.org/10.7488/ds/2645 — modified: a blend of several speakers' voice vectors in the RVC v2 pretrained model (MIT, RVC-Project), so the voice belongs to no single speaker.",
+  "licence": "Voice data: CC BY 4.0 (CSTR VCTK Corpus, https://creativecommons.org/licenses/by/4.0/). Model: MIT (RVC-Project, https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/blob/main/LICENSE).",
+  "attribution": "Derived from the CSTR VCTK Corpus (Junichi Yamagishi, Christophe Veaux, Kirsten MacDonald; University of Edinburgh, Centre for Speech Technology Research), CC BY 4.0, https://doi.org/10.7488/ds/2645 — modified: a blend of several speakers' voice vectors in the RVC v2 pretrained model (MIT, RVC-Project), made to sound like none of them in particular.",
   "voices": [
     { "id": "ai-bright-young-woman", "name": "Bright young woman", "emoji": "👩", "targetHz": 230, "description": "A bright, lively young woman's voice.", "mix": [[94, 0.65], [98, 0.35]] },
     { "id": "ai-warm-woman", "name": "Warm woman", "emoji": "👩‍🦰", "targetHz": 200, "description": "A warm, rounder woman's voice.", "mix": [[73, 0.65], [77, 0.35]] },

@@ -14,7 +14,7 @@ namespace EasyVocal.Ai.Import;
 /// </summary>
 public static class OnnxRewriter
 {
-    public sealed record Initializer(string Name, long[] Dims, int DataType, bool HasData);
+    public sealed record Initializer(string Name, long[] Dims, int DataType, bool HasData, bool External = false);
 
     private const int Float = 1;
 
@@ -56,6 +56,9 @@ public static class OnnxRewriter
     }
 
     /// <summary>The names of the graph's inputs (not counting initializers listed as inputs).</summary>
+    /// <summary>The model keeps (some of) its weights in other files: never opened (ONNX Runtime would read whatever the paths say).</summary>
+    public static bool HasExternalData(byte[] model) => Initializers(model).Any(i => i.External);
+
     public static List<string> InputNames(byte[] model)
     {
         var names = new List<string>();
@@ -161,7 +164,7 @@ public static class OnnxRewriter
         string name = "";
         var dims = new List<long>();
         int type = 0;
-        bool data = false;
+        bool data = false, external = false;
         while (q < e)
         {
             var (f, w) = Key(b, ref q);
@@ -169,9 +172,11 @@ public static class OnnxRewriter
             else if (f == 1 && w == 0) dims.Add((long)Varint(b, ref q));
             else if (f == 1 && w == 2) { int l = Len(b, ref q), qe = q + l; while (q < qe) dims.Add((long)Varint(b, ref q)); }
             else if (f == 2 && w == 0) type = (int)Varint(b, ref q);
+            else if (f == 14 && w == 0) external |= Varint(b, ref q) == 1; // data_location = EXTERNAL
             else
             {
                 if (f is 4 or 5 or 6 or 7 or 9 or 10 or 11 or 13) data = true;
+                if (f == 13) external = true; // external_data: the weights would be read from other files
                 if (w == 2 && (f is 4 or 5 or 7 or 9 or 10 or 11))
                 {
                     int l = Len(b, ref q);
@@ -181,7 +186,7 @@ public static class OnnxRewriter
                 else Skip(b, ref q, w);
             }
         }
-        return new Initializer(name, dims.ToArray(), type, data);
+        return new Initializer(name, dims.ToArray(), type, data, external);
     }
 
     private static List<Part> GraphParts(byte[] b, int p, int end, Func<string, Weight?> lookup, ISet<string>? used)

@@ -47,6 +47,12 @@ public static class OrtRuntime
         return IntPtr.Zero;
     }
 
+    /// <summary>Forget a failed load (a runtime folder was just installed): the next <see cref="TryLoad"/> tries again.</summary>
+    public static void ProbeAgain()
+    {
+        lock (Gate) if (!loaded) loadError = null;
+    }
+
     /// <summary>True when ONNX Runtime's native library loads here; else <paramref name="error"/> says why.</summary>
     public static bool TryLoad(out string? error)
     {

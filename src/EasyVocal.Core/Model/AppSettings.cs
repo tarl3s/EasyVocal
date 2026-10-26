@@ -101,6 +101,8 @@ public class AiSettings
     public DateTime? BenchmarkedUtc { get; set; }
     /// <summary>Per level the time one block took (95th percentile, ms) when measured; for the prime of the stream.</summary>
     public Dictionary<string, double> MeasuredBlockMs { get; set; } = new();
+    /// <summary>Hear me plays the AI voice itself (true) or the person's own voice as spoken (false: no delay to talk over).</summary>
+    public bool HearConvertedVoice { get; set; }
 }
 
 public class SoundItem

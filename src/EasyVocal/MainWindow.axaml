@@ -12,10 +12,20 @@
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <ToggleButton x:Name="OnOffButton" Grid.Column="1" MinWidth="76" Padding="14,6" FontWeight="SemiBold"
                           Click="OnOffButton_Click" ToolTip.Tip="{loc:T 'Turn the voice filter on or off. Off sends your normal voice.'}" />
-            <Border x:Name="MeterTrack" Grid.Column="2" Height="8" CornerRadius="4" Background="{StaticResource Bg2}"
-                    Margin="12,0" VerticalAlignment="Center" ToolTip.Tip="{loc:T 'Your microphone level'}">
-                <Border x:Name="MeterBar" HorizontalAlignment="Left" Width="0" CornerRadius="4" Background="{StaticResource MeterFill}" />
-            </Border>
+            <DockPanel Grid.Column="2" Margin="12,0" VerticalAlignment="Center">
+                <!-- With an AI voice: how far behind the mic the call hears it. -->
+                <Border x:Name="AiReadout" DockPanel.Dock="Right" IsVisible="False" Margin="8,0,0,0" Padding="7,2" CornerRadius="9"
+                        Background="{StaticResource Bg2}" ToolTip.Tip="{loc:T 'The AI voice reaches the call this much later than you speak'}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="🧠" Classes="emoji" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0" />
+                        <TextBlock x:Name="AiReadoutText" FontSize="11.5" Foreground="{StaticResource TextDim}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+                <Border x:Name="MeterTrack" Height="8" CornerRadius="4" Background="{StaticResource Bg2}"
+                        VerticalAlignment="Center" ToolTip.Tip="{loc:T 'Your microphone level'}">
+                    <Border x:Name="MeterBar" HorizontalAlignment="Left" Width="0" CornerRadius="4" Background="{StaticResource MeterFill}" />
+                </Border>
+            </DockPanel>
             <ToggleButton x:Name="MuteButton" AutomationProperties.Name="{loc:T 'Mute your microphone'}" Grid.Column="3" Theme="{StaticResource DangerToggle}" Padding="10,6"
                           Margin="0,0,6,0" Click="MuteButton_Click" ToolTip.Tip="{loc:T 'Mute your microphone'}">
                 <Border Classes="plate"><TextBlock Text="🔇" Classes="emoji" /></Border>
@@ -41,6 +51,9 @@
                         VerticalAlignment="Center" Content="{loc:T 'Fix'}" Click="FixButton_Click" />
                 <Button x:Name="MicButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
                         VerticalAlignment="Center" Content="{loc:T 'Choose microphone'}" Click="MicButton_Click" />
+                <Button x:Name="DismissButton" DockPanel.Dock="Right" Theme="{StaticResource FlatButton}" Margin="8,0,0,0" Padding="6,2"
+                        VerticalAlignment="Center" Content="✕" Click="DismissButton_Click" IsVisible="False"
+                        AutomationProperties.Name="{loc:T 'Close'}" ToolTip.Tip="{loc:T 'Close'}" />
                 <Button x:Name="PrivacyButton" DockPanel.Dock="Right" Theme="{StaticResource AccentButton}" Margin="12,0,0,0"
                         VerticalAlignment="Center" Content="{loc:T 'Open settings'}" Click="PrivacyButton_Click" IsVisible="False" />
                 <TextBlock x:Name="BannerText" TextWrapping="Wrap" VerticalAlignment="Center" />
@@ -61,7 +74,18 @@
                 <Grid RowDefinitions="*,Auto" TextElement.Foreground="{StaticResource Text}" TextElement.FontWeight="Normal"
                       TextElement.FontSize="13">
                     <ScrollViewer x:Name="VoiceScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <WrapPanel x:Name="VoicePanel" />
+                        <StackPanel>
+                            <WrapPanel x:Name="VoicePanel" />
+                            <!-- AI voices: the download card, or the AI cards and "＋ Add AI voice" -->
+                            <StackPanel x:Name="AiSection" IsVisible="False" Margin="0,8,8,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <Border Classes="plate" Margin="0,0,6,0"><TextBlock Text="🧠" Classes="emoji" /></Border>
+                                    <TextBlock Text="{loc:T 'AI voices'}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="AiStatus" IsVisible="False" TextWrapping="Wrap" Classes="dim" Margin="0,0,0,8" />
+                                <StackPanel x:Name="AiHost" />
+                            </StackPanel>
+                        </StackPanel>
                     </ScrollViewer>
                     <DockPanel Grid.Row="1" Margin="0,8,0,0" LastChildFill="False">
                         <CheckBox x:Name="ShowHiddenVoices" DockPanel.Dock="Right" Content="{loc:T 'Show hidden items'}"

@@ -49,6 +49,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         Voices = new VoiceLibrary(Pack);
         Models = new ModelCache();
         this.settings = settings ?? (() => new AiSettings());
+        Store.PackInstaller.CleanLeftovers(Pack);
         if (Directory.Exists(Pack.RuntimeFolder)) OrtRuntime.UseNativeFolder(Pack.RuntimeFolder);
         trimTimer = new Timer(_ => { try { Models.Trim(); } catch (Exception) { } }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
     }
@@ -60,16 +61,20 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
     /// <summary>Intra-op threads per model (default: physical cores, at most 6).</summary>
     public int Threads { get; set; } = OrtRuntime.DefaultThreads;
 
-    public bool Available => UnavailableReason == null;
+    /// <summary>The AI pack is installed (cheap: a file check; whether ONNX Runtime loads is found out off the UI thread, when a voice loads).</summary>
+    public bool Available => Pack.Installed;
 
-    public string? UnavailableReason
+    public string? UnavailableReason => Pack.Installed ? null : "The AI pack isn't installed.";
+
+    /// <summary>After the pack was installed: its runtime folder is looked at again (no restart needed).</summary>
+    public void PackChanged()
     {
-        get
-        {
-            if (!Pack.Installed) return "The AI pack isn't installed.";
-            return OrtRuntime.TryLoad(out var error) ? null : error;
-        }
+        if (Directory.Exists(Pack.RuntimeFolder)) OrtRuntime.UseNativeFolder(Pack.RuntimeFolder);
+        OrtRuntime.ProbeAgain();
     }
+
+    /// <summary>Unloads every model nobody uses (before the pack is removed, or a while after a level change).</summary>
+    public void UnloadUnused() => Models.Trim(all: true);
 
     /// <summary>The quality to use: the voice's own, else the settings' ("auto" = the benchmark's suggestion, else Balanced).</summary>
     public AiQuality QualityFor(string? voiceQuality)
@@ -91,6 +96,9 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
 
     async Task<IVoiceConverter> IVoiceConverterSource.CreateAsync(string aiVoiceId, string? quality, CancellationToken ct) =>
         await CreateConverterAsync(aiVoiceId, QualityFor(quality), DeviceFor(), ct).ConfigureAwait(false);
+
+    async Task<IVoiceConverter> IVoiceConverterSource.CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) =>
+        await CreateConverterAsync(aiVoiceId, QualityFor(quality), cpuOnly ? AiDevice.Cpu : DeviceFor(), ct).ConfigureAwait(false);
 
     /// <summary>Loads the voice (off the caller's thread) and makes a converter for the voice chain.</summary>
     public Task<AiVoiceConverter> CreateConverterAsync(string voiceId, AiQuality quality, AiDevice device, CancellationToken ct) =>
@@ -140,6 +148,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         if (UnavailableReason is string why) throw new InvalidOperationException(why);
+        if (!OrtRuntime.TryLoad(out var runtimeError)) throw new InvalidOperationException(runtimeError);
         var m = Voices.Find(voiceId) ?? throw new FileNotFoundException("This AI voice isn't installed: " + voiceId);
         var keys = new List<string>();
         try
@@ -272,6 +281,12 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         foreach (var m in Voices.All())
         {
             var p = s.Voices.FirstOrDefault(v => v.Kind == VoiceKind.Ai && v.AiVoiceId == m.Id);
+            if (p is { BuiltIn: true } && m.BuiltIn && (p.Name != m.Name || p.Emoji != m.Emoji))
+            {
+                p.Name = m.Name; // a bundled voice is named by its pack
+                p.Emoji = m.Emoji;
+                changed = true;
+            }
             if (p == null)
             {
                 if (s.Voices.Any(v => v.Id == m.Id)) continue;

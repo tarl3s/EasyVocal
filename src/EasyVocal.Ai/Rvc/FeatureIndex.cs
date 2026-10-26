@@ -35,8 +35,11 @@ public sealed class FeatureIndex
     public int NProbe
     {
         get => nprobe;
-        set => nprobe = Math.Clamp(value, 1, Math.Max(1, NList));
+        set => nprobe = Math.Clamp(value, 1, Math.Min(MaxProbe, Math.Max(1, NList)));
     }
+
+    /// <summary>Most lists looked at per frame (a file asking for more would only cost time on the audio worker).</summary>
+    public const int MaxProbe = 8;
 
     public static FeatureIndex Load(string path, long maxVectors = 4_000_000)
     {
@@ -60,6 +63,7 @@ public sealed class FeatureIndex
         if (qm > 1) br.ReadSingle();
         long nc = br.ReadInt64();
         if (nc != nlist * ix.D) throw new InvalidDataException("Damaged index (centroids).");
+        Fits(br, nc * 4);
         ix.centroids = ReadFloats(br, nc);
         byte dmType = br.ReadByte();                              // direct map
         long dmN = br.ReadInt64();
@@ -91,6 +95,7 @@ public sealed class FeatureIndex
         long total = 0;
         foreach (var s in sizes) { if (s < 0) throw new InvalidDataException("Damaged index."); total += s; }
         if (total > maxVectors) throw new InvalidDataException("This index is too big.");
+        Fits(br, total * (ix.D * 4L + 8)); // the vectors and their ids must really be in the file before anything is allocated
         ix.lists = new float[nlist][];
         for (int l = 0; l < nlist; l++)
         {
@@ -99,6 +104,13 @@ public sealed class FeatureIndex
         }
         ix.NProbe = (int)Math.Max(1, nprobe);
         return ix;
+    }
+
+    /// <summary>The rest of the file holds at least <paramref name="bytes"/> (else it is cut short or lies about its sizes).</summary>
+    private static void Fits(BinaryReader br, long bytes)
+    {
+        var s = br.BaseStream;
+        if (bytes < 0 || s.Length - s.Position < bytes) throw new InvalidDataException("Damaged index (cut short).");
     }
 
     private static float[] ReadFloats(BinaryReader br, long n)

@@ -26,6 +26,9 @@ internal sealed record SessionOptions(AppArgs Args, string DataFolder)
 
     /// <summary>For a hosted e2e run: starts the second session on the same folder and gives its exit code.</summary>
     public Func<SessionOptions, Task<int>>? RelaunchHosted { get; init; }
+
+    /// <summary>The tiny AI test models (a hosted e2e run tests the AI voices with them); else <c>--e2e-ai</c>.</summary>
+    public string? AiFixtures { get; init; }
 }
 
 /// <summary>
@@ -80,7 +83,7 @@ internal sealed partial class AppSession
         if (args.E2E) e2eDevices = options.Platform?.Audio as E2E.TestAudioDevices ?? new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
         var platform = options.Platform ?? TestPlatformFor(PlatformFactory.ForThisComputer());
         // AI voices: the engine looks for an AI pack in the data folder (none = the classic voices only). Test runs have none.
-        controller = new AppController(DataFolder, platform, aiVoices: args.TestMode ? null : s => new EasyVocal.Ai.AiVoiceService(DataFolder, () => s.Ai));
+        controller = new AppController(DataFolder, platform, aiVoices: MakeAiVoices);
         // ...and never downloads or runs the virtual mic's installer: the e2e test "installs" its test cable instead.
         if (args.TestMode)
             controller.CableInstaller = e2eDevices != null ? e2eDevices.FakeInstallAsync
@@ -333,6 +336,8 @@ internal sealed partial class AppSession
         cleaned = true;
         tray?.Dispose();
         tray = null;
+        e2ePack?.Dispose();
+        e2ePack = null;
         if (window != null) WindowPlacer.Remember(window, "main", controller); // saved by Dispose below
         AppWindow.CloseAllExcept(window); // dialogs still open (a quit from the tray while one is up)
         controller?.Dispose(); // stops the audio, unregisters the hotkeys, saves

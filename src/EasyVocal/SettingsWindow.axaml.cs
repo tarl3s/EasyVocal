@@ -71,6 +71,7 @@ public partial class SettingsWindow : AppWindow
             CheckNowButton.IsVisible = controller.Updates != null;
             UpdateStatus.Text = VersionText();
             RefreshHotkeyRows();
+            LoadAi();
         }
         finally
         {

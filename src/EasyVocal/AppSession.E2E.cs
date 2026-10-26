@@ -182,7 +182,7 @@ internal sealed partial class AppSession
             Expect(ids.IndexOf("ghost") == ids.IndexOf("female") - 1 && c.ActiveVoice.Id == active, "a voice card dragged onto another's left half goes before it (and isn't clicked)");
             Expect(main.VoicePanel.Children.IndexOf(main.VoiceCard("ghost")!) == main.VoicePanel.Children.IndexOf(main.VoiceCard("female")!) - 1,
                 "the cards show the new order");
-            Expect(c.Settings.Voices.Count == voicesBefore.Count && main.VoicePanel.Children[^1] is Border, "nothing lost, the AI card stays last");
+            Expect(c.Settings.Voices.Count == voicesBefore.Count && main.VoicePanel.Children[^1] is Button newFilter && !main.VoiceCards.Contains(newFilter), "nothing lost, the New filter card stays last");
             Expect(Tray.MenuVoices(c).Select(v => v.Id).SequenceEqual(c.Settings.Voices.Where(v => !v.Hidden).Select(v => v.Id)), "the tray menu lists the voices in the same order");
 
             // Dragged over a card (its bar shows), then off every card and let go there: nothing moves, the bar goes.
@@ -574,6 +574,8 @@ internal sealed partial class AppSession
             await WaitUntil(() => c.State == EngineState.Running && !main.Banner.IsVisible, 8000, "the audio to run with the new cable");
             await ExpectCopy(Call, "the call gets the voice through the installed cable");
         });
+
+        await E2EAiVoices(c, main, normalShare);
 
         await Step("11 settings persistence (first run): a sound to keep, the custom voice, OFF, Hear me on, quit the normal way", async () =>
         {

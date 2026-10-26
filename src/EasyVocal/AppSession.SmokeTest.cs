@@ -210,6 +210,7 @@ internal sealed partial class AppSession
         await SmokePopups(main, c, Png);
         await SmokeUpdates(main, c, dataFolder, Png);
         await SmokeSetupAndSettings(main, c, Png);
+        await SmokeAi(main, c, dataFolder, Png);
         await SmokeAudioEditor(main, c, dataFolder, Png);
         await SmokeSmallWindows(main, c, dataFolder, Png);
     }

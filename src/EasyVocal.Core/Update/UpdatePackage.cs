@@ -71,15 +71,15 @@ public static class UpdatePackage
     /// Unpacks a whole zip or tar.gz (told apart by their first bytes) into <paramref name="folder"/>, with the checks
     /// above; symbolic and hard links are refused. A cancellation stops it (what was written stays for the caller to remove).
     /// </summary>
-    public static void ExtractAll(string archivePath, string folder, CancellationToken ct = default)
+    public static void ExtractAll(string archivePath, string folder, CancellationToken ct = default, long maxBytes = MaxUnpackedBytes)
     {
         var root = Root(folder);
         Directory.CreateDirectory(root);
-        if (IsGzip(archivePath)) ExtractTarGz(archivePath, root, ct);
-        else ExtractZip(archivePath, root, ct);
+        if (IsGzip(archivePath)) ExtractTarGz(archivePath, root, ct, maxBytes);
+        else ExtractZip(archivePath, root, ct, maxBytes);
     }
 
-    private static void ExtractZip(string zipPath, string root, CancellationToken ct)
+    private static void ExtractZip(string zipPath, string root, CancellationToken ct, long maxBytes)
     {
         ZipArchive archive;
         try { archive = ZipFile.OpenRead(zipPath); }
@@ -91,9 +91,9 @@ public static class UpdatePackage
             {
                 SafeTarget(root, entry.FullName);
                 total += Math.Max(0, entry.Length);
-                if (total > MaxUnpackedBytes) throw TooBig();
+                if (total > maxBytes) throw TooBig();
             }
-            long budget = MaxUnpackedBytes; // the sizes above are what the zip claims; this counts what really comes out
+            long budget = maxBytes; // the sizes above are what the zip claims; this counts what really comes out
             foreach (var entry in archive.Entries)
             {
                 ct.ThrowIfCancellationRequested();
@@ -117,14 +117,14 @@ public static class UpdatePackage
         }
     }
 
-    private static void ExtractTarGz(string path, string root, CancellationToken ct)
+    private static void ExtractTarGz(string path, string root, CancellationToken ct, long maxBytes)
     {
         try
         {
             using var file = File.OpenRead(path);
             using var gzip = new GZipStream(file, CompressionMode.Decompress);
             using var tar = new TarReader(gzip);
-            long total = 0, budget = MaxUnpackedBytes;
+            long total = 0, budget = maxBytes;
             while (tar.GetNextEntry() is { } entry)
             {
                 ct.ThrowIfCancellationRequested();
@@ -136,7 +136,7 @@ public static class UpdatePackage
                         continue;
                     case TarEntryType.RegularFile or TarEntryType.V7RegularFile or TarEntryType.ContiguousFile:
                         total += Math.Max(0, entry.Length);
-                        if (total > MaxUnpackedBytes) throw TooBig();
+                        if (total > maxBytes) throw TooBig();
                         Writing(entry.Name, () =>
                         {
                             Directory.CreateDirectory(Path.GetDirectoryName(target)!);

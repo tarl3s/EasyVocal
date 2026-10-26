@@ -11,7 +11,7 @@ namespace EasyVocal;
 /// <summary>
 /// The cards' order: drag a voice or sound card onto another (a bar shows where it goes), or "Move left / right" in its
 /// menu. Plain pointer events (the same on Windows, macOS and Linux); a click without moving still picks the voice or
-/// plays the sound. The "＋" and AI cards always stay at the end.
+/// plays the sound. The "＋" cards always stay at the end; AI voice cards move among themselves.
 /// </summary>
 public partial class MainWindow
 {
@@ -75,6 +75,7 @@ public partial class MainWindow
         }
         foreach (var (id, c) in CardsOf(d.Voice))
         {
+            if (d.Voice && aiCardIds.Contains(id) != aiCardIds.Contains(d.Id)) continue; // AI cards move among AI cards
             var at = e.GetPosition(c.Button);
             var size = c.Button.Bounds.Size;
             if (at.X < 0 || at.Y < 0 || at.X > size.Width || at.Y > size.Height) continue;
@@ -141,9 +142,9 @@ public partial class MainWindow
         ? controller.Settings.Voices.ConvertAll(v => v.Id)
         : controller.Settings.Sounds.ConvertAll(s => s.Id);
 
-    /// <summary>The ids of the cards on screen, in their order.</summary>
-    private List<string> ShownIds(bool voice) => voice
-        ? ItemOps.VisibleVoices(controller.Settings, showHidden).ConvertAll(v => v.Id)
+    /// <summary>The ids of the cards on screen, in their order (for a voice: those of its own section, classic or AI).</summary>
+    private List<string> ShownIds(bool voice, string? of = null) => voice
+        ? ItemOps.VisibleVoices(controller.Settings, showHidden).FindAll(v => of == null || (v.Kind == VoiceKind.Ai) == (controller.Settings.Voices.Find(x => x.Id == of)?.Kind == VoiceKind.Ai)).ConvertAll(v => v.Id)
         : ItemOps.VisibleSounds(controller.Settings, showHidden).ConvertAll(s => s.Id);
 
     /// <summary>A drop bar shows on some card (for the tests).</summary>
@@ -158,7 +159,7 @@ public partial class MainWindow
     /// <summary>Move one card to the left (-1) or right (+1) among the cards on screen.</summary>
     internal void MoveCard(string id, bool voice, int direction)
     {
-        var shown = ShownIds(voice);
+        var shown = ShownIds(voice, id);
         int i = shown.IndexOf(id);
         int j = i + direction;
         if (i < 0 || j < 0 || j >= shown.Count) return;
@@ -168,7 +169,7 @@ public partial class MainWindow
     /// <summary>"Move left" / "Move right" in a card's menu: the keyboard's (and the touchpad's) way to reorder.</summary>
     private void AddMoveItems(ContextMenu menu, string id, bool voice)
     {
-        var shown = ShownIds(voice);
+        var shown = ShownIds(voice, id);
         int i = shown.IndexOf(id);
         var left = MenuItem("←  " + L.T("Move left"), () => MoveCard(id, voice, -1));
         left.IsEnabled = i > 0;
