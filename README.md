@@ -112,7 +112,36 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
 - **Light:** small download, almost no CPU when idle, a few percent while you talk.
 - **OFF or Normal = your clean voice.** Your friends still hear you. EasyVocal always opens on **Normal**, so you never join a
   call with a filter on by accident (everything else is as you left it).
-- **AI voices: coming later** as a separate optional download.
+- **🧠 AI voices** (optional): sound like another person, not like an effect. See below.
+
+## 🧠 AI voices
+
+EasyVocal 2.0 can also change your voice with AI: the other side of the call hears **another person speaking with
+your words and your melody**, not your voice with an effect on it. It runs on your own PC (nothing is sent anywhere)
+with RVC voice models, on Windows, macOS and Linux.
+
+- **Download AI mode** once from the Voices tab (one click, about 550 MB; it can be paused and goes on from where it
+  stopped). The download is checked (SHA-256) before anything is installed. EasyVocal itself stays a small download:
+  if you never turn AI mode on, nothing changes. **Settings → Remove AI mode…** deletes it and frees the space.
+- **8 AI voices come with it** (🧠 on their cards): young women and men, a deep calm man, a husky man, a light youthful
+  voice, a neutral one. They are made from a public research voice collection (VCTK, CC BY 4.0) and sound like none of
+  its speakers in particular. Pick one like any other voice: the voice you had keeps playing while it loads.
+- **Quality levels** (Settings → AI): **Light** (quickest, lightest on the PC), **Balanced** and **Max** (most
+  realistic, heaviest). After the download EasyVocal tests your PC once and picks the best level that runs smoothly;
+  **Test my PC** does it again. Each voice can have its own level. The top bar shows how late the AI voice reaches the
+  call (**AI · N ms**, about 0.4 to 0.6 seconds: AI voices are for talking, not for singing in sync).
+- **What your PC needs:** any 64-bit PC from the last few years runs **Light** on the processor (4 cores or more);
+  **Balanced** and **Max** want a recent 6-core processor or a graphics card. EasyVocal uses the graphics card when
+  it helps (DirectML on Windows: AMD, Intel or NVIDIA; Core ML on a Mac; Linux uses the processor) and falls back to
+  the processor by itself.
+  About 1.4 GB of free disk while installing, 800 MB after; 0.4 to 1.5 GB of memory while an AI voice plays.
+- **Add your own voices:** **Add AI voice** takes an RVC model file (`.pth` or `.onnx`, with its `.index` if it has
+  one, or a `.zip` with them) or a link to one (a Hugging Face page works too). No Python or PyTorch needed.
+- **Only use voices you have the right to use.** Don't use a voice to pretend to be a real person without their
+  consent. EasyVocal ships no celebrity or character voices.
+- **Credits:** the models and the voice data are listed in **Settings → Credits and licences** and in
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (RVC, HuBERT, RMVPE, the VCTK corpus, ONNX Runtime, DirectML). The
+  AI pack is a separate download on its own release page (`ai-pack-v1`), with its licences inside.
 
 ## Credits
 
@@ -125,6 +154,10 @@ That's it: whatever you do in EasyVocal is what the other side of the call hears
   [NVorbis](https://github.com/NVorbis/NVorbis) (MIT, OGG) with NAudio.Vorbis, and [PortAudio](https://www.portaudio.com/)
   (MIT, macOS and Linux) through the [PortAudioSharp2](https://github.com/csukuangfj/PortAudioSharp2) native packages.
 - Interface: [Avalonia](https://avaloniaui.net/) (MIT).
+- AI voices (the optional AI pack): [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) (MIT),
+  HuBERT (fairseq, MIT), [RMVPE](https://github.com/Dream-High/RMVPE) (Apache-2.0), voices from the
+  [CSTR VCTK Corpus](https://doi.org/10.7488/ds/2645) (CC BY 4.0), [ONNX Runtime](https://onnxruntime.ai/) (MIT) and,
+  on Windows, DirectML (Microsoft). Details in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 - EasyVocal is MIT licensed. See [LICENSE](LICENSE).
 
 ## For developers

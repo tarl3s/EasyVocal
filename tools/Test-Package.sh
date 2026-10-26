@@ -5,10 +5,13 @@
 #          into a pretend home, then the installed program runs --smoketest under Xvfb.
 #   macOS: unzip with ditto (what a double-click does), the program executable, the README's one-time ad-hoc
 #          codesign, then Contents/MacOS/EasyVocal runs --smoketest.
-# usage: tools/Test-Package.sh <EasyVocal-linux-x64.tar.gz | EasyVocal-macos-*.zip> <empty work folder>
+# With an AI pack (a release asset EasyVocal-AI-*.zip) the e2e run also tests the AI voices on it: served on 127.0.0.1
+# like the release, installed, and the real models run on the pack's own ONNX Runtime (--e2e-ai-pack).
+# usage: tools/Test-Package.sh <EasyVocal-linux-x64.tar.gz | EasyVocal-macos-*.zip> <empty work folder> [<EasyVocal-AI-*.zip>]
 set -u
 archive=$1
 work=$2
+aipack=${3:-}
 fail() { echo "FAIL: $*"; exit 1; }
 # Runs the program with a deadline; a hung one first gets its threads' stacks printed (macOS: sample), then is killed.
 # Sets $code (142 = it hung).
@@ -102,9 +105,23 @@ echo "PASS: $(basename "$archive") unpacks, installs and starts"
 
 # The end-to-end test of the unpacked program: pretend devices, the real windows, a quit and a relaunch.
 mkdir -p "$work/e2e" || fail "can't make $work/e2e"
-echo "== $program --data $work/e2e --e2e"
-run_app 360 --data "$work/e2e" --e2e
+if [ -n "$aipack" ]; then
+    aipack=$(cd "$(dirname "$aipack")" && pwd)/$(basename "$aipack")
+    [ -f "$aipack" ] || fail "no AI pack $aipack"
+    echo "== $program --data $work/e2e --e2e --e2e-ai-pack $aipack"
+    run_app 1800 --data "$work/e2e" --e2e --e2e-ai-pack "$aipack"
+else
+    echo "== $program --data $work/e2e --e2e"
+    run_app 360 --data "$work/e2e" --e2e
+fi
 echo "exit code $code"
 [ -f "$work/e2e/e2e.log" ] && cat "$work/e2e/e2e.log"
-[ "$code" = 0 ] || { [ -f "$work/e2e/easyvocal.log" ] && tail -n 80 "$work/e2e/easyvocal.log"; fail "the e2e test of the unpacked download exited with $code"; }
-echo "PASS: $(basename "$archive") passes the e2e test"
+[ "$code" = 0 ] || { [ -f "$work/e2e/easyvocal.log" ] && tail -n 120 "$work/e2e/easyvocal.log"; fail "the e2e test of the unpacked download exited with $code"; }
+if [ -n "$aipack" ]; then
+    grep "AI: ONNX Runtime\|AI: .* runs on\|AI: graphics" "$work/e2e/easyvocal.log" | head -n 12
+    grep -q "AI: ONNX Runtime .* from .*/AI/runtime/" "$work/e2e/easyvocal.log" || fail "the AI voices didn't run on the pack's ONNX Runtime"
+    grep -q "SKIPPED: no AI test models" "$work/e2e/e2e.log" && fail "the e2e run skipped the AI voices"
+    echo "PASS: $(basename "$archive") passes the e2e test with the AI pack $(basename "$aipack")"
+else
+    echo "PASS: $(basename "$archive") passes the e2e test"
+fi

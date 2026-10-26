@@ -168,7 +168,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
             var settingsForLevel = AiLevels.Settings(quality, gpu, gen.IsSingleGraph);
             OnnxModel? rmvpe = null;
             if (settingsForLevel.UseRmvpe && Pack.RmvpeModel is string rp)
-                rmvpe = Models.Acquire("rmvpe:" + dev, () => OrtRuntime.CreateFromFile("pitch model", rp, device, threads), keys);
+                rmvpe = Models.Acquire("rmvpe:" + dev, () => OrtRuntime.Create("pitch model", AiPack.ReadPitchModel(rp), device, threads), keys);
             FeatureIndex? index = null;
             if (settingsForLevel.IndexRate > 0 && m.Index is VoiceFile ixf)
                 index = Models.Acquire("index:" + m.Id + ":" + ixf.Sha256, () => FeatureIndex.Load(Voices.PathOf(m, ixf)), keys);

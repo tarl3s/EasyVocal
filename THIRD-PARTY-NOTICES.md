@@ -15,8 +15,12 @@ Settings → "Credits and licences".
 ## The AI pack (downloaded only when AI mode is turned on)
 
 - **ONNX Runtime** native library (CPU, DirectML on Windows) — MIT. Copyright (c) Microsoft Corporation.
-  ONNX Runtime's own third-party notices (`ThirdPartyNotices.txt`) ship with it in the AI pack's `runtime` folder.
-  https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+  ONNX Runtime's own third-party notices (`ThirdPartyNotices.txt`) ship with it in the AI pack's `runtime/licenses`
+  folder. https://github.com/microsoft/onnxruntime/blob/main/LICENSE
+- **DirectML** (Windows only: `DirectML.dll`, the Microsoft.AI.DirectML redistributable that ONNX Runtime's DirectML
+  build runs on) — Microsoft Software License Terms for DirectML, which allow it to be distributed with an app; the
+  terms and its notices ship with it in `runtime/licenses`. Copyright (c) Microsoft Corporation.
+  https://www.nuget.org/packages/Microsoft.AI.DirectML
 - **RVC — Retrieval-based Voice Conversion WebUI** (the RVC v2 voice conversion network and its pretrained base
   generator f0G40k) — MIT. Copyright (c) 2023 liujing04, 源文雨 and the RVC-Project contributors.
   https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI/blob/main/LICENSE
@@ -25,8 +29,8 @@ Settings → "Credits and licences".
   Guoguo Chen, Daniel Povey, Sanjeev Khudanpur), CC BY 4.0, https://www.openslr.org/12
 - **RMVPE** pitch estimator — Apache License 2.0. Copyright (c) Haojie Wei et al. (Yxlllc/RMVPE).
   https://github.com/Dream-High/RMVPE — NOTICE: "RMVPE: A Robust Model for Vocal Pitch Estimation in Polyphonic
-  Music" (Wei et al., Interspeech 2023); this distribution converts the published weights to ONNX (fp32/fp16) and
-  makes no other change.
+  Music" (Wei et al., Interspeech 2023); the AI pack stores the published ONNX model's weights as fp16 (EasyVocal
+  turns them back into fp32 when it loads them) and makes no other change.
 - **CSTR VCTK Corpus** (the voice data the base generator was trained on, whose speaker vectors the bundled AI voices
   blend) — CC BY 4.0. Junichi Yamagishi, Christophe Veaux, Kirsten MacDonald; University of Edinburgh, The Centre for
   Speech Technology Research. https://doi.org/10.7488/ds/2645 — https://creativecommons.org/licenses/by/4.0/

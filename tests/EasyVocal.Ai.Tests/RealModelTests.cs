@@ -132,6 +132,61 @@ public class RealModelTests
     }
 
     [Fact]
+    public void An_installed_release_pack_runs_on_its_own_ONNX_Runtime()
+    {
+        if (RealModels.InstalledPack == null) { output.WriteLine("SKIPPED: EV_AI_PACK isn't set (CI's ai-pack job sets it to the release's pack)"); return; }
+        using var s = Service();
+        if (s == null) return;
+        using (var v = s.Load(BundledRecipe.Embedded().Voices[0].Id, AiQuality.Light, AiDevice.Cpu)) Assert.NotNull(v.Voice);
+        output.WriteLine($"ONNX Runtime {Microsoft.ML.OnnxRuntime.OrtEnv.Instance().GetVersionString()} from {OrtRuntime.NativePath}; providers {string.Join(", ", OrtRuntime.Providers())}");
+        Assert.NotNull(OrtRuntime.NativePath);
+        Assert.StartsWith(Path.GetFullPath(s.Pack.RuntimeFolder), Path.GetFullPath(OrtRuntime.NativePath!));
+        if (OperatingSystem.IsWindows()) Assert.Contains("DmlExecutionProvider", OrtRuntime.Providers());
+        if (OperatingSystem.IsMacOS()) Assert.Contains("CoreMLExecutionProvider", OrtRuntime.Providers());
+        var state = File.ReadAllText(Path.Combine(s.Pack.Root, PackInstaller.StateFile));
+        output.WriteLine("pack.json: " + state);
+        Assert.Contains(PackSource.Tag, state);
+    }
+
+    [Fact]
+    public void The_pitch_model_stored_as_fp16_finds_the_same_pitch_as_the_published_one()
+    {
+        using var s = Service();
+        if (s == null) return;
+        var stored = s.Pack.RmvpeModel!;
+        Assert.Equal(AiPack.RmvpeF16, Path.GetFileName(stored));
+        Assert.True(new FileInfo(stored).Length < 200L * 1048576, "RMVPE is stored at about half its 345 MB");
+        var published = Path.Combine(RealModels.Cache, "upstream", BaseModels.Rmvpe.Id);
+        if (!File.Exists(published)) { output.WriteLine("SKIPPED: RVC's own rmvpe.onnx isn't in " + published); return; }
+        var x16 = EasyVocal.Ai.Dsp.PolyResampler.Convert(Speech.Signal.AsSpan(0, 48000 * 6).ToArray(), 48000, 16000);
+        float[] Track(byte[] onnx)
+        {
+            using var m = OrtRuntime.Create("pitch", onnx, AiDevice.Cpu, 4);
+            using var r = new Rmvpe(m);
+            var f0 = new float[x16.Length / 160 + 1];
+            r.Estimate(x16, f0);
+            return f0;
+        }
+        var a = Track(File.ReadAllBytes(published));
+        var b = Track(AiPack.ReadPitchModel(stored));
+        int voicedA = 0, agree = 0;
+        var cents = new List<double>();
+        for (int i = 0; i < a.Length; i++)
+        {
+            if (a[i] > 0) voicedA++;
+            if ((a[i] > 0) == (b[i] > 0)) agree++;
+            if (a[i] > 0 && b[i] > 0) cents.Add(Math.Abs(1200 * Math.Log2(b[i] / a[i])));
+        }
+        cents.Sort();
+        double median = cents.Count > 0 ? cents[cents.Count / 2] : 0, p95 = cents.Count > 0 ? cents[(int)(cents.Count * 0.95)] : 0;
+        double same = (double)agree / a.Length;
+        output.WriteLine($"fp32 vs fp16-stored RMVPE: {voicedA} voiced frames, voicing agrees on {same:P1}, pitch difference median {median:0.00} c, p95 {p95:0.00} c");
+        Assert.True(voicedA > 50, "the speech is voiced");
+        Assert.True(same > 0.98, $"voicing agrees on {same:P1}");
+        Assert.True(median < 2 && p95 < 10, $"pitch difference median {median:0.00} c, p95 {p95:0.00} c");
+    }
+
+    [Fact]
     public async Task A_real_pth_imports_without_PyTorch_and_sounds_like_the_same_speaker_on_the_base_model()
     {
         using var s = Service();

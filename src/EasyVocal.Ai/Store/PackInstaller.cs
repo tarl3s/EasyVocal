@@ -32,7 +32,7 @@ public static class PackSource
     public static string ReleaseApi => $"https://api.github.com/repos/{Repo}/releases/tags/{Tag}";
 
     /// <summary>Roughly how big the download is (shown before the release was looked at).</summary>
-    public const long ApproxBytes = 760L * 1024 * 1024;
+    public const long ApproxBytes = 540L * 1024 * 1024;
 
     /// <summary>Most bytes a pack may have (download and unpacked).</summary>
     public const long MaxBytes = 2000L * 1024 * 1024;
@@ -190,7 +190,7 @@ public sealed class PackInstaller
             string Need(string rel) => File.Exists(Path.Combine(root, rel)) ? rel : throw new InvalidDataException("The AI pack is incomplete (" + rel + " is missing).");
             Need(Path.Combine("engine", AiPack.ContentFp32));
             Need(Path.Combine("engine", AiPack.ContentInt8));
-            Need(Path.Combine("engine", AiPack.Rmvpe));
+            if (!File.Exists(Path.Combine(root, "engine", AiPack.RmvpeF16))) Need(Path.Combine("engine", AiPack.Rmvpe));
             Need(Path.Combine("engine", BaseModels.BaseGeneratorId + ".pth"));
             var voices = Path.Combine(root, "voices");
             if (!Directory.Exists(voices) || !Directory.EnumerateFiles(voices, VoiceManifest.FileName, SearchOption.AllDirectories).Any())

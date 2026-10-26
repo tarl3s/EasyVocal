@@ -161,3 +161,55 @@ jobs:
       - name: Unpack, sign ad hoc and start the Apple silicon download
         run: sh tools/Test-Package.sh downloads/EasyVocal-macos-arm64.zip "$RUNNER_TEMP/macos-package"
 
+
+  # The AI pack as people get it: the release's asset (tag ai-pack-v1) installed by the app's own downloader (the
+  # release's SHA-256 checked) into a temp data folder, the real-model streaming tests run on it with the pack's own
+  # ONNX Runtime, then the packaged app's e2e run (the download built by the packages job) with the AI step on it.
+  ai-pack:
+    needs: packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            download: EasyVocal-win-x64.zip
+          - os: macos-latest
+            download: EasyVocal-macos-arm64.zip
+          - os: ubuntu-latest
+            download: EasyVocal-linux-x64.tar.gz
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: A desktop's sound server and an X server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-noto-color-emoji fontconfig \
+            pulseaudio pulseaudio-utils libpulse0 xvfb xauth
+          pulseaudio --start --exit-idle-time=-1
+      - name: Install the AI pack from the release (the app's downloader, SHA-256 checked)
+        run: dotnet run --project tools/EasyVocal.AiPack -c Release -- install --data "$RUNNER_TEMP/ai-data" --keep "$RUNNER_TEMP/ai-pack"
+      - name: Real-model tests on the installed pack (streaming through the engine, bundled voices, its own ONNX Runtime)
+        env:
+          EV_AI_PACK: ${{ runner.temp }}/ai-data
+        run: dotnet test tests/EasyVocal.Ai.Tests --filter "FullyQualifiedName~PipelineTests|FullyQualifiedName~RealModelTests" --logger "console;verbosity=normal"
+      - uses: actions/download-artifact@v4
+        with:
+          name: downloads
+          path: downloads
+      - name: The packaged app's e2e run with the AI pack (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: sh tools/Test-Package.sh "downloads/${{ matrix.download }}" "$RUNNER_TEMP/package" "$(ls "$RUNNER_TEMP"/ai-pack/EasyVocal-AI-*.zip)"
+      - name: The packaged app's e2e run with the AI pack (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pack = (Get-ChildItem "$env:RUNNER_TEMP\ai-pack\EasyVocal-AI-*.zip").FullName
+          ./tools/Test-WindowsPackage.ps1 -Zip "downloads\${{ matrix.download }}" -Work "$env:RUNNER_TEMP\package" -AiPack $pack

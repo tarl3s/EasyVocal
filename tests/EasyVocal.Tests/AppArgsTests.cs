@@ -72,4 +72,18 @@ public class AppArgsTests
         var now = AppArgs.Parse(new[] { "--data", "x", "--update-now" });
         Assert.True(now.UpdateNow && !now.UpdateCheck && !now.TestMode && now.Allowed);
     }
+
+    [Fact]
+    public void E2E_AI_test_models_are_the_tiny_fixtures_or_a_real_pack()
+    {
+        var none = AppArgs.Parse(new[] { "--data", "x", "--e2e" });
+        Assert.Null(none.AiFixtures);
+        Assert.Null(none.AiPackZip);
+        var real = AppArgs.Parse(new[] { "--data", "x", "--e2e", "--e2e-ai-pack", "EasyVocal-AI-win-x64.zip" });
+        Assert.Equal(Path.GetFullPath("EasyVocal-AI-win-x64.zip"), real.AiPackZip);
+        Assert.Null(real.AiFixtures);
+        var tiny = AppArgs.Parse(new[] { "--data", "x", "--e2e", "--e2e-ai", "Fixtures" });
+        Assert.Equal(Path.GetFullPath("Fixtures"), tiny.AiFixtures);
+        Assert.Null(AppArgs.Parse(new[] { "--e2e-ai-pack" }).AiPackZip); // no file given
+    }
 }

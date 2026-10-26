@@ -21,14 +21,20 @@ wired in `PlatformFactory.cs`. Phase 4 is done: `tools/Publish-Release.ps1` buil
 **CI** (`.github/workflows/ci.yml`) builds and tests on Windows, macOS and Linux runners on every push and
 every pull request; a `packages` job builds the four downloads exactly as `tools/Publish-Release.ps1` does and
 `tools/Test-Package.sh` unpacks them on real macOS and Linux runners (tar / ditto, exec bits, `ldd`, `install.sh`, the
-README's ad-hoc codesign) and runs the unpacked program's `--smoketest` and `--e2e`. **Nobody has used the app on a real Mac or Linux desktop yet** (CI runs the tests, not a person),
+README's ad-hoc codesign) and runs the unpacked program's `--smoketest` and `--e2e`. An `ai-pack` job (Windows, macOS arm64,
+Linux) installs the real AI pack from the `ai-pack-v1` release with the app's own downloader (`tools/EasyVocal.AiPack install`),
+runs the real-model tests on it (`EV_AI_PACK`, its own ONNX Runtime) and the packaged download's `--e2e` with
+`--e2e-ai-pack` (`tools/Test-Package.sh` / `tools/Test-WindowsPackage.ps1`): the release app has no ONNX Runtime of its
+own, so this is where the pack's runtime is proven. **Nobody has used the app on a real Mac or Linux desktop yet** (CI runs the tests, not a person),
 so the READMEs call those builds "Preview".
 
 **2.0.0 adds AI voices** (design `docs/superpowers/specs/2026-10-25-ai-voices-design.md`; phase 1 research on the
 `spike/ai-voices` branch: `docs/superpowers/research/2026-10-25-ai-voices-phase1.md`). Phase 2 (the engine, no UI) is
 on `feat/ai-voices`: `src/EasyVocal.Ai` runs RVC v2 voices through ONNX Runtime, the voice chain has a converter slot
 for them, `AppController` loads the active AI voice. Phase 3 (the UI and the pack's lifecycle) is done on the same branch:
-the Voices tab's AI section, Add AI voice, Settings' AI section, the pack's download/install/remove, credits. Phase 4: the per-OS AI pack assets (models + ONNX Runtime's native library) and the 2.0.0 gate.
+the Voices tab's AI section, Add AI voice, Settings' AI section, the pack's download/install/remove, credits. Phase 4 is done on the same branch: the per-OS AI pack assets (`tools/EasyVocal.AiPack pack`, published as the release
+`ai-pack-v1`, never the repo's "Latest"), RMVPE stored as fp16, DirectML's adapter choice, the bundled voices re-picked as
+3-way blends, the `ai-pack` CI job, the READMEs' AI section; version 2.0.0. Left: the 2.0.0 gate (review, release).
 
 ## Project layout
 
@@ -91,12 +97,17 @@ tools/Publish-Release.ps1 -NoUpload   # self-contained single-file zip -> publis
 EV_VOICE_SAMPLES=<folder> dotnet test --filter RenderListeningSamples   # every built-in voice on real speech, as WAVs + README.txt (voice-samples/ is git-ignored)
 dotnet test tests/EasyVocal.Ai.Tests   # the AI engine (the real models: downloaded once into EV_AI_MODELS, see below)
 EV_AI_SAMPLES=<folder> dotnet test tests/EasyVocal.Ai.Tests --filter Bundled_voices   # every bundled AI voice on real speech, as WAVs
-dotnet run --project tools/EasyVocal.AiPack -- build --data <folder>   # an AI pack in <folder>/AI from RVC's public files (then bench / list / render)
+dotnet run --project tools/EasyVocal.AiPack -- build --data <folder> --int8 <hubert_int8.onnx>   # an AI pack in <folder>/AI from RVC's public files (then bench / list / render)
+dotnet run --project tools/EasyVocal.AiPack -- pack --data <folder> --out <dir>   # the release assets EasyVocal-AI-<os>.zip + .sha256 (all four OSes)
+dotnet run --project tools/EasyVocal.AiPack -- install --data <scratch> [--keep <dir>]   # the real install from the ai-pack-v1 release, as the app does it
+EV_AI_PACK=<scratch> dotnet test tests/EasyVocal.Ai.Tests --filter "FullyQualifiedName~PipelineTests|FullyQualifiedName~RealModelTests"   # the real-model tests on an installed pack (its own runtime)
+dotnet run --project src/EasyVocal -- --data <folder> --e2e --e2e-ai-pack <EasyVocal-AI-*.zip>   # the e2e run with its AI step on a real pack (served locally like the release)
 ```
 
 App arguments (`Program.cs` and `AppSession.cs`, parsed by `AppArgs.cs`): `--data <folder>` (use that folder instead of
 `%APPDATA%\EasyVocal`), `--smoketest` (headless-ish UI check, PNGs and `easyvocal.log` go to the data folder),
-`--e2e` (see below), `--tray` (start hidden in the tray), `--update-check` (a source build looks for a new release
+`--e2e` (see below; `--e2e-ai <tests/EasyVocal.Ai.Tests/Fixtures>` adds the AI step on the tiny models,
+`--e2e-ai-pack <EasyVocal-AI-*.zip>` on a real pack: `E2E/E2EAiPack.cs` serves either like the release on 127.0.0.1), `--tray` (start hidden in the tray), `--update-check` (a source build looks for a new release
 anyway; it still never installs), `--update-now` (no window: download and install the latest release without asking,
 log in `<data>\easyvocal.log` and `<data>\update.log`; exit 0 updated or already latest, 1 failed, 3 source build, 4
 EasyVocal is running). The tests refuse to run without `--data` (exit code 2),
@@ -134,7 +145,7 @@ the relaunch is a second `AppSession` on the same folder).
 | Tests | `tests/EasyVocal.Tests/` (portable, `net8.0`: + `Helpers/FakeAudio.cs`, `FakeUpdate.cs` (a pretend updater platform, source and launcher), `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder; `Speech.cs` = real speech made once per run with Windows' TTS through PowerShell (David/Zira/Maria when installed, a synthetic vowel otherwise, e.g. on macOS/Linux; `EV_SPEECH=synthetic` or `=en` reproduces those inputs (CI's
 Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeatures.cs` = what a voice sounds like in numbers; `WavFile.cs`); `VoiceCharacterTests.cs` measures every built-in voice on that speech; `DecoderTests.cs` (NLayer, NVorbis, extensible WAV, the loader's "keep looking", ffmpeg through the stand-in: output, non-zero exit, deadline + kill, cancel; a real ffmpeg only when installed, "SKIPPED" otherwise); `UpdateServiceTests.cs`; `MeterPreviewTests.cs` (MicMeter, SoundPreview, PathCompare, data folders); `AppArgs.cs` is linked in via the csproj. `tests/EasyVocal.Tests.Windows/` (`SetupTests` = Run key + VB-CABLE pack, `StartMenuShortcutTests`, `UpdaterTests` = Windows' names and unpack, PowerShell helper run for real; `WindowsSoundTests` = Media Foundation, ACM mu-law / IMA ADPCM, which decoder reads MP3; `WindowsHotkeysTests` = the message-only window; `E2ETests.cs` runs the built app with `--e2e`). `tests/EasyVocal.UiTests/` (`HeadlessAppTests` = the smoke and e2e steps headless, `ControllerTests` = the controller on a hand-pumped dispatcher, `KeyMap`; `TestAppBuilder.cs` = the real App on the headless platform with Skia) |
 | Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`; `-PngDir` = the same drawing as 16-1024 px PNGs), `tools/Publish-Release.ps1` (publishes win-x64, osx-arm64, osx-x64, linux-x64 self-contained single file; Windows keeps the natives inside the exe, macOS/Linux next to it), `tools/EasyVocal.Packager` (plain .NET console: `Release.Pack` makes each download: `MacApp` = Info.plist (com.tarl3s.easyvocal, LSMinimumSystemVersion 11.0, NSMicrophoneUsageDescription), PkgInfo, `.icns` built from PNG chunks, the program and dylibs 0755; `LinuxApp` = `EasyVocal/` with easyvocal.png, easyvocal.desktop and install.sh; `Archives` = zips with Unix modes in the external attributes and "made by Unix", ustar tar.gz with modes, never links, no .pdb; `Manifest` = `easyvocal-files.txt` in each install root: next to EasyVocal.exe, in `EasyVocal.app/Contents/Resources/`, in `EasyVocal/`) |
-| AI tools | `tools/EasyVocal.AiPack` (plain .NET console: `fetch` RVC's public files, `build` a pack, `voices` = write the bundled voices again from the recipe (the "generation script"), `list`, `bench`, `render` a recording through a voice offline or streamed); `tools/ai/export/*.py` (dev time only, a Python venv with torch/transformers/onnx and RVC's repository): `export_rvc.py templates` = the weight-less RVC v2 templates, `export_hubert.py template` = HuBERT's, `make_fixtures.py` = the tests' tiny models, `variants.py` = int8/fp16 (`hubert_int8.onnx`), `rel_attn_patch.py` = trace-friendly attention (same math) |
+| AI tools | `tools/EasyVocal.AiPack` (plain .NET console: `fetch` RVC's public files, `build` a pack, `voices` = write the bundled voices again from the recipe (the "generation script"), `list`, `bench`, `render` a recording through a voice offline or streamed, `pack` = the release assets (`PackRelease.cs`: engine + bundled voices + that OS's ONNX Runtime taken from the pinned NuGet packages (SHA-256 of each .nupkg in the code: `microsoft.ml.onnxruntime` 1.23.2 for macOS/Linux, `.directml` 1.23.0 + `microsoft.ai.directml` 1.15.4 for Windows) with their licences in `runtime/licenses/`, `engine/NOTICES.txt`, a `.sha256` per zip), `install` = the real download from the release (`PackInstaller` + `Downloader`, `--keep` the checked zip), `blends` = candidate bundled voices rendered offline for `judge_voices.py`); `tools/ai/export/*.py` (dev time only, a Python venv with torch/transformers/onnx and RVC's repository): `export_rvc.py templates` = the weight-less RVC v2 templates, `export_hubert.py template` = HuBERT's, `make_fixtures.py` = the tests' tiny models, `variants.py` = int8/fp16 (`hubert_int8.onnx`), `rel_attn_patch.py` = trace-friendly attention (same math), `judge_voices.py` = the bundled voices' pick (WavLM-base-plus-sv x-vectors + the MFCC print of `VoiceMeasure`: `survey` the 109 speakers, `candidates` 3-way blends, `judge` a table / `--pick` the least-alike set) |
 
 ## AI voices (`src/EasyVocal.Ai`)
 
@@ -186,12 +197,16 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   quality, source/licence), `SettingsWindow.Ai.cs` (quality, device, Hear me plays the AI voice, Test my PC, Remove AI
   mode… with "also delete the AI voices I added"), `CreditsWindow` (`THIRD-PARTY-NOTICES.md`, embedded).
 - **Sessions** (`Runtime/OrtRuntime.cs`): `AiDevice` Cpu / Gpu (DirectML on Windows, CoreML on macOS, CUDA on Linux,
-  each tried and falling back to the CPU when missing or refused, logged) / Auto; "auto" in the settings = the CPU
+  each tried and falling back to the CPU when missing or refused, logged; DirectML tries the adapters in
+  `Runtime/GpuAdapters.cs` order: DXGI's high-performance one (a laptop's discrete GPU, not adapter 0 that shows the
+  desktop), then other hardware adapters by their own memory, never a software one) / Auto; "auto" in the settings = the CPU
   until the benchmark found the GPU better. Intra-op threads = physical cores ≤ 6, spinning off. Runs are serialised
   per model (DirectML). `Engine/ModelCache.cs` shares loaded models between streams (leases; unloaded 3 min after
   the last one).
 - **Store** (`Store/`): the pack is `<data>/AI` (`AiPack.cs`: `engine/hubert.onnx` [+ `hubert_int8.onnx`],
-  `engine/rmvpe.onnx`, `engine/rvc-v2-40k.pth` = the base generator, optional `engine/templates/` overriding the
+  `engine/rmvpe_f16.onnx` (RMVPE with its big weights stored as fp16: `OnnxRewriter.StoreHalf` at build time,
+  `ExpandHalf` back to the same fp32 graph at load via `AiPack.ReadPitchModel`; tensors under 4096 values stay fp32;
+  `rmvpe.onnx` as published is still read), `engine/rvc-v2-40k.pth` = the base generator, optional `engine/templates/` overriding the
   built-in ones, `runtime/`, `voices/<id>/voice.json` + files). `VoiceManifest` (id — persisted, never renamed — name,
   emoji, kind `speaker`/`pth`/`onnx-pair`/`onnx-single`, rate, `TargetHz`/`Key`, source/licence/attribution, files with
   SHA-256). `VoiceImporter`: `.pth` (checked by building and running it once), `.onnx` (recognised by its inputs,
@@ -204,13 +219,16 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   32k/40k/48k; the rate from `sr`, the config or the first upsampler's kernel; unknown layouts or unused tensors →
   "isn't supported yet"). `SessionOptions.AddInitializer` must not be used for this (ORT has used the file's values).
 - **Bundled voices** (`Voices/bundled-voices.json` → `PackBuilder.WriteBundledVoices`): blends of the base model's
-  VCTK speaker vectors (MIT model, CC BY 4.0 data, attribution in each voice.json), each a speaker picked far from the
-  others by WavLM speaker similarity mixed 0.65/0.35 with its nearest neighbour, with a natural pitch. `PackBuilder`
+  VCTK speaker vectors (MIT model, CC BY 4.0 data, attribution in each voice.json), each three speakers 0.6/0.25/0.15 (a
+  main one and two near it but far from the other voices), the set of 8 picked as the least alike by WavLM speaker
+  similarity and the MFCC print (`tools/ai/export/judge_voices.py` on `blends` renders; vs the earlier 2-way set on three
+  recordings: highest similarity 0.933 → 0.909, mean 0.639 → 0.621, MFCC distance min 12.1 → 13.2, recognised 39 → 42/48),
+  each with a natural pitch. Listening samples: `voice-samples/ai/` (git-ignored). `PackBuilder`
   makes the whole pack from `BaseModels` (RVC's Hugging Face files, SHA-256 = their LFS ids) with no Python.
 - **Pack install** (`Store/PackInstaller.cs`): the pack is a release of its own (tag `PackSource.Tag` = `ai-pack-v1`;
   assets `EasyVocal-AI-win-x64.zip`, `-macos-arm64.zip`, `-macos-x64.zip`, `-linux-x64.zip`; SHA-256 from the asset's
   `digest` or a `<asset>.sha256` next to it, none = refused). Downloaded to `<data>/AI.download/` (resumable with a
-  range; wrong bytes never resumed), unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE, base generator,
+  range; wrong bytes never resumed), unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE (fp16-stored or not), base generator,
   voices), moved into `<data>/AI` part by part (imported `voices/user-*` untouched; a loaded runtime is kept), then
   `AiVoiceService.PackChanged` re-probes ONNX Runtime (no restart). Remove deletes engine, bundled voices, runtime (a
   loaded one at the next start: `CleanLeftovers`). `Downloader`: https only (`AllowLoopbackHttp` for tests/e2e),
@@ -250,7 +268,9 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
 ## Global constraints
 
 - Windows 10/11, macOS (arm64 and x64) and Linux x64 (PipeWire or PulseAudio; hotkeys need X11, none on Wayland).
-  Downloads (1.0.0): win-x64 zip 38 MB, macOS arm64 / x64 .app zips 38 / 40 MB, Linux tar.gz 36 MB (limit 100 MB).
+  Downloads (2.0.0): win-x64 zip 38.6 MB, macOS arm64 / x64 .app zips 38.5 / 39.9 MB, Linux tar.gz 36.8 MB (limit 100 MB).
+  AI pack (`ai-pack-v1`, ≤ ~1 GB): win-x64 540 MB, macos-arm64 535 MB, macos-x64 536 MB, linux-x64 533 MB (MiB; ~790 MB
+  unpacked).
   The macOS .app is **unsigned** (no codesign on Windows; the .NET SDK strips the apphost's signature when it bundles it
   off a Mac), so Apple Silicon needs the README's one-time `codesign --force --deep --sign -`; Intel just needs
   right-click → Open. Latency off Windows: PortAudio / PulseAudio blocks of 10 ms, about 20 ms queued.

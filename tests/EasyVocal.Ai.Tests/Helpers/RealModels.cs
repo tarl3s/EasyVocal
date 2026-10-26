@@ -8,10 +8,12 @@ namespace EasyVocal.Ai.Tests.Helpers;
 /// there by <see cref="PackBuilder"/> (with the bundled voices). An int8 content encoder is added when the cache has
 /// one (<c>hubert_int8.onnx</c>, made with tools/ai/export/variants.py) or <c>EV_AI_INT8</c> points to one.
 /// <c>EV_AI_OFFLINE=1</c> never downloads. When the models can't be had the tests say "SKIPPED" and why.
+/// <c>EV_AI_PACK=&lt;data folder&gt;</c> uses an installed AI pack as it is instead (CI: the release's, installed by
+/// <c>tools/EasyVocal.AiPack install</c>), with its own ONNX Runtime from <c>runtime/</c>.
 /// </summary>
 public static class RealModels
 {
-    private const string Stamp = ".built-v1";
+    private const string Stamp = ".built-v2"; // v2: RMVPE stored as fp16
     private static readonly Lazy<(string? Data, string? Skip)> Built = new(Build);
 
     public static string Cache => Environment.GetEnvironmentVariable("EV_AI_MODELS") is { Length: > 0 } d ? d
@@ -31,10 +33,21 @@ public static class RealModels
     /// <summary>On a CI runner (GitHub Actions sets CI=true): timing budgets are reported, not enforced.</summary>
     public static bool OnCi => string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>An installed pack to test as it is (<c>EV_AI_PACK</c>), or null.</summary>
+    public static string? InstalledPack => Environment.GetEnvironmentVariable("EV_AI_PACK") is { Length: > 0 } p ? p : null;
+
     private static (string?, string?) Build()
     {
         try
         {
+            if (InstalledPack is string installed)
+            {
+                var p = new AiPack(installed);
+                if (!p.Installed) return (null, "EV_AI_PACK has no AI pack: " + p.Root);
+                // its own runtime, before anything loads ONNX Runtime (the test program carries one too)
+                if (Directory.Exists(p.RuntimeFolder)) Runtime.OrtRuntime.UseNativeFolder(p.RuntimeFolder);
+                return (installed, null);
+            }
             var data = Path.Combine(Cache, "data");
             var pack = new AiPack(data);
             string stamp = Path.Combine(pack.Root, Stamp);

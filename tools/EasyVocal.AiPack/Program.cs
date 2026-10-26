@@ -14,6 +14,15 @@ using EasyVocal.Core.Sounds;
 //   bench  --data <dir> [--voice <id>]            the one-time benchmark (what it would suggest here)
 //   render --data <dir> --voice <id> --in <audio> --out <wav> [--quality light|balanced|max] [--stream] [--cpu]
 //                                                 a recording through a voice (offline, or streamed like the app)
+//   pack   --data <dir> --out <dir> [--rid win-x64|osx-arm64|osx-x64|linux-x64|all] [--cache <dir>]
+//                                                 the release assets: EasyVocal-AI-<os>.zip + .sha256 from <dir>/AI and
+//                                                 that OS's ONNX Runtime (NuGet, SHA-256 pinned)
+//   blends --data <dir> --recipe <json> --in <wav>[;<wav>...] --out <dir>
+//                                                 candidate bundled voices (a recipe like bundled-voices.json) rendered
+//                                                 offline on each recording as <id>__<recording>.wav, to judge them
+//                                                 (tools/ai/export/judge_voices.py); writes them into <dir>/AI/voices
+//   install --data <dir> [--asset <name>] [--keep <dir>]
+//                                                 the real install from the GitHub release, as the app does it
 var a = new Args(args);
 try
 {
@@ -36,8 +45,22 @@ try
         }
         case "bench": Bench(a); break;
         case "render": await Render(a); break;
+        case "pack":
+        {
+            var root = new AiPack(a.Need("data")).Root;
+            var rid = a.Get("rid") ?? "all";
+            var cache = Path.Combine(Path.GetDirectoryName(DefaultCache())!, "nuget");
+            foreach (var r in rid == "all" ? PackRelease.Rids : new[] { rid })
+            {
+                var zip = await PackRelease.Make(root, r, a.Need("out"), a.Get("cache") ?? cache);
+                Console.WriteLine($"{Path.GetFileName(zip)}: {new FileInfo(zip).Length / 1048576.0:0.0} MB, sha256 {File.ReadAllText(zip + ".sha256").Split(' ')[0]}");
+            }
+            break;
+        }
+        case "blends": Blends(a); break;
+        case "install": await PackRelease.Install(a.Need("data"), a.Get("asset"), a.Get("keep")); break;
         default:
-            Console.WriteLine("commands: fetch | build | voices | list | bench | render  (see tools/EasyVocal.AiPack/Program.cs)");
+            Console.WriteLine("commands: fetch | build | voices | list | bench | render | pack | install  (see tools/EasyVocal.AiPack/Program.cs)");
             return 2;
     }
     return 0;
@@ -73,6 +96,25 @@ static async Task Build(Args a)
     Console.WriteLine($"AI pack in {pack.Root} ({sw.Elapsed.TotalSeconds:0} s)");
     foreach (var f in Directory.EnumerateFiles(pack.Root, "*", SearchOption.AllDirectories))
         Console.WriteLine($"  {Path.GetRelativePath(pack.Root, f),-50} {new FileInfo(f).Length / 1048576.0,8:0.0} MB");
+}
+
+static void Blends(Args a)
+{
+    var pack = new AiPack(a.Need("data"));
+    var recipe = System.Text.Json.JsonSerializer.Deserialize<BundledRecipe>(File.ReadAllText(a.Need("recipe")), new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true, ReadCommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true })!;
+    PackBuilder.WriteBundledVoices(Path.Combine(pack.EngineFolder, BaseModels.BaseGeneratorId + ".pth"), pack.VoicesFolder, recipe);
+    var inputs = a.Need("in").Split(';').Select(p => (Name: Path.GetFileNameWithoutExtension(p), Audio: SoundLoader.Load(p))).ToList();
+    var outDir = a.Need("out");
+    Directory.CreateDirectory(outDir);
+    using var s = new AiVoiceService(a.Need("data"));
+    var sw = Stopwatch.StartNew();
+    foreach (var e in recipe.Voices)
+    {
+        using var v = s.Load(e.Id, AiQuality.Balanced, AiDevice.Cpu);
+        foreach (var (name, x) in inputs)
+            SoundWriter.WriteWav(Path.Combine(outDir, e.Id + "__" + name + ".wav"), RvcOffline.Convert(v.Voice, x, indexRate: 0));
+        Console.WriteLine($"{e.Id}: {string.Join(" + ", e.Mix.Select(m => $"{m[1]:0.##}x{(int)m[0]}"))} ({sw.Elapsed.TotalSeconds:0} s)");
+    }
 }
 
 static void Bench(Args a)

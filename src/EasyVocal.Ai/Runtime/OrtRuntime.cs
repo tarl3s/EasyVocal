@@ -42,10 +42,22 @@ public static class OrtRuntime
         foreach (var file in new[] { "onnxruntime.dll", "libonnxruntime.dylib", "libonnxruntime.so" })
         {
             var full = Path.Combine(dir, file);
-            if (File.Exists(full) && NativeLibrary.TryLoad(full, out var h)) return h;
+            if (!File.Exists(full)) continue;
+            // DirectML.dll is loaded by onnxruntime.dll only when a session asks for it, by name: Windows would find its own
+            // (older) copy in System32 first. Loaded from the pack beforehand, that one is used.
+            var dml = Path.Combine(dir, "DirectML.dll");
+            if (file == "onnxruntime.dll" && File.Exists(dml) && !NativeLibrary.TryLoad(dml, out _)) AppLog.Info("AI: the pack's DirectML.dll didn't load");
+            if (NativeLibrary.TryLoad(full, out var h))
+            {
+                NativePath = full;
+                return h;
+            }
         }
         return IntPtr.Zero;
     }
+
+    /// <summary>The native library loaded from the pack's runtime folder (null: none, or .NET's own probing found it).</summary>
+    public static string? NativePath { get; private set; }
 
     /// <summary>Forget a failed load (a runtime folder was just installed): the next <see cref="TryLoad"/> tries again.</summary>
     public static void ProbeAgain()
@@ -63,7 +75,7 @@ public static class OrtRuntime
                 try
                 {
                     var v = OrtEnv.Instance().GetVersionString();
-                    AppLog.Info("AI: ONNX Runtime " + v + " (" + string.Join(", ", OrtEnv.Instance().GetAvailableProviders()) + ")");
+                    AppLog.Info("AI: ONNX Runtime " + v + " (" + string.Join(", ", OrtEnv.Instance().GetAvailableProviders()) + ") from " + (NativePath ?? "the program's folder"));
                     loaded = true;
                 }
                 catch (Exception ex) when (ex is DllNotFoundException or TypeInitializationException or EntryPointNotFoundException or BadImageFormatException or OnnxRuntimeException)
@@ -123,21 +135,27 @@ public static class OrtRuntime
         string? gpu = device == AiDevice.Cpu ? null : GpuProvider();
         if (gpu != null)
         {
-            SessionOptions? o = null;
-            try
+            // DirectML: the high-performance (discrete) adapter first, then the others (GpuAdapters); one device elsewhere
+            var devices = gpu == "DirectML" ? GpuAdapters.DirectMLDevices : new[] { 0 };
+            foreach (int id in devices)
             {
-                o = Options(threads, gpu);
-                var s = open(o);
-                AppLog.Info($"AI: {what} runs on {gpu}");
-                return new OnnxModel(what, s, o, gpu);
+                SessionOptions? o = null;
+                try
+                {
+                    o = Options(threads, gpu, id);
+                    var s = open(o);
+                    AppLog.Info($"AI: {what} runs on {gpu}{(devices.Count > 1 || id != 0 ? " (adapter " + id + ")" : "")}");
+                    return new OnnxModel(what, s, o, gpu);
+                }
+                catch (Exception ex)
+                {
+                    o?.Dispose();
+                    AppLog.Info($"AI: {what} can't use {gpu}{(devices.Count > 1 ? " on adapter " + id : "")} ({First(ex.Message)})");
+                }
             }
-            catch (Exception ex)
-            {
-                o?.Dispose();
-                AppLog.Info($"AI: {what} can't use {gpu} ({First(ex.Message)}); using the CPU");
-            }
+            AppLog.Info($"AI: {what} uses the CPU");
         }
-        var co = Options(threads, null);
+        var co = Options(threads, null, 0);
         try
         {
             var cs = open(co);
@@ -157,7 +175,7 @@ public static class OrtRuntime
         return nl > 0 ? s[..nl].Trim() : s.Trim();
     }
 
-    private static SessionOptions Options(int threads, string? gpu)
+    private static SessionOptions Options(int threads, string? gpu, int deviceId)
     {
         var o = new SessionOptions
         {
@@ -173,13 +191,13 @@ public static class OrtRuntime
         {
             case "DirectML":
                 o.EnableMemoryPattern = false;
-                o.AppendExecutionProvider_DML(0);
+                o.AppendExecutionProvider_DML(deviceId);
                 break;
             case "CoreML":
                 o.AppendExecutionProvider_CoreML(CoreMLFlags.COREML_FLAG_USE_NONE);
                 break;
             case "CUDA":
-                o.AppendExecutionProvider_CUDA(0);
+                o.AppendExecutionProvider_CUDA(deviceId);
                 break;
         }
         return o;

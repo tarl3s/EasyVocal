@@ -5,7 +5,8 @@ namespace EasyVocal.Ai.Store;
 /// <code>
 /// engine/hubert.onnx        content encoder, fp32 (MIT, RVC's HuBERT base)
 /// engine/hubert_int8.onnx   the same, int8 (optional: used on the CPU when present)
-/// engine/rmvpe.onnx         pitch model (optional: YIN at every level without it)
+/// engine/rmvpe_f16.onnx     pitch model, its weights stored as fp16 (expanded to fp32 at load: <see cref="ReadPitchModel"/>);
+///                           or engine/rmvpe.onnx as published (optional: YIN at every level without either)
 /// engine/rvc-v2-40k.pth     RVC v2 40k base generator (MIT; trained on VCTK, CC BY 4.0): the bundled voices' generator
 /// runtime/                  ONNX Runtime's native library (optional: else .NET's own probing)
 /// voices/&lt;id&gt;/voice.json  one folder per voice (see <see cref="VoiceManifest"/>)
@@ -14,7 +15,7 @@ namespace EasyVocal.Ai.Store;
 public sealed class AiPack
 {
     public const string FolderName = "AI";
-    public const string ContentFp32 = "hubert.onnx", ContentInt8 = "hubert_int8.onnx", Rmvpe = "rmvpe.onnx";
+    public const string ContentFp32 = "hubert.onnx", ContentInt8 = "hubert_int8.onnx", Rmvpe = "rmvpe.onnx", RmvpeF16 = "rmvpe_f16.onnx";
 
     public AiPack(string dataFolder)
     {
@@ -38,7 +39,17 @@ public sealed class AiPack
         return File.Exists(i8) ? i8 : null;
     }
 
-    public string? RmvpeModel => File.Exists(Path.Combine(EngineFolder, Rmvpe)) ? Path.Combine(EngineFolder, Rmvpe) : null;
+    /// <summary>The pitch model's file (the fp16-stored one first), or null.</summary>
+    public string? RmvpeModel => new[] { RmvpeF16, Rmvpe }.Select(f => Path.Combine(EngineFolder, f)).FirstOrDefault(File.Exists);
+
+    /// <summary>
+    /// A pitch model file as runnable ONNX bytes: <c>rmvpe_f16.onnx</c> keeps its weights as fp16 (172 MB instead of
+    /// 345 MB in the download) and is expanded back to fp32 here (<see cref="Import.OnnxRewriter.ExpandHalf"/>).
+    /// </summary>
+    public static byte[] ReadPitchModel(string path) =>
+        string.Equals(Path.GetFileName(path), RmvpeF16, StringComparison.OrdinalIgnoreCase)
+            ? Import.OnnxRewriter.ExpandHalf(File.ReadAllBytes(path))
+            : Import.OnnxRewriter.ReadModel(path);
 
     /// <summary>A base generator by id ("rvc-v2-40k" → engine/rvc-v2-40k.pth), or null when missing.</summary>
     public string? BaseGenerator(string id)

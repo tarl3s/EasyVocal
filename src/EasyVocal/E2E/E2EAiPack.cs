@@ -11,49 +11,77 @@ using EasyVocal.Ai.Store;
 namespace EasyVocal.E2E;
 
 /// <summary>
-/// The e2e run's AI voices: an AI pack made of the tiny test models (tests/EasyVocal.Ai.Tests/Fixtures, a few MB, the
-/// real interfaces), zipped like a release asset and served with its release description by a small web server on
-/// 127.0.0.1, so the app downloads, checks and installs it the way it does from GitHub. The server also serves a voice
-/// .pth for "Add AI voice → from a link".
+/// The e2e run's AI pack, served with its release description by a small web server on 127.0.0.1, so the app
+/// downloads, checks and installs it the way it does from GitHub; the server also serves a voice .pth for "Add AI
+/// voice → from a link". Either the tiny test models (tests/EasyVocal.Ai.Tests/Fixtures, a few MB, the real
+/// interfaces; <c>--e2e-ai &lt;fixtures&gt;</c>) zipped like a release asset, or a real release asset
+/// (<c>--e2e-ai-pack &lt;EasyVocal-AI-*.zip&gt;</c>: the packaged app on the real models with the pack's own ONNX
+/// Runtime; the pack's base generator is the .pth imported by file and by link).
 /// </summary>
-internal sealed class TinyAiPack : IDisposable
+internal sealed class E2EAiPack : IDisposable
 {
-    public const string AssetName = "EasyVocal-AI-test.zip";
-    public const string VoiceA = "tiny-a", VoiceB = "tiny-b";
+    public const string TinyAssetName = "EasyVocal-AI-test.zip";
+    private const string TinyVoiceA = "tiny-a";
 
     private readonly LocalWeb web = new();
 
-    private TinyAiPack(string fixtures, string work)
+    private E2EAiPack(string zip, string assetName, string voicePth, string voiceA, bool real)
     {
-        Fixtures = fixtures;
-        var zip = Path.Combine(work, AssetName);
-        BuildZip(fixtures, Path.Combine(work, "pack"), zip);
-        var bytes = File.ReadAllBytes(zip);
-        string sha = Downloader.Sha256Of(zip);
-        web.Map("/pack.zip", bytes);
+        AssetName = assetName;
+        VoicePth = voicePth;
+        VoiceA = voiceA;
+        Real = real;
+        var note = zip + ".sha256";
+        string sha = real && File.Exists(note) ? File.ReadAllText(note).Split(' ', '\n')[0].Trim() : Downloader.Sha256Of(zip);
+        long size = new FileInfo(zip).Length;
+        web.MapFile("/pack.zip", zip);
         var release = new
         {
             tag_name = PackSource.Tag,
-            assets = new object[] { new { name = AssetName, browser_download_url = web.Url("/pack.zip"), size = bytes.Length, digest = "sha256:" + sha } },
+            assets = new object[] { new { name = assetName, browser_download_url = web.Url("/pack.zip"), size, digest = "sha256:" + sha } },
         };
         web.Map("/release", Encoding.UTF8.GetBytes(JsonSerializer.Serialize(release)));
-        web.Map("/voices/by-link", File.ReadAllBytes(Path.Combine(fixtures, "tiny.pth"))); // no extension: told by its bytes
-        PackBytes = bytes.Length;
+        web.MapFile("/voices/by-link", voicePth); // no extension: told by its bytes
+        PackBytes = size;
     }
 
-    public string Fixtures { get; }
+    /// <summary>The release asset's name the app is told to install.</summary>
+    public string AssetName { get; }
+
+    /// <summary>The bundled voice the step plays.</summary>
+    public string VoiceA { get; }
+
+    /// <summary>The real pack: real models, so the step waits longer.</summary>
+    public bool Real { get; }
+
     public string ReleaseUrl => web.Url("/release");
     public string VoiceLink => web.Url("/voices/by-link");
     public long PackBytes { get; }
-    public string VoicePth => Path.Combine(Fixtures, "tiny.pth");
 
-    /// <summary>Null when the fixtures aren't there (the e2e run then skips the AI steps).</summary>
-    public static TinyAiPack? TryCreate(string? fixtures, string work)
+    /// <summary>A voice .pth to import by file (and, served, by link).</summary>
+    public string VoicePth { get; }
+
+    /// <summary>
+    /// The real pack when <paramref name="realZip"/> is given, else the tiny one made of <paramref name="fixtures"/>;
+    /// null when neither is there (the e2e run then skips the AI steps).
+    /// </summary>
+    public static E2EAiPack? TryCreate(string? fixtures, string? realZip, string work)
     {
+        if (realZip != null && File.Exists(realZip))
+        {
+            Directory.CreateDirectory(work);
+            Downloader.AllowLoopbackHttp = true; // the test server is plain http on this computer
+            var pth = Path.Combine(work, "voice.pth");
+            using (var z = ZipFile.OpenRead(realZip))
+                (z.GetEntry("engine/" + BaseModels.BaseGeneratorId + ".pth") ?? throw new InvalidDataException("The AI pack has no base generator.")).ExtractToFile(pth, true);
+            return new E2EAiPack(realZip, Path.GetFileName(realZip), pth, BundledRecipe.Embedded().Voices[0].Id, real: true);
+        }
         if (fixtures == null || !File.Exists(Path.Combine(fixtures, "tiny.pth"))) return null;
         Directory.CreateDirectory(work);
-        Downloader.AllowLoopbackHttp = true; // the test server is plain http on this computer
-        return new TinyAiPack(fixtures, work);
+        Downloader.AllowLoopbackHttp = true;
+        var zip = Path.Combine(work, TinyAssetName);
+        BuildZip(fixtures, Path.Combine(work, "pack"), zip);
+        return new E2EAiPack(zip, TinyAssetName, Path.Combine(fixtures, "tiny.pth"), TinyVoiceA, real: false);
     }
 
     private static void BuildZip(string fx, string dir, string zip)
@@ -68,8 +96,8 @@ internal sealed class TinyAiPack : IDisposable
         File.Copy(Path.Combine(fx, "tiny_enc.onnx.gz"), Path.Combine(engine, "templates", "rvc_v2_f0_40k_enc.onnx.gz"));
         File.Copy(Path.Combine(fx, "tiny_dec.onnx.gz"), Path.Combine(engine, "templates", "rvc_v2_f0_40k_dec.onnx.gz"));
         var emb = TorchCheckpoint.Load(Path.Combine(fx, "tiny.pth")).Tensors["emb_g.weight"];
-        Voice(dir, VoiceA, "Tiny A", "👩", RvcTemplates.SpeakerVector(emb, 0), 220);
-        Voice(dir, VoiceB, "Tiny B", "👨", RvcTemplates.SpeakerVector(emb, 1), 110);
+        Voice(dir, TinyVoiceA, "Tiny A", "👩", RvcTemplates.SpeakerVector(emb, 0), 220);
+        Voice(dir, "tiny-b", "Tiny B", "👨", RvcTemplates.SpeakerVector(emb, 1), 110);
         if (File.Exists(zip)) File.Delete(zip);
         ZipFile.CreateFromDirectory(dir, zip);
         Directory.Delete(dir, true);
@@ -100,11 +128,11 @@ internal sealed class TinyAiPack : IDisposable
     public void Dispose() => web.Dispose();
 }
 
-/// <summary>A tiny HTTP/1.1 server on 127.0.0.1 that answers GETs with fixed bytes (no HttpListener: it needs URL reservations on Windows).</summary>
+/// <summary>A tiny HTTP/1.1 server on 127.0.0.1 that answers GETs with fixed bytes or a file (no HttpListener: it needs URL reservations on Windows).</summary>
 internal sealed class LocalWeb : IDisposable
 {
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
-    private readonly Dictionary<string, byte[]> routes = new();
+    private readonly Dictionary<string, (byte[]? Bytes, string? File)> routes = new();
     private readonly CancellationTokenSource stop = new();
 
     public LocalWeb()
@@ -117,7 +145,13 @@ internal sealed class LocalWeb : IDisposable
 
     public void Map(string path, byte[] body)
     {
-        lock (routes) routes[path] = body;
+        lock (routes) routes[path] = (body, null);
+    }
+
+    /// <summary>Serves a file from disk (read as it is sent: the real AI pack is ~700 MB).</summary>
+    public void MapFile(string path, string file)
+    {
+        lock (routes) routes[path] = (null, file);
     }
 
     private async Task AcceptLoop()
@@ -146,13 +180,15 @@ internal sealed class LocalWeb : IDisposable
                     head.Append((char)one[0]);
                 }
                 var path = head.ToString().Split(' ')[1];
-                byte[]? body;
-                lock (routes) routes.TryGetValue(path, out body);
-                var status = body == null ? "404 Not Found" : "200 OK";
-                body ??= Encoding.ASCII.GetBytes("not found");
+                (byte[]? Bytes, string? File) route;
+                bool found;
+                lock (routes) found = routes.TryGetValue(path, out route);
+                using Stream body = !found ? new MemoryStream(Encoding.ASCII.GetBytes("not found"))
+                    : route.File != null ? File.OpenRead(route.File) : new MemoryStream(route.Bytes!);
+                var status = found ? "200 OK" : "404 Not Found";
                 var h = Encoding.ASCII.GetBytes($"HTTP/1.1 {status}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: {body.Length}\r\n\r\n");
                 await s.WriteAsync(h, stop.Token);
-                await s.WriteAsync(body, stop.Token);
+                await body.CopyToAsync(s, 1 << 20, stop.Token);
                 await s.FlushAsync(stop.Token);
             }
             catch (Exception) { /* the client went away */ }

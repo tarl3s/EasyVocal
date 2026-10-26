@@ -115,7 +115,40 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
 - **Leve:** download pequeno, quase nenhum uso de CPU parado, poucos por cento enquanto você fala.
 - **Desligado ou Normal = sua voz limpa.** Seus amigos continuam te ouvindo. O EasyVocal sempre abre na voz **Normal**, para você
   nunca entrar numa chamada com um filtro ligado sem querer (todo o resto fica como você deixou).
-- **Vozes de IA: em breve**, como um download opcional separado.
+- **🧠 Vozes com IA** (opcional): soe como outra pessoa, não como um efeito. Veja abaixo.
+
+## 🧠 Vozes com IA
+
+O EasyVocal 2.0 também muda a sua voz com IA: quem está do outro lado da chamada ouve **outra pessoa falando com as
+suas palavras e a sua entonação**, e não a sua voz com um efeito. Roda no seu próprio PC (nada é enviado para lugar
+nenhum) com modelos de voz RVC, no Windows, no macOS e no Linux.
+
+- **Baixar o modo IA** uma vez pela aba Vozes (um clique, cerca de 550 MB; dá para pausar e ele continua de onde
+  parou). O download é conferido (SHA-256) antes de qualquer coisa ser instalada. O EasyVocal em si continua um
+  download pequeno: se você nunca ligar o modo IA, nada muda. **Configurações → Remover o modo IA…** apaga tudo e
+  libera o espaço.
+- **Vêm 8 vozes com IA** (🧠 nos cartões): mulheres e homens jovens, um homem de voz grave e calma, um homem de voz
+  rouca, uma voz jovem e leve, uma voz neutra. Elas são feitas de uma coleção pública de vozes para pesquisa (VCTK,
+  CC BY 4.0) e não soam como nenhuma das pessoas dela em particular. Escolha uma como qualquer outra voz: a voz que
+  estava tocando continua enquanto ela carrega.
+- **Níveis de qualidade** (Configurações → IA): **Leve** (o mais rápido, pesa pouco no PC), **Equilibrado** e
+  **Máximo** (o mais realista, o mais pesado). Depois do download o EasyVocal testa o seu PC uma vez e escolhe o
+  melhor nível que roda sem falhas; **Testar meu PC** faz isso de novo. Cada voz pode ter o próprio nível. A barra de
+  cima mostra o atraso com que a voz com IA chega na chamada (**IA · N ms**, cerca de 0,4 a 0,6 segundo: as
+  vozes com IA são para falar, não para cantar no tempo).
+- **Do que o seu PC precisa:** qualquer PC de 64 bits dos últimos anos roda o **Leve** no processador (4 núcleos ou
+  mais); **Equilibrado** e **Máximo** pedem um processador recente de 6 núcleos ou uma placa de vídeo. O EasyVocal
+  usa a placa de vídeo quando ajuda (DirectML no Windows: AMD, Intel ou NVIDIA; Core ML no Mac; no Linux, o
+  processador) e volta para o processador sozinho. Cerca de 1,4 GB livres no disco durante a instalação, 800 MB
+  depois; de 0,4 a 1,5 GB de memória enquanto uma voz com IA toca.
+- **Adicione as suas vozes:** **Adicionar voz com IA** aceita um arquivo de modelo RVC (`.pth` ou `.onnx`, com o
+  `.index` dele se tiver, ou um `.zip` com eles) ou um link para ele (uma página do Hugging Face também serve). Não
+  precisa de Python nem de PyTorch.
+- **Use só vozes que você tem o direito de usar.** Não use uma voz para se passar por uma pessoa real sem o
+  consentimento dela. O EasyVocal não traz vozes de famosos nem de personagens.
+- **Créditos:** os modelos e os dados de voz estão em **Configurações → Créditos e licenças** e em
+  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (RVC, HuBERT, RMVPE, o corpus VCTK, ONNX Runtime, DirectML). O
+  pacote de IA é um download separado, numa página de release própria (`ai-pack-v1`), com as licenças dentro dele.
 
 ## Créditos
 
@@ -128,6 +161,10 @@ Pronto: o que você faz no EasyVocal é o que o outro lado da chamada escuta.
   [NVorbis](https://github.com/NVorbis/NVorbis) (MIT, OGG) com NAudio.Vorbis, e [PortAudio](https://www.portaudio.com/)
   (MIT, macOS e Linux) pelos pacotes nativos do [PortAudioSharp2](https://github.com/csukuangfj/PortAudioSharp2).
 - Interface: [Avalonia](https://avaloniaui.net/) (MIT).
+- Vozes com IA (o pacote de IA opcional): [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)
+  (MIT), HuBERT (fairseq, MIT), [RMVPE](https://github.com/Dream-High/RMVPE) (Apache-2.0), vozes do
+  [CSTR VCTK Corpus](https://doi.org/10.7488/ds/2645) (CC BY 4.0), [ONNX Runtime](https://onnxruntime.ai/) (MIT) e,
+  no Windows, o DirectML (Microsoft). Detalhes em [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 - O EasyVocal tem licença MIT. Veja [LICENSE](LICENSE).
 
 ## Para desenvolvedores

@@ -34,7 +34,7 @@ public sealed class BundledRecipe
 /// <summary>
 /// Makes an AI pack folder from the public upstream files (<see cref="BaseModels"/>) with no Python: the content
 /// encoder from HuBERT's weights and the embedded weight-less template, RMVPE and the base generator copied, the
-/// bundled voices written from their recipe. The int8 content encoder (made once with Python, see
+/// bundled voices written from their recipe, RMVPE with its weights stored as fp16. The int8 content encoder (made once with Python, see
 /// <c>tools/ai/export/variants.py</c>) can be added from a file. The release's pack (phase 4) is built this way.
 /// </summary>
 public static class PackBuilder
@@ -78,7 +78,7 @@ public static class PackBuilder
             {
                 Id = e.Id, Name = e.Name, Emoji = e.Emoji, Kind = VoiceKinds.Speaker, Base = recipe.Base, SampleRate = 40000,
                 TargetHz = e.TargetHz > 0 ? e.TargetHz : null, BuiltIn = true, Description = e.Description,
-                Source = recipe.Source + ": " + string.Join(" + ", e.Mix.Select(x => $"{x[1]:0.##}×speaker {(int)x[0]}")),
+                Source = recipe.Source + ": " + string.Join(" + ", e.Mix.Select(x => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{x[1]:0.##}×speaker {(int)x[0]}"))),
                 Licence = recipe.Licence, Attribution = recipe.Attribution,
                 Files = { new VoiceFile { Role = "speaker", Name = "speaker.f32", Size = new FileInfo(spk).Length, Sha256 = Downloader.Sha256Of(spk) } },
             };
@@ -103,7 +103,8 @@ public static class PackBuilder
             log?.Report("wrote " + file);
         }
         Put(AiPack.ContentFp32, t => File.WriteAllBytes(t, BuildContentEncoder(baseFiles[BaseModels.Hubert.Id])));
-        if (baseFiles.TryGetValue(BaseModels.Rmvpe.Id, out var rmvpe)) Put(AiPack.Rmvpe, t => File.Copy(rmvpe, t, true));
+        // RMVPE's weights as fp16: half the download, expanded back to fp32 when it is loaded (AiPack.ReadPitchModel)
+        if (baseFiles.TryGetValue(BaseModels.Rmvpe.Id, out var rmvpe)) Put(AiPack.RmvpeF16, t => File.WriteAllBytes(t, OnnxRewriter.StoreHalf(File.ReadAllBytes(rmvpe))));
         Put(BaseModels.BaseGeneratorId + ".pth", t => File.Copy(baseFiles[BaseModels.Generator40k.Id], t, true));
         if (int8Content != null) Put(AiPack.ContentInt8, t => File.Copy(int8Content, t, true));
         WriteBundledVoices(Path.Combine(pack.EngineFolder, BaseModels.BaseGeneratorId + ".pth"), pack.VoicesFolder);

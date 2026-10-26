@@ -34,11 +34,14 @@ internal sealed class AppArgs
     /// <summary><c>--e2e-ai &lt;folder&gt;</c>: the tiny AI test models (tests/EasyVocal.Ai.Tests/Fixtures): the e2e run also tests the AI voices.</summary>
     public string? AiFixtures { get; private init; }
 
+    /// <summary><c>--e2e-ai-pack &lt;EasyVocal-AI-*.zip&gt;</c>: a real AI pack release asset: the e2e run tests the AI voices on the real models (served locally like the release).</summary>
+    public string? AiPackZip { get; private init; }
+
     public bool Allowed => !TestMode || DataFolder != null;
 
     public static AppArgs Parse(IReadOnlyList<string> args)
     {
-        string? data = null, aiFixtures = null;
+        string? data = null, aiFixtures = null, aiPack = null;
         bool smoke = false, e2e = false, relaunch = false, hidden = false, updateCheck = false, updateNow = false;
         for (int i = 0; i < args.Count; i++)
         {
@@ -47,11 +50,12 @@ internal sealed class AppArgs
             else if (args[i] == "--e2e") e2e = true;
             else if (args[i] == "--e2e-relaunch") e2e = relaunch = true;
             else if (args[i] == "--e2e-ai" && i + 1 < args.Count) aiFixtures = Path.GetFullPath(args[++i]);
+            else if (args[i] == "--e2e-ai-pack" && i + 1 < args.Count) aiPack = Path.GetFullPath(args[++i]);
             else if (args[i] == "--tray") hidden = true;
             else if (args[i] == "--update-check") updateCheck = true;
             else if (args[i] == "--update-now") updateNow = true;
         }
         return new AppArgs { DataFolder = data, SmokeTest = smoke, E2E = e2e, E2ERelaunch = relaunch, StartHidden = hidden,
-            UpdateCheck = updateCheck, UpdateNow = updateNow, AiFixtures = aiFixtures };
+            UpdateCheck = updateCheck, UpdateNow = updateNow, AiFixtures = aiFixtures, AiPackZip = aiPack };
     }
 }
