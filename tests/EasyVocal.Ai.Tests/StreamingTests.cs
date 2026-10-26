@@ -200,9 +200,9 @@ public class StreamingTests
     [Fact]
     public void A_worker_that_falls_far_behind_skips_ahead()
     {
-        var fake = new FakeBlocks(100, i => i < 3 ? 1200 : 0);
+        var fake = new FakeBlocks(100, i => i < 2 ? 1200 : 0);
         using var c = Make(fake);
-        var (y, _) = FeedRealTime(b => c.Process(b), Tones(4));
+        var (y, _) = FeedRealTime(b => c.Process(b), Tones(5.5));
         var st = c.Stats;
         output.WriteLine(st.ToString());
         Assert.True(st.Overloads >= 1);
