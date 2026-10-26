@@ -31,10 +31,11 @@ public sealed record AiStreamStats(
 /// model one block at a time (<see cref="RvcStream"/>) with resampling to 16 kHz and back.
 /// <para>
 /// Every output sample has its input's position: the audio thread asks for position <c>now − L</c>
-/// (L = one block + a cushion for the processing time). When that sample isn't there yet (the PC is busy, the
-/// stream is starting) it plays the input from that same moment instead (the "dry" voice, time-aligned) with a 5 ms
-/// crossfade, starting from the last good audio mirrored (so nothing clicks), and counts an under-run; the cushion
-/// then grows by 20 ms (applied while the dry voice plays). When the worker falls more than three blocks behind it
+/// (L = one block + a cushion for the processing time). When that sample isn't there yet (the PC is busy) the gap is
+/// covered with the last good converted audio, repeated back and forth from its newest sample (so nothing clicks) and
+/// fading to silence over 100 ms, then a 5 ms crossfade back to the voice; it counts an under-run and the cushion grows
+/// by 20 ms. The person's own (dry) voice is never played instead: before the first converted audio and after a
+/// worker error it is silence. When the worker falls more than three blocks behind it
 /// skips ahead (an overload). Nothing here allocates, locks or waits on the audio thread.
 /// </para>
 /// </summary>
@@ -45,14 +46,23 @@ public sealed class AiVoiceConverter : IVoiceConverter
     private const int Ring = 1 << RingBits, Mask = Ring - 1;
     private const int Fade = Rate * 5 / 1000;                // 5 ms
     private const int Bump = Rate * 20 / 1000;               // the cushion grows by 20 ms after an under-run
-    private const float FadeStep = 1f / Fade;
+    /// <summary>How much of the last good audio a gap repeats (20 ms).</summary>
+    private const int HoldLength = Rate * 20 / 1000;
+    private const int HoldRing = 2048, HoldMask = HoldRing - 1; // > HoldLength + Fade: a gap during the fade-in still has its audio
+    /// <summary>A gap fades the repeated audio to silence over 100 ms.</summary>
+    private const int ConcealLength = Rate * 100 / 1000;
+    private const float ConcealStep = 1f / ConcealLength;
+    private const int FallbackMax = 2048;
+    /// <summary>After 20 s without a gap the cushion gives back 10 ms (down to where it started).</summary>
+    private const long DecayAfter = Rate * 20L;
+    private const int Shrink = Rate * 10 / 1000;
 
     private readonly Func<(IBlockConverter Stream, IDisposable? Lease)> makeStream;
     private readonly int blockSamples48;
     private readonly int maxCushion;
     private readonly string provider;
     private readonly float[] inRing = new float[Ring], outRing = new float[Ring];
-    private readonly float[] hold = new float[Fade];         // the last wet audio played, to fade out from
+    private readonly float[] hold = new float[HoldRing];     // the last wet audio played (a gap repeats it)
     private readonly AutoResetEvent wake = new(false);
     private readonly Thread worker;
     private volatile bool disposed;
@@ -68,15 +78,21 @@ public sealed class AiVoiceConverter : IVoiceConverter
     // audio thread only
     private int cushion;                                      // samples
     private int pendingCushion;
-    private float wetGain;
-    private bool hadWet;
-    private int holdPos;
-    private int replay;
-    private long lastWakeBlock = -1;
     private long lastWet = long.MinValue;                     // the last wet position played
-    private int shiftBy, shiftLeft;                           // the dry read's crossfade after the cushion grew
-    private int dryOffset;                                    // worker → audio: the resamplers' delay + the scheme's (wet lags its position)
+    private bool concealing = true;                           // no converted audio for this sample: the gap is covered
+    private int fadeIn;                                       // samples left of the crossfade from the cover back to the voice
+    private long heldCount;                                   // wet samples kept in hold (absolute count)
+    private long concealStart, concealEnd, concealAt;         // the held stretch being repeated (absolute counts)
+    private int concealDir;
+    private float concealGain;
     private int resamplerDelay;                               // worker → stats
+    private int dryLag;                                       // worker → audio: the resamplers' delay + the scheme's (the voice lags its position)
+    private readonly int startCushion;
+    private long sinceUnderrun;                               // wet samples played since the last gap
+    private int skipBy, skipLeft;                             // the crossfade after the cushion shrank
+    private readonly VoiceShifter shifter = new(Rate);        // the stand-in voice (gaps, the start, a failed worker)
+    private readonly float[] fallbackBuf = new float[FallbackMax];
+    private readonly AiFallback fallback;
 
     // stats (written by one thread, read anywhere)
     private int underruns, overloads, blocks;
@@ -90,15 +106,20 @@ public sealed class AiVoiceConverter : IVoiceConverter
     /// <param name="blockSamples48">One block at 48 kHz.</param>
     /// <param name="cushionMs">The expected processing time of one block (95th percentile) plus a margin.</param>
     /// <param name="algorithmicMs">What the scheme adds on top (crossfade + search, resamplers).</param>
+    /// <param name="fallback">The stand-in voice played where no converted audio is (null = <see cref="AiFallback.Default"/>).</param>
     public AiVoiceConverter(Func<(IBlockConverter Stream, IDisposable? Lease)> makeStream, int blockSamples48, double cushionMs,
-        double algorithmicMs, string provider)
+        double algorithmicMs, string provider, AiFallback? fallback = null)
     {
         this.makeStream = makeStream;
+        this.fallback = fallback ?? AiFallback.Default;
+        shifter.PitchSemitones = this.fallback.Semitones;
+        shifter.FormantFactor = this.fallback.Formant;
         this.blockSamples48 = blockSamples48;
         this.provider = provider;
         AlgorithmicSamples = (int)(algorithmicMs * Rate / 1000);
         cushion = Math.Max(Rate * 30 / 1000, (int)(cushionMs * Rate / 1000));
         maxCushion = Math.Max(cushion * 2, Rate * 400 / 1000);
+        startCushion = cushion;
         blockSeconds = blockSamples48 / (double)Rate;
         worker = new Thread(Work) { IsBackground = true, Name = "EasyVocal AI voice" };
         try { worker.Priority = ThreadPriority.AboveNormal; }
@@ -117,6 +138,12 @@ public sealed class AiVoiceConverter : IVoiceConverter
     public int CushionSamples => Volatile.Read(ref cushion);
 
     public bool IsDisposed => disposed;
+
+    /// <summary>Converted audio has been played (any thread).</summary>
+    public bool Ready => ready;
+
+    /// <summary>Why the worker stopped (null while it runs).</summary>
+    public string? Error => error;
 
     /// <summary>Tests: input written so far / output available up to (absolute positions).</summary>
     internal long WrittenSamples => Volatile.Read(ref written);
@@ -146,103 +173,161 @@ public sealed class AiVoiceConverter : IVoiceConverter
 
 
     public IVoiceConverter CreateFollower() =>
-        new AiVoiceConverter(makeStream, blockSamples48, cushion * 1000.0 / Rate, AlgorithmicSamples * 1000.0 / Rate, provider);
+        new AiVoiceConverter(makeStream, blockSamples48, cushion * 1000.0 / Rate, AlgorithmicSamples * 1000.0 / Rate, provider, fallback);
 
     // ---------------- audio thread ----------------
 
     public void Process(Span<float> x)
     {
-        if (disposed || error != null) return;
+        if (disposed) return; // the chain fades a converter out after it was let go: the audio passes untouched
+        for (int i = 0; i < x.Length; i += FallbackMax) ProcessPart(x.Slice(i, Math.Min(FallbackMax, x.Length - i)));
+    }
+
+    private void ProcessPart(Span<float> x)
+    {
         int n = x.Length;
         long t0 = written;
 
-        // the input, for the worker and for the time-aligned dry voice
+        // the input, for the worker (and the stand-in voice)
         int at = (int)(t0 & Mask);
         int first = Math.Min(n, Ring - at);
         x[..first].CopyTo(inRing.AsSpan(at));
         if (first < n) x[first..].CopyTo(inRing);
         Volatile.Write(ref written, t0 + n);
-        long blockNo = (t0 + n) / Math.Max(1, blockSamples48 / 4);
-        if (blockNo != lastWakeBlock)
-        {
-            lastWakeBlock = blockNo;
-            wake.Set();
-        }
+        try { wake.Set(); }
+        catch (ObjectDisposedException) { return; } // the worker is gone (disposed meanwhile)
 
         long avail = Volatile.Read(ref produced);
         long from = Volatile.Read(ref producedFrom);
         long valid = Volatile.Read(ref resetAt);
         if (from > valid) valid = from;
         long start = t0 - (blockSamples48 + cushion); // L (the algorithmic part of the delay is inside the audio itself)
-        int dryLag = Volatile.Read(ref dryOffset);
+
+        // The stand-in voice: the input from the same moment as the converted audio, shifted towards the AI voice.
+        var fb = fallbackBuf.AsSpan(0, n);
+        long dryAt = start - Volatile.Read(ref dryLag) + shifter.LatencySamples;
         long end = t0 + n;
         for (int i = 0; i < n; i++)
         {
+            long q = dryAt + i;
+            fb[i] = q >= 0 && q < end && end - q < Ring ? inRing[(int)(q & Mask)] : 0f;
+        }
+        shifter.Process(fb);
+
+        for (int i = 0; i < n; i++)
+        {
             long p = start + i;
-            float dry = Dry(p - dryLag, end);
-            if (shiftLeft > 0)
-            {
-                // the read position just moved back (a bigger cushion): crossfade from where it was
-                float g = shiftLeft / (float)Fade;
-                dry += (Dry(p - dryLag + shiftBy, end) - dry) * g;
-                shiftLeft--;
-            }
             bool have = p > lastWet && p >= valid && p < avail && avail - p < Ring; // never the same wet sample twice
-            float wet;
             if (have)
             {
-                wet = outRing[(int)(p & Mask)];
+                float wet = outRing[(int)(p & Mask)];
+                if (skipLeft > 0)
+                {
+                    // the cushion just shrank: crossfade from where the read was
+                    long old = p - skipBy;
+                    if (old >= valid && old < avail) wet += (outRing[(int)(old & Mask)] - wet) * (skipLeft / (float)Fade);
+                    skipLeft--;
+                }
                 lastWet = p;
-                hadWet = true;
-                replay = 0;
-                hold[holdPos] = wet;
-                holdPos = holdPos + 1 == Fade ? 0 : holdPos + 1;
-                if (wetGain < 1f) { wetGain += FadeStep; if (wetGain > 1f) wetGain = 1f; }
+                if (concealing)
+                {
+                    concealing = false;
+                    fadeIn = Fade; // from the cover back to the voice
+                }
+                if (fadeIn > 0)
+                {
+                    float c = Cover(fb[i]);
+                    x[i] = c + (wet - c) * (1f - fadeIn / (float)Fade);
+                    fadeIn--;
+                }
+                else x[i] = wet;
+                hold[(int)(heldCount & HoldMask)] = wet;
+                heldCount++;
+                sinceUnderrun++;
                 if (!ready) ready = true;
             }
             else
             {
-                if (hadWet)
+                if (!concealing)
                 {
-                    hadWet = false;
-                    if (p >= valid) // not a reset: the worker was late
+                    concealing = true;
+                    fadeIn = 0;
+                    if (heldCount > 0 && p >= valid) // the worker was late (not a reset or the stream's start)
                     {
                         Interlocked.Increment(ref underruns);
+                        sinceUnderrun = 0;
                         if (cushion + pendingCushion + Bump <= maxCushion) pendingCushion += Bump;
                     }
+                    StartConceal();
                 }
-                // the last good audio, mirrored (continuous at the seam), while it fades out
-                replay++;
-                int k = holdPos - replay;
-                if (k < 0) k += Fade;
-                wet = replay <= Fade ? hold[k] : 0f;
-                if (wetGain > 0f) { wetGain -= FadeStep; if (wetGain < 0f) wetGain = 0f; }
+                x[i] = Cover(fb[i]);
             }
-            x[i] = dry + (wet - dry) * wetGain;
         }
 
-        if (pendingCushion > 0 && wetGain == 0f)
+        if (pendingCushion > 0 && concealing)
         {
-            // only while the dry voice plays: moving the read position back repeats a little of it (crossfaded)
+            // while the gap is covered: reading further back makes the gap 20 ms longer, never repeats the voice
             cushion += pendingCushion;
-            shiftBy = pendingCushion;
-            shiftLeft = Fade;
             pendingCushion = 0;
+        }
+        else if (!concealing && skipLeft == 0 && sinceUnderrun > DecayAfter && cushion - Shrink >= startCushion)
+        {
+            // a long time without a gap: give back 10 ms of delay (crossfaded)
+            cushion -= Shrink;
+            skipBy = Shrink;
+            skipLeft = Fade;
+            sinceUnderrun = 0;
         }
     }
 
-    /// <summary>The input at position <paramref name="p"/> (0 before the start or when it is no longer in the ring).</summary>
-    private float Dry(long p, long end) => p >= 0 && end - p < Ring ? inRing[(int)(p & Mask)] : 0f;
+    /// <summary>
+    /// What a gap plays: the last good audio repeated (see <see cref="StartConceal"/>), fading over 100 ms into the
+    /// stand-in voice (the input shifted towards the AI voice) — never the person's own voice.
+    /// </summary>
+    private float Cover(float standIn)
+    {
+        float g = concealGain > 0f ? concealGain : 0f;
+        return NextConceal() + standIn * (1f - g);
+    }
+
+    /// <summary>
+    /// The gap starts: repeat the last good audio (the last <see cref="HoldLength"/> samples, back and forth from the
+    /// newest one, so it is continuous at every turn) while it fades out over <see cref="ConcealLength"/>.
+    /// Nothing held (the stream's start, a reset) = the stand-in voice at once.
+    /// </summary>
+    private void StartConceal()
+    {
+        long count = Math.Min(heldCount, HoldLength);
+        concealEnd = heldCount - 1;
+        concealStart = heldCount - count;
+        concealAt = Math.Max(concealStart, concealEnd - 1);
+        concealDir = -1;
+        concealGain = count > 1 ? 1f : 0f;
+    }
+
+    private float NextConceal()
+    {
+        if (concealGain <= 0f) return 0f;
+        float v = hold[(int)(concealAt & HoldMask)] * concealGain;
+        concealAt += concealDir;
+        if (concealAt < concealStart) { concealAt = Math.Min(concealEnd, concealStart + 1); concealDir = 1; }
+        else if (concealAt > concealEnd) { concealAt = Math.Max(concealStart, concealEnd - 1); concealDir = -1; }
+        concealGain -= ConcealStep;
+        return v;
+    }
 
     public void Reset()
     {
         if (disposed) return;
         Volatile.Write(ref resetAt, written);
-        wetGain = 0f;
-        hadWet = false;
-        replay = Fade + 1;
-        Array.Clear(hold);
-        wake.Set();
+        concealing = true; // a new stream: the stand-in voice until it plays (the old audio isn't repeated)
+        concealGain = 0f;
+        fadeIn = 0;
+        heldCount = 0;
+        skipLeft = 0;
+        shifter.Reset();
+        try { wake.Set(); }
+        catch (ObjectDisposedException) { }
     }
 
     public void Dispose()
@@ -251,6 +336,7 @@ public sealed class AiVoiceConverter : IVoiceConverter
         disposed = true;
         try { wake.Set(); }
         catch (ObjectDisposedException) { }
+        if (!worker.IsAlive) { try { wake.Dispose(); } catch (Exception) { } }
     }
 
     // ---------------- worker ----------------
@@ -274,6 +360,7 @@ public sealed class AiVoiceConverter : IVoiceConverter
         {
             try { stream?.Dispose(); } catch (Exception) { }
             try { lease?.Dispose(); } catch (Exception) { }
+            if (disposed) wake.Dispose(); // only once nobody wakes it any more (the audio thread checks disposed first; a late Set is caught)
         }
     }
 
@@ -283,7 +370,7 @@ public sealed class AiVoiceConverter : IVoiceConverter
         var up = new PolyResampler(stream.SampleRate, Rate);
         int rd = (int)Math.Round(down.DelayIn + up.DelayIn * Rate / stream.SampleRate);
         Volatile.Write(ref resamplerDelay, rd);
-        Volatile.Write(ref dryOffset, rd + AlgorithmicSamples);
+        Volatile.Write(ref dryLag, rd + AlgorithmicSamples);
         int b16 = stream.BlockSamples16;
         int bOut = stream.BlockSamplesOut;
         var fifo = new float[b16 * 4];
@@ -381,5 +468,28 @@ public sealed class AiVoiceConverter : IVoiceConverter
             blockMsCount++;
         }
         Interlocked.Increment(ref blocks);
+    }
+}
+
+/// <summary>
+/// The stand-in voice an AI voice plays where it has no converted audio (a gap the cushion couldn't cover, the
+/// stream's start, a worker that failed): the person's voice shifted towards the AI voice, so their own voice never
+/// reaches the call while an AI voice is picked.
+/// </summary>
+public sealed record AiFallback(double Semitones, double Formant)
+{
+    /// <summary>A few semitones up with a lighter voice body: never the voice as it is.</summary>
+    public static AiFallback Default { get; } = new(4, 1.12);
+
+    /// <summary>
+    /// Towards a voice's natural pitch (<paramref name="targetHz"/>) from an average speaking voice (140 Hz), plus its
+    /// key; at least 3 semitones either way, at most 9, the voice body following the pitch.
+    /// </summary>
+    public static AiFallback Towards(double? targetHz, double key)
+    {
+        double semis = key + (targetHz is > 40 and < 1000 ? 12 * Math.Log2(targetHz.Value / 140.0) : 0);
+        if (Math.Abs(semis) < 3) semis = semis < 0 ? -3 : 3;
+        semis = Math.Clamp(semis, -9, 9);
+        return new AiFallback(semis, semis > 0 ? 1.12 : 0.88);
     }
 }

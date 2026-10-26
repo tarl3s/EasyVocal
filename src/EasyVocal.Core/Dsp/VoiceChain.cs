@@ -246,6 +246,10 @@ public sealed class VoiceChain
 
     // The converter (AI voice) in front of the effects. The UI publishes it; the audio thread crossfades to it.
     private IVoiceConverter? converterPending;
+    private IVoiceConverter? converterWarm;      // UI → audio: fed the input but not heard, until it is swapped in
+    private IVoiceConverter? fedLast;            // audio thread: the warm converter fed in the last block
+    private bool noConverter;                    // a follower that never gets a converter
+    private readonly float[] warmScratch = new float[ChunkMax];
     private readonly System.Collections.Generic.List<VoiceChain> followers = new();
     private readonly float[] converterScratch = new float[ChunkMax];
     private readonly int converterFadeLength;
@@ -280,16 +284,21 @@ public sealed class VoiceChain
     /// <summary>
     /// A second chain with its own state that always plays this chain's sliders and ON/OFF (its own
     /// <see cref="Apply"/> and <see cref="Bypass"/> are ignored): another signal through the same voice.
+    /// <paramref name="withConverter"/> false: only the effects follow, never a converter (the engine mixes the sounds
+    /// into an AI voice's own stream instead of running a second one).
     /// </summary>
-    public VoiceChain CreateFollower()
+    public VoiceChain CreateFollower(bool withConverter = true)
     {
         var owner = leader ?? this;
-        var f = new VoiceChain(sampleRate, owner);
+        var f = new VoiceChain(sampleRate, owner) { noConverter = !withConverter };
         lock (owner.followers)
         {
             owner.followers.Add(f);
+            if (f.noConverter) return f;
             var c = Volatile.Read(ref owner.converterPending);
             if (c != null) f.converterPending = c.CreateFollower();
+            var w = Volatile.Read(ref owner.converterWarm);
+            if (w != null) f.converterWarm = w.CreateFollower();
         }
         return f;
     }
@@ -305,14 +314,50 @@ public sealed class VoiceChain
         lock (followers)
         {
             if (ReferenceEquals(Volatile.Read(ref converterPending), next)) return;
-            Volatile.Write(ref converterPending, next);
+            bool warmed = next != null && ReferenceEquals(Volatile.Read(ref converterWarm), next);
+            Volatile.Write(ref converterPending, next); // before the warm slot is cleared: the audio thread never feeds it twice
+            if (warmed) Volatile.Write(ref converterWarm, null);
             foreach (var f in followers)
             {
-                var old = Interlocked.Exchange(ref f.converterPending, next?.CreateFollower());
-                old?.Dispose(); // a disposed converter leaves the audio untouched: safe while the audio thread fades it out
+                if (f.noConverter) continue;
+                var mine = warmed ? Interlocked.Exchange(ref f.converterWarm, null) ?? next!.CreateFollower() : next?.CreateFollower();
+                var old = Interlocked.Exchange(ref f.converterPending, mine);
+                DisposeLater(old); // after its crossfade: a disposed converter passes the input as it is
             }
         }
     }
+
+    /// <summary>
+    /// UI thread: feeds <paramref name="next"/> the same input as the voice without it being heard, so it is already
+    /// converting when <see cref="SetConverter"/> swaps it in (an AI voice starts its stream while the previous voice
+    /// keeps playing). Null stops warming. The caller keeps owning it, as with SetConverter; the followers' warm streams
+    /// belong to the chain. Ignored on a follower.
+    /// </summary>
+    public void Warm(IVoiceConverter? next)
+    {
+        if (leader != null) return;
+        lock (followers)
+        {
+            if (ReferenceEquals(Volatile.Read(ref converterWarm), next)) return;
+            Volatile.Write(ref converterWarm, next);
+            foreach (var f in followers)
+            {
+                if (f.noConverter) continue;
+                var old = Interlocked.Exchange(ref f.converterWarm, next?.CreateFollower());
+                DisposeLater(old);
+            }
+        }
+    }
+
+    /// <summary>Disposes a converter the chain owned once its 40 ms crossfade is surely over (never on the audio thread).</summary>
+    private static void DisposeLater(IVoiceConverter? c)
+    {
+        if (c == null) return;
+        _ = System.Threading.Tasks.Task.Delay(250).ContinueWith(_ => c.Dispose(), System.Threading.Tasks.TaskScheduler.Default);
+    }
+
+    /// <summary>The converter being warmed up (see <see cref="Warm"/>); null = none.</summary>
+    public IVoiceConverter? Warming => Volatile.Read(ref converterWarm);
 
     /// <summary>The converter the chain plays (or fades to); null = none.</summary>
     public IVoiceConverter? Converter => Volatile.Read(ref converterPending);
@@ -354,6 +399,7 @@ public sealed class VoiceChain
         converterFading = false;
         converter = Owner.bypass ? null : Volatile.Read(ref converterPending);
         converter?.Reset();
+        Volatile.Read(ref converterWarm)?.Reset();
         Array.Clear(history);
         historyCount = 0;
         outgoing = null;
@@ -371,8 +417,20 @@ public sealed class VoiceChain
     {
         Decide();
         DecideConverter();
+        var warm = Volatile.Read(ref converterWarm);
+        if (ReferenceEquals(warm, converter) || ReferenceEquals(warm, converterOutgoing)) warm = null; // heard already: fed below
+        fedLast = warm;
         for (int i = 0; i < mono.Length; i += scratch.Length)
-            ProcessChunk(mono.Slice(i, Math.Min(scratch.Length, mono.Length - i)));
+        {
+            var chunk = mono.Slice(i, Math.Min(scratch.Length, mono.Length - i));
+            if (warm != null)
+            {
+                var w = warmScratch.AsSpan(0, chunk.Length);
+                chunk.CopyTo(w);
+                warm.Process(w); // the input the voice gets; its output isn't used yet
+            }
+            ProcessChunk(chunk);
+        }
     }
 
     private void Decide()
@@ -432,6 +490,8 @@ public sealed class VoiceChain
         if (converterFading) return;
         var want = Owner.bypass ? null : Volatile.Read(ref converterPending);
         if (ReferenceEquals(want, converter)) return;
+        // One that wasn't being fed until now (after OFF, or after none) starts a fresh stream: never audio it held from before.
+        if (want != null && !ReferenceEquals(want, fedLast)) want.Reset();
         converterOutgoing = converter;
         converter = want;
         converterFading = true;

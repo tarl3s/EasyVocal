@@ -108,7 +108,7 @@ public class PipelineTests
 
         Assert.True(st.Ready && st.Error == null, st.ToString());
         Assert.True(Signals.AllFinite(y));
-        // a runner too slow for this level (overloads, many under-runs: the dry voice fills in) can only show that nothing breaks
+        // a runner too slow for this level (overloads, many under-runs: the last converted audio fills in) can only show that nothing breaks
         bool keptUp = st.Overloads == 0 && st.Underruns <= 3;
         if (!keptUp) output.WriteLine("this computer is too slow for this level: only the invariants are checked");
         if (keptUp)

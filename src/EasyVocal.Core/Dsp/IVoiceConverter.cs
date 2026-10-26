@@ -26,7 +26,17 @@ public interface IVoiceConverter : IDisposable
 
     /// <summary>A second stream through the same voice with its own state (the sounds through the voice). UI thread.</summary>
     IVoiceConverter CreateFollower();
+
+    /// <summary>
+    /// It has given converted audio (any thread). A converter warming up in <see cref="VoiceChain.Warm"/> is swapped in
+    /// only once it is ready, so nobody hears it start.
+    /// </summary>
+    bool Ready => true;
+
+    /// <summary>Why it stopped converting (its worker failed), in plain words; null while it works (any thread).</summary>
+    string? Error => null;
 }
+
 
 /// <summary>What the app asks for an AI voice; <c>EasyVocal.Ai</c> implements it (tests pass a stand-in).</summary>
 public interface IVoiceConverterSource

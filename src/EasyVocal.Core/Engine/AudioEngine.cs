@@ -58,7 +58,7 @@ public sealed class AudioEngine : IDisposable
     private Session? session;                    // the devices in use (null when stopped)
     private EngineState state = EngineState.Stopped;
 
-    private volatile bool micMuted, hearMe, hearSounds = true, soundsUseVoice;
+    private volatile bool micMuted, hearMe, hearSounds = true, soundsUseVoice, hearConverted;
     private float inputLevel;
     private int processing;                      // 1 while a block is being processed (audio work never overlaps)
 
@@ -87,6 +87,7 @@ public sealed class AudioEngine : IDisposable
         public readonly float[] VoiceBuf = new float[Block];
         public readonly float[] SoundsBuf = new float[Block];
         public readonly float[] VoicedSoundsBuf = new float[Block];
+        public readonly float[] DryBuf = new float[Block];
         public readonly float[] CallBuf = new float[Block];
         public readonly float[] MonitorBuf = new float[Block];
         public readonly Limiter CallLimiter = new(AudioFormat.SampleRate);
@@ -101,7 +102,7 @@ public sealed class AudioEngine : IDisposable
         this.makeMonitor = makeMonitor ?? throw new ArgumentNullException(nameof(makeMonitor));
         this.chain = chain ?? throw new ArgumentNullException(nameof(chain));
         this.mixer = mixer ?? throw new ArgumentNullException(nameof(mixer));
-        soundsChain = chain.CreateFollower();
+        soundsChain = chain.CreateFollower(withConverter: false); // an AI voice takes the sounds into its own stream
     }
 
     /// <summary>Raised when <see cref="State"/> changes, on whichever thread noticed it.</summary>
@@ -130,6 +131,12 @@ public sealed class AudioEngine : IDisposable
 
     /// <summary>The soundboard goes through the voice too (off by default); turning it on or off crossfades over 5 ms.</summary>
     public bool SoundsUseVoice { get => soundsUseVoice; set => soundsUseVoice = value; }
+
+    /// <summary>
+    /// With an AI voice, Hear me plays the converted voice (true) or the person's own voice as they speak (false, the
+    /// default: hearing yourself a third of a second late makes talking hard). The call always gets the AI voice.
+    /// </summary>
+    public bool HearConvertedVoice { get => hearConverted; set => hearConverted = value; }
 
     /// <summary>Peak of the raw mic in the last block, 0..1 (also while muted).</summary>
     public float InputLevel => Volatile.Read(ref inputLevel);
@@ -517,13 +524,32 @@ public sealed class AudioEngine : IDisposable
             voice[i] = v;
         }
 
-        // The chain always hears the mic (it stays warm while muted); muting only silences what it gives back.
-        chain.Process(voice);
-        Ramp(voice, ref voiceGain, micMuted ? 0f : 1f);
-
         sounds.Clear();
         mixer.MixInto(sounds);
-        ThroughTheVoice(s, sounds);
+        var dry = s.DryBuf.AsSpan(0, n);
+        bool converting = chain.Converter != null && !chain.Bypass; // an AI voice (or fading into one)
+        if (converting)
+        {
+            // One stream: what is muted never reaches the AI voice, and with "sounds use the voice" the sounds are mixed
+            // into it before it converts (a second AI stream would double the work). The headphones get the voice as
+            // spoken unless the converted one is asked for.
+            Ramp(voice, ref voiceGain, micMuted ? 0f : 1f);
+            voice.CopyTo(dry);
+            if (soundsUseVoice)
+            {
+                for (int i = 0; i < n; i++) voice[i] += sounds[i];
+                sounds.Clear();
+            }
+            soundsChainStale = true;
+            chain.Process(voice);
+        }
+        else
+        {
+            // The chain always hears the mic (it stays warm while muted); muting only silences what it gives back.
+            chain.Process(voice);
+            Ramp(voice, ref voiceGain, micMuted ? 0f : 1f);
+            ThroughTheVoice(s, sounds);
+        }
 
         var callOut = s.Call;
         if (callOut != null)
@@ -558,6 +584,7 @@ public sealed class AudioEngine : IDisposable
         }
 
         // voice and sounds are not needed any more: scale them in place and sum.
+        if (converting && !hearConverted) dry.CopyTo(voice);
         Ramp(voice, ref meGain, meTarget);
         Ramp(sounds, ref soundsGain, soundsTarget);
         var mon = s.MonitorBuf.AsSpan(0, n);

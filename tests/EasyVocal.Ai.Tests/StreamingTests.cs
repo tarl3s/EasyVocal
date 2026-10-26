@@ -11,8 +11,10 @@ internal sealed class FakeBlocks : IBlockConverter
     private readonly Func<int, int> sleepMs;
     private int n;
 
-    public FakeBlocks(int blockMs, Func<int, int>? sleepMs = null, float gain = 1f, int throwAt = -1)
+    /// <param name="toneHz">When set, every block is this tone instead of the input (a "voice" that is easy to tell from the mic).</param>
+    public FakeBlocks(int blockMs, Func<int, int>? sleepMs = null, float gain = 1f, int throwAt = -1, double toneHz = 0)
     {
+        ToneHz = toneHz;
         BlockSamples16 = blockMs * 16;
         this.sleepMs = sleepMs ?? (_ => 0);
         Gain = gain;
@@ -25,6 +27,8 @@ internal sealed class FakeBlocks : IBlockConverter
     public string PitchName => "fake";
     public float Gain { get; }
     public int ThrowAt { get; }
+    public double ToneHz { get; }
+    private long toneAt;
     public int Steps => Volatile.Read(ref n);
     public int Resets;
     public bool Disposed;
@@ -35,6 +39,11 @@ internal sealed class FakeBlocks : IBlockConverter
         if (i == ThrowAt) throw new InvalidOperationException("boom");
         int ms = sleepMs(i);
         if (ms > 0) Thread.Sleep(ms);
+        if (ToneHz > 0)
+        {
+            for (int k = 0; k < blk16.Length; k++, toneAt++) output[k] = (float)(0.3 * Math.Sin(2 * Math.PI * ToneHz * toneAt / 16000.0));
+            return;
+        }
         for (int k = 0; k < blk16.Length; k++) output[k] = blk16[k] * Gain;
     }
 
@@ -44,8 +53,8 @@ internal sealed class FakeBlocks : IBlockConverter
 
 /// <summary>
 /// The audio thread's side of an AI voice (<see cref="AiVoiceConverter"/>) with stand-in workers: the delay is what it
-/// says, the audio thread never waits or allocates, a late worker is covered by the time-aligned dry voice without
-/// clicks (and counted), a stuck one is skipped past, errors and disposal are harmless.
+/// says, the audio thread never waits or allocates, a late worker is covered by the last converted audio (never the
+/// dry voice) without clicks, and counted, a stuck one is skipped past, errors and disposal are harmless.
 /// </summary>
 [Collection("Timing")]
 public class StreamingTests
@@ -177,7 +186,7 @@ public class StreamingTests
     }
 
     [Fact]
-    public void A_late_block_is_covered_by_the_dry_voice_without_a_click_and_counted()
+    public void A_late_block_is_covered_by_the_last_converted_audio_without_a_click_and_counted()
     {
         // fast blocks, then one far beyond the cushion
         var fake = new FakeBlocks(100, i => i == 12 ? 350 : 0);
@@ -195,6 +204,37 @@ public class StreamingTests
         Assert.True(c.CushionSamples > cushionBefore, "the cushion grew");
         Assert.True(maxJump < sineJump * 3 + 0.02, $"a click: step {maxJump}");
         Assert.All(y, v => Assert.True(float.IsFinite(v)));
+    }
+
+    /// <summary>Power of <paramref name="x"/> at one frequency (Goertzel), per sample.</summary>
+    private static double PowerAt(ReadOnlySpan<float> x, double hz)
+    {
+        double w = 2 * Math.PI * hz / Sr, k = 2 * Math.Cos(w), s1 = 0, s2 = 0;
+        foreach (var v in x)
+        {
+            double s = v + k * s1 - s2;
+            s2 = s1;
+            s1 = s;
+        }
+        return (s1 * s1 + s2 * s2 - k * s1 * s2) / ((double)x.Length * x.Length);
+    }
+
+    [Theory]
+    [InlineData(350)]  // a gap: the last converted audio repeated, then the stand-in voice
+    [InlineData(1300)] // an overload (the worker skips ahead): the stand-in voice
+    public void Gaps_overloads_and_the_start_never_play_the_dry_voice(int lateMs)
+    {
+        // The "AI voice" is a 1 kHz tone; the mic is 220 + 610 + 1370 Hz. Two blocks come far too late.
+        var fake = new FakeBlocks(100, i => i is 8 or 15 ? lateMs : 0, toneHz: 1000);
+        using var c = Make(fake, cushionMs: 40);
+        var x = Tones(4.5);
+        var (y, _) = FeedRealTime(b => c.Process(b), x);
+        var st = c.Stats;
+        double mic = PowerAt(x, 220), heard = PowerAt(y, 220), voice = PowerAt(y.AsSpan(Sr / 2), 1000);
+        output.WriteLine($"{st}; 220 Hz (the mic's): mic {mic:E2}, heard {heard:E2}; 1 kHz (the voice) {voice:E2}");
+        Assert.True(st.Underruns + st.Overloads >= 1, "the late blocks were gaps");
+        Assert.True(heard < mic * 0.05, "the mic's own voice never reaches the output");
+        Assert.True(voice > mic * 0.2, "the converted voice plays");
     }
 
     [Fact]
@@ -227,7 +267,7 @@ public class StreamingTests
     }
 
     [Fact]
-    public void A_worker_error_leaves_the_voice_untouched_and_is_reported()
+    public void A_worker_error_plays_the_stand_in_voice_never_the_mic_and_is_reported()
     {
         var fake = new FakeBlocks(100, throwAt: 2);
         using var c = Make(fake);
@@ -236,9 +276,12 @@ public class StreamingTests
         var sw = Stopwatch.StartNew();
         while (c.Stats.Error == null && sw.ElapsedMilliseconds < 2000) Thread.Sleep(5);
         Assert.Equal("boom", c.Stats.Error);
-        var buf = x.AsSpan(0, Chunk).ToArray();
-        c.Process(buf);
-        Assert.Equal(x.AsSpan(0, Chunk).ToArray(), buf);
+        Assert.Equal("boom", ((EasyVocal.Core.Dsp.IVoiceConverter)c).Error);
+        var y = FeedLockstep(c, x); // nothing converted any more: the stand-in voice (shifted), never the mic as it is
+        double mic = PowerAt(x.AsSpan(Sr / 2), 220), heard = PowerAt(y.AsSpan(Sr / 2), 220);
+        output.WriteLine($"220 Hz: mic {mic:E2}, after the error {heard:E2}; RMS {ImportTests.Rms(y.AsSpan(Sr / 2).ToArray()):0.000}");
+        Assert.True(heard < mic * 0.05, "the mic's own voice doesn't reach the output");
+        Assert.True(ImportTests.Rms(y.AsSpan(Sr / 2).ToArray()) > 0.03, "the stand-in voice plays");
         sw.Restart();
         while (!fake.Disposed && sw.ElapsedMilliseconds < 2000) Thread.Sleep(5);
         Assert.True(fake.Disposed, "the worker cleaned up after itself");

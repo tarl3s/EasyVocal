@@ -146,6 +146,7 @@ public class VoiceConverterTests
         Assert.True(c.Followers[0].Processed > 0);
 
         chain.SetConverter(new ScaleConverter(1f));
+        for (int i = 0; i < 200 && !c.Followers.All(f => f.Disposed); i++) System.Threading.Thread.Sleep(10); // after their crossfade
         Assert.All(c.Followers, f => Assert.True(f.Disposed, "the chain disposes the followers' streams it made"));
         Assert.False(c.Disposed, "the caller's converter stays the caller's");
         _ = late;
@@ -172,12 +173,48 @@ public class VoiceConverterTests
         var got = call.Written;
         int at = Sr / 4;
         Assert.Equal(x[at] * 0.5f, got[at + lag], 4);
-        Assert.Equal(x[at] * 0.5f, monitor.Written[at + lag], 4);
-        Assert.Single(c.Followers); // the sounds' chain has its own stream through the voice
+        Assert.Equal(x[at], monitor.Written[at + lag], 4); // Hear me: the voice as spoken (no delay to talk over)
+        Assert.Empty(c.Followers); // no second AI stream for the sounds
+
+        engine.HearConvertedVoice = true;
+        int from = monitor.Written.Length;
+        mic.Feed(x);
+        Assert.Equal(x[at] * 0.5f, monitor.Written[from + at + lag], 4); // asked for: the AI voice
 
         mixer.Set("s", Signals.Sine(880, 0.3, amp: 0.2f));
+        int before = c.Processed;
         mixer.Toggle("s", 1f);
-        mic.Feed(new float[Sr / 2]);
-        Assert.True(c.Followers[0].Processed > 0, "the sounds went through the voice");
+        int callFrom = call.Written.Length;
+        mic.Feed(new float[Sr / 4]);
+        var withSound = call.Written.AsSpan(callFrom + lag + 480, 4800).ToArray();
+        double peak = withSound.Max(Math.Abs);
+        Assert.InRange(peak, 0.07, 0.13); // the 0.2 sound at the voice's 0.5: it went into the AI voice's own stream
+        Assert.True(c.Processed > before);
+    }
+
+    [Fact]
+    public void A_warmed_converter_is_fed_unheard_then_swapped_in_and_OFF_then_ON_starts_it_afresh()
+    {
+        var chain = new VoiceChain(Sr);
+        var a = new ScaleConverter(0.5f);
+        chain.SetConverter(a);
+        var x = Signals.Sine(330, 0.2);
+        Run(chain, x);
+        var b = new ScaleConverter(0.25f);
+        chain.Warm(b);
+        var y = Run(chain, x);
+        Assert.True(b.Processed > 0, "the next voice is already fed");
+        Assert.Equal(x[^1] * 0.5f, y[^1], 5); // ...while the previous one is still the one heard
+        Assert.Same(b, chain.Warming);
+        chain.SetConverter(b);
+        Assert.Null(chain.Warming);
+        y = Run(chain, x);
+        Assert.Equal(x[^1] * 0.25f, y[^1], 5);
+        Assert.Equal(0, b.Resets); // warmed: its stream goes on
+        chain.Bypass = true;
+        Run(chain, x);
+        chain.Bypass = false;
+        Run(chain, x);
+        Assert.Equal(1, b.Resets); // back from OFF: a fresh stream, not what it held before
     }
 }

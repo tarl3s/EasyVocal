@@ -124,7 +124,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
                 : Models.TryAddRefs(loaded.Keys) ? Models.Lease(loaded.Keys) : throw new InvalidOperationException("The voice was unloaded.");
             return (new RvcStream(voice, s), lease);
         }
-        return new AiVoiceConverter(Make, s.BlockMs * 48, cushion, s.AlgorithmicMs, provider);
+        return new AiVoiceConverter(Make, s.BlockMs * 48, cushion, s.AlgorithmicMs, provider, AiFallback.Towards(loaded.Manifest.TargetHz, loaded.Manifest.Key));
     }
 
     /// <summary>The cushion for a level: from the block time measured here (95th percentile), else the level's default.</summary>
@@ -161,7 +161,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
                 rmvpe = Models.Acquire("rmvpe:" + dev, () => OrtRuntime.CreateFromFile("pitch model", rp, device, threads), keys);
             FeatureIndex? index = null;
             if (settingsForLevel.IndexRate > 0 && m.Index is VoiceFile ixf)
-                index = Models.Acquire("index:" + m.Id, () => FeatureIndex.Load(Voices.PathOf(m, ixf)), keys);
+                index = Models.Acquire("index:" + m.Id + ":" + ixf.Sha256, () => FeatureIndex.Load(Voices.PathOf(m, ixf)), keys);
             float[]? speaker = Speaker(m, entry);
             var voice = new RvcVoice(content, gen, speaker, rmvpe, index) { TargetHz = m.TargetHz, Key = m.Key };
             return new LoadedVoice(m, voice, quality, keys, Models.Lease(keys));
@@ -172,6 +172,9 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
             throw;
         }
     }
+
+    /// <summary>A voice's models by id, device and the files' SHA-256: a voice imported again under the same id never gets the old one.</summary>
+    private static string VoiceKey(VoiceManifest m, string dev) => "voice:" + m.Id + ":" + dev + ":" + string.Join("+", m.Files.Where(f => f.Role != "index").Select(f => f.Sha256));
 
     private GeneratorEntry Generator(VoiceManifest m, AiDevice device, int threads, List<string> keys)
     {
@@ -188,20 +191,20 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
             {
                 var f = m.File("model") ?? throw new InvalidDataException("The voice has no model file.");
                 var path = Voices.PathOf(m, f);
-                return Models.Acquire("voice:" + m.Id + ":" + dev, () => LoadPth(path, device, threads, m.Name), keys);
+                return Models.Acquire(VoiceKey(m, dev), () => LoadPth(path, device, threads, m.Name), keys);
             }
             case VoiceKinds.OnnxPair:
             {
                 var e = m.File("enc") ?? throw new InvalidDataException("The voice has no enc.onnx.");
                 var d = m.File("dec") ?? throw new InvalidDataException("The voice has no dec.onnx.");
-                return Models.Acquire("voice:" + m.Id + ":" + dev, () => new GeneratorEntry(new RvcGenerator(m.SampleRate,
+                return Models.Acquire(VoiceKey(m, dev), () => new GeneratorEntry(new RvcGenerator(m.SampleRate,
                     OrtRuntime.CreateFromFile(m.Name + " (encoder)", Voices.PathOf(m, e), device, threads),
                     OrtRuntime.CreateFromFile(m.Name + " (decoder)", Voices.PathOf(m, d), device, threads)), null), keys);
             }
             case VoiceKinds.OnnxSingle:
             {
                 var f = m.File("model") ?? throw new InvalidDataException("The voice has no model file.");
-                return Models.Acquire("voice:" + m.Id + ":" + dev, () => new GeneratorEntry(new RvcGenerator(m.SampleRate,
+                return Models.Acquire(VoiceKey(m, dev), () => new GeneratorEntry(new RvcGenerator(m.SampleRate,
                     OrtRuntime.CreateFromFile(m.Name, Voices.PathOf(m, f), device, threads)), null), keys);
             }
             default:
