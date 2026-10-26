@@ -130,7 +130,8 @@ nenhum) com modelos de voz RVC, no Windows, no macOS e no Linux.
 - **Vêm 8 vozes com IA** (🧠 nos cartões): mulheres e homens jovens, um homem de voz grave e calma, um homem de voz
   rouca, uma voz jovem e leve, uma voz neutra. Elas são feitas de uma coleção pública de vozes para pesquisa (VCTK,
   CC BY 4.0) e não soam como nenhuma das pessoas dela em particular. Escolha uma como qualquer outra voz: a voz que
-  estava tocando continua enquanto ela carrega.
+  estava tocando continua enquanto ela carrega (a partir da Normal, toca uma voz provisória que já não soa como você:
+  a sua própria voz nunca chega à chamada).
 - **Níveis de qualidade** (Configurações → IA): **Leve** (o mais rápido, pesa pouco no PC), **Equilibrado** e
   **Máximo** (o mais realista, o mais pesado). Depois do download o EasyVocal testa o seu PC uma vez e escolhe o
   melhor nível que roda sem falhas; **Testar meu PC** faz isso de novo. Cada voz pode ter o próprio nível. A barra de

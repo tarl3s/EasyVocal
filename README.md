@@ -125,7 +125,8 @@ with RVC voice models, on Windows, macOS and Linux.
   if you never turn AI mode on, nothing changes. **Settings → Remove AI mode…** deletes it and frees the space.
 - **8 AI voices come with it** (🧠 on their cards): young women and men, a deep calm man, a husky man, a light youthful
   voice, a neutral one. They are made from a public research voice collection (VCTK, CC BY 4.0) and sound like none of
-  its speakers in particular. Pick one like any other voice: the voice you had keeps playing while it loads.
+  its speakers in particular. Pick one like any other voice: the voice you had keeps playing while it loads (from
+  Normal, a quick stand-in that already doesn't sound like you plays instead: your own voice never reaches the call).
 - **Quality levels** (Settings → AI): **Light** (quickest, lightest on the PC), **Balanced** and **Max** (most
   realistic, heaviest). After the download EasyVocal tests your PC once and picks the best level that runs smoothly;
   **Test my PC** does it again. Each voice can have its own level. The top bar shows how late the AI voice reaches the
