@@ -22,6 +22,9 @@ public static class RealModels
     {
         var (data, why) = Built.Value;
         skip = why;
+        // CI must have them (it caches RVC's files): a missing model there is a failure, not a skip.
+        if (data == null && OnCi && Environment.GetEnvironmentVariable("EV_AI_OFFLINE") != "1")
+            throw new InvalidOperationException("CI must test with the real AI models: " + why);
         return data;
     }
 

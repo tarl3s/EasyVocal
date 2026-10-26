@@ -448,5 +448,6 @@
   "The download stalled.": "O download travou.",
   "This index is for another model type.": "Este .index é de outro tipo de modelo.",
   "The AI pack is incomplete.": "O pacote de IA está incompleto.",
-  "The AI runtime (ONNX Runtime) couldn't be loaded.": "Não deu para carregar o motor de IA (ONNX Runtime)."
+  "The AI runtime (ONNX Runtime) couldn't be loaded.": "Não deu para carregar o motor de IA (ONNX Runtime).",
+  "This AI voice's files are damaged.": "Os arquivos desta voz com IA estão danificados. Exclua e adicione de novo."
 }

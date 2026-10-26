@@ -126,6 +126,45 @@ public class PipelineTests
         if (Environment.GetEnvironmentVariable("EV_AI_STRICT") == "1") Assert.True(measuredMs <= budgetMs, $"{q} latency {measuredMs:0} ms over the {budgetMs} ms budget");
     }
 
+    /// <summary>
+    /// Light on the processor, the level every PC should run: once warmed up (2 s) not one gap, and the delay it reports
+    /// within Light's budget. A runner the benchmark found too slow for Light only reports.
+    /// </summary>
+    [Fact]
+    public async Task Light_on_the_processor_has_no_gaps_once_warm_and_keeps_its_latency_budget()
+    {
+        var settings = Measured.Value;
+        var data = RealModels.DataFolder(out var skip);
+        if (data == null || settings == null) { output.WriteLine("SKIPPED: " + skip); return; }
+        var light = Benchmark!.Runs.FirstOrDefault(r => r.Quality == AiQuality.Light && r.Provider == "CPU");
+        using var service = new AiVoiceService(data, () => settings);
+        using var conv = await service.CreateConverterAsync(Voice, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
+
+        var speech = Speech.Signal;
+        var x = new float[Sr * 7];
+        for (int i = 0; i < x.Length; i++) x[i] = speech[i % speech.Length];
+        long fed = 0;
+        int warmUnderruns = -1;
+        StreamingTests.FeedRealTime(b =>
+        {
+            conv.Process(b);
+            fed += b.Length;
+            if (warmUnderruns < 0 && fed >= Sr * 2) warmUnderruns = conv.Stats.Underruns;
+        }, x);
+        var st = conv.Stats;
+        int gaps = st.Underruns - warmUnderruns;
+        output.WriteLine($"Light on the CPU: {st}; gaps after warming up {gaps}; reported latency {conv.LatencyMs:0} ms; benchmark: {light}");
+        Assert.True(st.Ready && st.Error == null, st.ToString());
+        if (light is not { RealTime: true })
+        {
+            output.WriteLine("this computer can't run Light in real time (benchmark): only reported");
+            return;
+        }
+        Assert.Equal(0, st.Overloads);
+        Assert.True(gaps == 0, $"{gaps} gaps after warming up");
+        Assert.True(conv.LatencyMs <= 450, $"Light reports {conv.LatencyMs:0} ms, over its 450 ms budget");
+    }
+
     [Fact]
     public async Task Classic_effects_still_apply_after_an_AI_voice()
     {

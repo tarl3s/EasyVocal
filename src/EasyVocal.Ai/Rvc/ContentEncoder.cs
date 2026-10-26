@@ -16,6 +16,7 @@ public sealed class ContentEncoder : IDisposable
     private int cachedSamples = -1;
     private float[] input = Array.Empty<float>(), feats = Array.Empty<float>();
     private OrtValue? inVal, outVal;
+    private readonly OrtValue[] ins = new OrtValue[1], outs = new OrtValue[1]; // reused: no allocation per block
 
     public ContentEncoder(OnnxModel model)
     {
@@ -56,7 +57,9 @@ public sealed class ContentEncoder : IDisposable
             cachedSamples = s;
         }
         x16.CopyTo(input);
-        model.Run(inNames, new[] { inVal! }, outNames, new[] { outVal! });
+        ins[0] = inVal!;
+        outs[0] = outVal!;
+        model.Run(inNames, ins, outNames, outs);
         if (Index != null && IndexRate > 0) Index.Blend(feats, Math.Min(f, blendFrom / 2), f, IndexRate);
         int frames = s / 160;
         for (int i = 0; i < frames; i++)

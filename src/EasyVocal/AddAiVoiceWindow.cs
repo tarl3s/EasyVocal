@@ -60,7 +60,7 @@ public sealed class AddAiVoiceWindow : AppWindow
         fromFile.Children.Add(fileList);
 
         LinkBox = new TextBox { Watermark = "https://huggingface.co/…" };
-        LinkBox.TextChanged += (_, _) => Refresh();
+        LinkBox.TextChanged += (_, _) => { if (ErrorText != null) ErrorText.IsVisible = false; if (AddButton != null) Refresh(); };
         var fromLink = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         fromLink.Children.Add(new TextBlock { Text = L.T("A link to a .pth, .onnx or .zip file (a Hugging Face page works too)."), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) });
         fromLink.Children.Add(LinkBox);
@@ -68,7 +68,7 @@ public sealed class AddAiVoiceWindow : AppWindow
         tabs = new TabControl();
         tabs.Items.Add(new TabItem { Header = Header("📁", L.T("From a file")), Content = fromFile });
         tabs.Items.Add(new TabItem { Header = Header("🔗", L.T("From a link")), Content = fromLink });
-        tabs.SelectionChanged += (_, _) => Refresh();
+        tabs.SelectionChanged += (_, _) => { if (ErrorText != null) ErrorText.IsVisible = false; if (AddButton != null) Refresh(); };
 
         // ---- name and emoji ----
         NameBox = new TextBox { MaxLength = 30, Margin = new Thickness(0, 6, 0, 0), Watermark = L.T("From the file's name") };
@@ -84,7 +84,7 @@ public sealed class AddAiVoiceWindow : AppWindow
             Text = "⚠  " + L.T("Only use voices you have the right to use."),
             Foreground = Res.Brush("Warn"),
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 14, 0, 0),
+            Margin = new Thickness(20, 6, 20, 0), // under the form, always on screen
         };
         fill = new Border { HorizontalAlignment = HorizontalAlignment.Left, Width = 0, CornerRadius = new CornerRadius(4), Background = Res.Brush("Accent") };
         track = new Border { Height = 8, CornerRadius = new CornerRadius(4), Background = Res.Brush("Bg2"), Margin = new Thickness(0, 12, 0, 0), IsVisible = false, Child = fill };
@@ -97,7 +97,6 @@ public sealed class AddAiVoiceWindow : AppWindow
         form.Children.Add(NameBox);
         form.Children.Add(new TextBlock { Text = L.T("Emoji"), Classes = { "label" }, Margin = new Thickness(0, 14, 0, 0) });
         form.Children.Add(emojiBox);
-        form.Children.Add(RightsText);
         form.Children.Add(track);
         form.Children.Add(StatusText);
         form.Children.Add(ErrorText);
@@ -106,7 +105,7 @@ public sealed class AddAiVoiceWindow : AppWindow
         AddButton.Click += Add_Click;
         CancelButton = new Button { Content = L.T("Cancel"), MinWidth = 90, Margin = new Thickness(8, 0, 0, 0), IsCancel = true };
         CancelButton.Click += Cancel_Click;
-        var buttons = new DockPanel { Margin = new Thickness(20, 8, 20, 16), LastChildFill = false };
+        var buttons = new DockPanel { Margin = new Thickness(20, 10, 20, 16), LastChildFill = false };
         DockPanel.SetDock(CancelButton, Dock.Right);
         DockPanel.SetDock(AddButton, Dock.Right);
         buttons.Children.Add(CancelButton);
@@ -115,8 +114,11 @@ public sealed class AddAiVoiceWindow : AppWindow
         var root = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         var scroll = new ScrollViewer { Content = form, VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         root.Children.Add(scroll);
-        Grid.SetRow(buttons, 1);
-        root.Children.Add(buttons);
+        var bottom = new StackPanel();
+        bottom.Children.Add(RightsText);
+        bottom.Children.Add(buttons);
+        Grid.SetRow(bottom, 1);
+        root.Children.Add(bottom);
         Content = root;
         track.SizeChanged += (_, _) => SetFill(share);
         Closing += (_, _) => running?.Cancel();
@@ -139,6 +141,7 @@ public sealed class AddAiVoiceWindow : AppWindow
         tabs.SelectedIndex = 0;
         files.Clear();
         files.AddRange(paths);
+        ErrorText.IsVisible = false;
         Refresh();
     }
 

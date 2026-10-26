@@ -11,12 +11,15 @@ namespace EasyVocal.Ai.Tests.Helpers;
 /// </summary>
 public sealed class LocalHttp : IDisposable
 {
-    public sealed record Route(int Status, byte[] Body, bool SendLength = true, int PauseMs = 0, long? FakeLength = null);
+    public sealed record Route(int Status, byte[] Body, bool SendLength = true, int PauseMs = 0, long? FakeLength = null, bool Ranges = false);
 
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly Dictionary<string, Route> routes = new();
     private readonly CancellationTokenSource stop = new();
-    private int requests;
+    private int requests, rangedRequests;
+
+    /// <summary>Requests answered from an offset (HTTP 206).</summary>
+    public int RangedRequests => Volatile.Read(ref rangedRequests);
 
     public LocalHttp()
     {
@@ -64,14 +67,25 @@ public sealed class LocalHttp : IDisposable
                 Route? r;
                 lock (routes) routes.TryGetValue(path, out r);
                 r ??= new Route(404, Encoding.ASCII.GetBytes("not found"));
-                var h = new StringBuilder($"HTTP/1.1 {r.Status} {(r.Status == 200 ? "OK" : "Error")}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n");
-                if (r.SendLength) h.Append($"Content-Length: {r.FakeLength ?? r.Body.Length}\r\n");
+                var body = r.Body;
+                int status = r.Status;
+                string extra = "";
+                var range = System.Text.RegularExpressions.Regex.Match(head.ToString(), @"Range: bytes=(\d+)-", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (r.Ranges && status == 200 && range.Success && int.Parse(range.Groups[1].Value) is int from && from < body.Length)
+                {
+                    Interlocked.Increment(ref rangedRequests);
+                    extra = $"Content-Range: bytes {from}-{body.Length - 1}/{body.Length}\r\n";
+                    body = body[from..];
+                    status = 206;
+                }
+                var h = new StringBuilder($"HTTP/1.1 {status} {(status is 200 or 206 ? "OK" : "Error")}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n" + extra);
+                if (r.SendLength) h.Append($"Content-Length: {r.FakeLength ?? body.Length}\r\n");
                 h.Append("\r\n");
                 var hb = Encoding.ASCII.GetBytes(h.ToString());
                 await s.WriteAsync(hb, stop.Token);
-                for (int at = 0; at < r.Body.Length; at += 16384)
+                for (int at = 0; at < body.Length; at += 16384)
                 {
-                    await s.WriteAsync(r.Body.AsMemory(at, Math.Min(16384, r.Body.Length - at)), stop.Token);
+                    await s.WriteAsync(body.AsMemory(at, Math.Min(16384, body.Length - at)), stop.Token);
                     if (r.PauseMs > 0) await Task.Delay(r.PauseMs, stop.Token);
                 }
                 await s.FlushAsync(stop.Token);

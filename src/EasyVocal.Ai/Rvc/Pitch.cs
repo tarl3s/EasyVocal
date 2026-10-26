@@ -29,6 +29,7 @@ public sealed class Rmvpe : IPitchEstimator
     private int cachedPad = -1;
     private float[] melBuf = Array.Empty<float>(), outBuf = Array.Empty<float>();
     private OrtValue? inVal, outVal;
+    private readonly OrtValue[] ins = new OrtValue[1], outs = new OrtValue[1]; // reused: no allocation per block
 
     public float Threshold { get; set; } = 0.03f;
 
@@ -65,7 +66,9 @@ public sealed class Rmvpe : IPitchEstimator
         }
         Array.Clear(melBuf);
         mel.Compute(x, melBuf, np);
-        model.Run(inNames, new[] { inVal! }, outNames, new[] { outVal! });
+        ins[0] = inVal!;
+        outs[0] = outVal!;
+        model.Run(inNames, ins, outNames, outs);
         int frames = Math.Min(n, f0.Length);
         for (int i = 0; i < frames; i++)
         {

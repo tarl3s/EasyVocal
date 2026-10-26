@@ -150,6 +150,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         if (UnavailableReason is string why) throw new InvalidOperationException(why);
         if (!OrtRuntime.TryLoad(out var runtimeError)) throw new InvalidOperationException(runtimeError);
         var m = Voices.Find(voiceId) ?? throw new FileNotFoundException("This AI voice isn't installed: " + voiceId);
+        CheckOnce(m);
         var keys = new List<string>();
         try
         {
@@ -184,6 +185,24 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
 
     /// <summary>A voice's models by id, device and the files' SHA-256: a voice imported again under the same id never gets the old one.</summary>
     private static string VoiceKey(VoiceManifest m, string dev) => "voice:" + m.Id + ":" + dev + ":" + string.Join("+", m.Files.Where(f => f.Role != "index").Select(f => f.Sha256));
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Verified = new();
+
+    /// <summary>
+    /// A voice's files are checked against their SHA-256 the first time they load (again only when a file's size or
+    /// time changed): a damaged voice says so instead of playing noise.
+    /// </summary>
+    private void CheckOnce(VoiceManifest m)
+    {
+        var key = string.Join("|", m.Files.Select(f =>
+        {
+            var fi = new FileInfo(Voices.PathOf(m, f));
+            return fi.FullName + ":" + (fi.Exists ? fi.Length + ":" + fi.LastWriteTimeUtc.Ticks : "missing");
+        }));
+        if (Verified.ContainsKey(key)) return;
+        if (Voices.Check(m) is string problem) throw new InvalidDataException("This AI voice's files are damaged (" + problem + "). Delete it and add it again.");
+        Verified[key] = true;
+    }
 
     private GeneratorEntry Generator(VoiceManifest m, AiDevice device, int threads, List<string> keys)
     {

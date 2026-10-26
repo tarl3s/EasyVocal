@@ -27,8 +27,8 @@ so the READMEs call those builds "Preview".
 **2.0.0 adds AI voices** (design `docs/superpowers/specs/2026-10-25-ai-voices-design.md`; phase 1 research on the
 `spike/ai-voices` branch: `docs/superpowers/research/2026-10-25-ai-voices-phase1.md`). Phase 2 (the engine, no UI) is
 on `feat/ai-voices`: `src/EasyVocal.Ai` runs RVC v2 voices through ONNX Runtime, the voice chain has a converter slot
-for them, `AppController` loads the active AI voice; phase 3 is the UI (AI section, import, quality, pack download),
-phase 4 the per-OS AI pack assets (models + ONNX Runtime's native library) and the 2.0.0 gate.
+for them, `AppController` loads the active AI voice. Phase 3 (the UI and the pack's lifecycle) is done on the same branch:
+the Voices tab's AI section, Add AI voice, Settings' AI section, the pack's download/install/remove, credits. Phase 4: the per-OS AI pack assets (models + ONNX Runtime's native library) and the 2.0.0 gate.
 
 ## Project layout
 
@@ -151,18 +151,40 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   (120 on a GPU), 1 s, RMVPE, index 0.5; Max = 250 ms (150 GPU), 2 s, RMVPE, fp32, index 0.75.
 - **Audio thread** (`Engine/AiVoiceConverter.cs`, an `IVoiceConverter`): copies the mic into a ring and plays the
   worker's output ring `L` = block + cushion behind, by absolute sample position (latency = L + crossfade + search +
-  the resamplers, reported by `LatencySamples`). A sample that isn't ready is replaced by the input from the same
-  moment (time-aligned dry voice) with a 5 ms crossfade from the last good audio mirrored, counted as an under-run;
-  the cushion then grows 20 ms (moved while the dry voice plays, crossfaded); a worker more than 3 blocks behind
-  skips ahead (overload). No lock, no allocation, no wait; Dispose from any thread (it then passes audio through).
+  the resamplers, reported by `LatencySamples`). **The person's own (dry) voice is never played while an AI voice is
+  picked** (owner's ruling): a sample that isn't ready (a gap) repeats the last 20 ms of converted audio back and forth
+  (continuous at each turn) fading over 100 ms into the *stand-in voice* (`AiFallback`: the input from the same moment
+  shifted towards the voice's `TargetHz`, ±3..9 semitones, through a `VoiceShifter`), 5 ms crossfade back; counted as
+  an under-run, the cushion grows 20 ms (and gives 10 ms back after 20 s without a gap). The stream's start, an
+  overload (a worker more than 3 blocks behind skips ahead) and a failed worker (`Error`) play the stand-in voice too.
+  `Ready` = converted audio was played. No lock, no allocation, no wait; the worker is woken on every block; Dispose
+  from any thread (it then passes audio through: the chain and the controller dispose a converter only ~250 ms after
+  its 40 ms crossfade).
   The cushion starts at `AiLevels.CushionFor(p95)` = measured 95th percentile × 1.25 + 15 ms (`AiSettings.MeasuredBlockMs`
   from the benchmark), else the level's default.
 - **Chain**: `VoiceChain.SetConverter` puts it in front of the classic effects (they play on the converted voice);
-  in/out and OFF crossfade over 40 ms; followers (the sounds through the voice) get `CreateFollower()` streams that the
-  chain owns. `AppController.UpdateAiVoice` loads the active `VoiceKind.Ai` preset off the UI thread (`AiState`
-  Loading → Ready / Failed / Unavailable, `AiProblem`, `VoiceLatencyMs`; an overtaken load is disposed; the filter
-  editor's preview plays classic sliders only); a classic voice or Normal drops it. `AppSession` passes an
-  `AiVoiceService` (none in test runs); at start it adds a card per installed AI voice (`SyncPresets`).
+  in/out and OFF crossfade over 40 ms; a converter that wasn't fed until it fades in (after OFF) is `Reset` first.
+  `VoiceChain.Warm(next)` feeds the next converter the input unheard until `SetConverter(next)` swaps it in.
+  `AudioEngine` with a converter: mute applies before it, "Sounds use the voice" mixes the sounds into its one stream
+  (the engine's sounds chain is a follower *without* converter), and Hear me plays the voice as spoken unless
+  `HearConvertedVoice` (Settings → "Hear me plays the AI voice itself").
+- **Controller** (`AppController`, AI section): picking an AI card loads it off the UI thread while **the voice before
+  it keeps playing** (`PlayingVoiceId`; the card shows a spinner, `AiLoadingVoiceId`), warms it in the chain and swaps
+  it in (with its sliders) once `Ready`; an overtaken load is disposed; a failed or unavailable load gives the card back
+  to the voice that plays and sets `AiProblem` (the banner, ✕ = `DismissAiProblem`); a worker that fails while
+  playing (it plays its stand-in) is told and tried once more on the processor (`CreateAsync(.., cpuOnly)`), then
+  `Failed`. The key reloaded on change = voice + its quality (or Settings') + device + benchmark time. The filter
+  editor's preview plays classic sliders only. `Ai` (`IAiVoices`, `AiVoices.cs`): `AiManager` = `AiVoiceService` +
+  `PackInstaller` + `VoiceImporter` (normal runs), `StandInAi` (the smoke test: every state, no ONNX Runtime), the
+  tiny test pack (`E2E/TinyAiPack.cs`, the e2e run with `--e2e-ai <fixtures>`: a local web server plays the release).
+  At start a card per installed AI voice (`SyncPresets`; bundled cards stay `BuiltIn` and named by their pack;
+  deleting an imported voice's last card deletes its files).
+- **UI**: `MainWindow.Ai.cs` (the AI section: download card with progress/cancel/resume and the first PC test;
+  AI cards with a 🧠 badge and spinner, reordered among themselves; `AI · N ms` in the top bar), `AddAiVoiceWindow`
+  (file or link, name, emoji, "Only use voices you have the right to use.", progress, Cancel, errors through
+  `AiText.Friendly` = the engine's message translated), `AiVoiceWindow` (Edit: name/emoji for imported voices, own
+  quality, source/licence), `SettingsWindow.Ai.cs` (quality, device, Hear me plays the AI voice, Test my PC, Remove AI
+  mode… with "also delete the AI voices I added"), `CreditsWindow` (`THIRD-PARTY-NOTICES.md`, embedded).
 - **Sessions** (`Runtime/OrtRuntime.cs`): `AiDevice` Cpu / Gpu (DirectML on Windows, CoreML on macOS, CUDA on Linux,
   each tried and falling back to the CPU when missing or refused, logged) / Auto; "auto" in the settings = the CPU
   until the benchmark found the GPU better. Intra-op threads = physical cores ≤ 6, spinning off. Runs are serialised
@@ -185,8 +207,20 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   VCTK speaker vectors (MIT model, CC BY 4.0 data, attribution in each voice.json), each a speaker picked far from the
   others by WavLM speaker similarity mixed 0.65/0.35 with its nearest neighbour, with a natural pitch. `PackBuilder`
   makes the whole pack from `BaseModels` (RVC's Hugging Face files, SHA-256 = their LFS ids) with no Python.
+- **Pack install** (`Store/PackInstaller.cs`): the pack is a release of its own (tag `PackSource.Tag` = `ai-pack-v1`;
+  assets `EasyVocal-AI-win-x64.zip`, `-macos-arm64.zip`, `-macos-x64.zip`, `-linux-x64.zip`; SHA-256 from the asset's
+  `digest` or a `<asset>.sha256` next to it, none = refused). Downloaded to `<data>/AI.download/` (resumable with a
+  range; wrong bytes never resumed), unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE, base generator,
+  voices), moved into `<data>/AI` part by part (imported `voices/user-*` untouched; a loaded runtime is kept), then
+  `AiVoiceService.PackChanged` re-probes ONNX Runtime (no restart). Remove deletes engine, bundled voices, runtime (a
+  loaded one at the next start: `CleanLeftovers`). `Downloader`: https only (`AllowLoopbackHttp` for tests/e2e),
+  idle timeout, Content-Disposition, `Sniff` by bytes. Untrusted sizes are capped (`TorchCheckpoint`: data.pkl 8 MB,
+  objects, storages read only as far as tensors reach, 1.5 GB total; `FeatureIndex` sizes checked against the file,
+  nprobe ≤ 8; zips: 2000 entries, only the picked files unpacked; ONNX with external data refused).
 - **Benchmark** (`AiBenchmark.cs`): each level on the CPU (and the GPU), real time = mean block ≤ 75 % of the block and
-  p95 ≤ 110 %; suggests the best real-time level (GPU wins ties); `SaveTo(AiSettings)`.
+  p95 ≤ 110 %; suggests the best real-time level (GPU wins ties); `SaveTo(AiSettings)`. A level counts on the GPU only when every
+  model ran there (`ProviderOf`); its latency includes the resamplers. Run once after the pack is installed and from
+  Settings → Test my PC.
 
 ## Avalonia notes (learned in the port)
 

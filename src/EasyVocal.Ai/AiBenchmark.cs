@@ -95,9 +95,26 @@ public static class AiBenchmark
         ms.Sort();
         double p95 = ms[Math.Min(ms.Count - 1, (int)Math.Ceiling(ms.Count * 0.95) - 1)];
         double rtf = p95 / s.BlockMs;
-        double latency = s.BlockMs + AiLevels.CushionFor(p95) + s.AlgorithmicMs + 2;
+        // what the stream adds on top: 48 kHz → 16 kHz and the model's rate → 48 kHz, as the converter reports it
+        double resamplers = (new Dsp.PolyResampler(48000, 16000).DelayIn + new Dsp.PolyResampler(stream.SampleRate, 48000).DelayIn * 48000.0 / stream.SampleRate) / 48.0;
+        double latency = s.BlockMs + AiLevels.CushionFor(p95) + s.AlgorithmicMs + resamplers;
         double mean = ms.Average();
-        return new BenchmarkRun(q, loaded.Voice.Generator.Provider, s.BlockMs, mean, p95, rtf, latency, mean / s.BlockMs <= RealTimeShare && rtf <= PeakShare);
+        return new BenchmarkRun(q, ProviderOf(loaded.Voice), s.BlockMs, mean, p95, rtf, latency, mean / s.BlockMs <= RealTimeShare && rtf <= PeakShare);
+    }
+
+    /// <summary>
+    /// Where a voice really runs: the generator's provider when every model is on it; a model that fell back to the
+    /// processor makes it "CPU" (a level is never credited to a graphics card that only ran part of it).
+    /// </summary>
+    public static string ProviderOf(RvcVoice v)
+    {
+        string gen = v.Generator.Provider;
+        if (v.Content.Provider != gen || (v.RmvpeModel != null && v.RmvpeModel.Provider != gen))
+        {
+            Core.Logging.AppLog.Info($"AI benchmark: the models run on {gen} (generator), {v.Content.Provider} (content), {v.RmvpeModel?.Provider ?? "-"} (pitch)");
+            return "CPU";
+        }
+        return gen;
     }
 
     /// <summary>A vowel-like buzz with a moving pitch and pauses (what the models cost doesn't depend on the words).</summary>
