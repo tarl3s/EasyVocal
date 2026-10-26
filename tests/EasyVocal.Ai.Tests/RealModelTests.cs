@@ -158,7 +158,7 @@ public class RealModelTests
         Assert.True(new FileInfo(stored).Length < 200L * 1048576, "RMVPE is stored at about half its 345 MB");
         var published = Path.Combine(RealModels.Cache, "upstream", BaseModels.Rmvpe.Id);
         if (!File.Exists(published)) { output.WriteLine("SKIPPED: RVC's own rmvpe.onnx isn't in " + published); return; }
-        var x16 = EasyVocal.Ai.Dsp.PolyResampler.Convert(Speech.Signal.AsSpan(0, 48000 * 6).ToArray(), 48000, 16000);
+        var x16 = EasyVocal.Ai.Dsp.PolyResampler.Convert(Speech.Signal.AsSpan(0, Math.Min(Speech.Signal.Length, 48000 * 6)).ToArray(), 48000, 16000);
         float[] Track(byte[] onnx)
         {
             using var m = OrtRuntime.Create("pitch", onnx, AiDevice.Cpu, 4);
