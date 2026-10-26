@@ -158,11 +158,7 @@ public sealed class AppController : IDisposable
         started = true;
 
         if (FirstRun) Save(); // settings.json exists from now on
-        try
-        {
-            if (ai != null && ai.SyncPresets(Settings)) Save(); // a card for each installed AI voice
-        }
-        catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
+        SyncAiCards();
         EnsureActiveVoice();
         engine.FilterEnabled = Settings.Enabled;
         engine.MicMuted = Settings.MicMuted;
@@ -480,9 +476,6 @@ public sealed class AppController : IDisposable
     /// <summary>How far the voice on the call is behind the mic right now, in ms (AI voice and effects, not the devices).</summary>
     public int VoiceLatencyMs => chain.LatencySamples * 1000 / AudioFormat.SampleRate;
 
-    /// <summary>The AI voices' engine (null = none in this build or test).</summary>
-    public IVoiceConverterSource? AiVoices => ai;
-
     /// <summary>The banner's ✕: the AI problem is forgotten.</summary>
     public void DismissAiProblem()
     {
@@ -760,21 +753,19 @@ public sealed class AppController : IDisposable
         }
     }
 
-    /// <summary>A voice's own quality (null = the setting's).</summary>
-    public void SetVoiceAiQuality(string id, string? quality)
-    {
-        if (FindVoice(id) is not { Kind: VoiceKind.Ai } v || v.AiQuality == quality) return;
-        v.AiQuality = quality;
-        VoiceEdited(id);
-    }
-
     /// <summary>The AI pack was installed or voices were added: a card for each new voice.</summary>
     public void AiVoicesChanged()
     {
-        try { if (ai != null && ai.SyncPresets(Settings)) Save(); }
-        catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
+        SyncAiCards();
         RebuildHotkeys();
         RaiseChanged(); // also when RebuildHotkeys returned early (no hotkeys here, typing in a box)
+    }
+
+    /// <summary>A card for each installed AI voice that has none (saved when one was added).</summary>
+    private void SyncAiCards()
+    {
+        try { if (ai != null && ai.SyncPresets(Settings)) Save(); }
+        catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
     }
 
     /// <summary>Saves what the benchmark found (the suggestion and the measured block times); the AI voice reloads with them.</summary>
@@ -789,8 +780,7 @@ public sealed class AppController : IDisposable
     /// <summary>Adds an imported AI voice's card (named and with its emoji) and returns its id.</summary>
     public string AddAiVoice(EasyVocal.Ai.Store.VoiceManifest m)
     {
-        try { ai?.SyncPresets(Settings); }
-        catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
+        SyncAiCards();
         var p = Settings.Voices.FirstOrDefault(v => v.Kind == VoiceKind.Ai && v.AiVoiceId == m.Id);
         if (p == null)
         {

@@ -10,9 +10,6 @@ public partial class SettingsWindow
 {
     private bool aiTesting;
 
-    /// <summary>For the tests.</summary>
-    internal bool AiTestRunning => aiTesting;
-
     private void LoadAi()
     {
         var ai = controller.Ai;

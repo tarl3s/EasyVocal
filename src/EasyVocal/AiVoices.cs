@@ -73,11 +73,8 @@ public sealed class AiManager : IAiVoices, IDisposable
     public string? UnavailableReason => service.UnavailableReason;
     public bool PackInstalled => service.Pack.Installed;
 
-    public Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct) =>
-        ((IVoiceConverterSource)service).CreateAsync(aiVoiceId, quality, ct);
-
     public Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) =>
-        ((IVoiceConverterSource)service).CreateAsync(aiVoiceId, quality, cpuOnly, ct);
+        service.CreateAsync(aiVoiceId, quality, cpuOnly, ct);
 
     public IVoiceConverter StandIn(string aiVoiceId) => service.StandIn(aiVoiceId);
 
@@ -93,9 +90,6 @@ public sealed class AiManager : IAiVoices, IDisposable
         service.PackChanged();
         return restart;
     }
-
-    /// <summary>The e2e run: installs a pack archive from disk the way a download is installed.</summary>
-    internal bool InstallLocal(string archive) => installer.Install(archive, null, null, CancellationToken.None);
 
     public Task RemovePackAsync(bool alsoImported) => Task.Run(() =>
     {
@@ -167,7 +161,7 @@ internal sealed class StandInAi : IAiVoices
     public string? FailNextLoad { get; set; }
     public string? LastFailure { get; private set; }
 
-    public async Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct)
+    public async Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct)
     {
         if (HoldLoads is { } hold) await hold.Task.WaitAsync(ct);
         if (FailNextLoad is string why)

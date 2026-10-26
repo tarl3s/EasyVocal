@@ -95,10 +95,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         };
     }
 
-    async Task<IVoiceConverter> IVoiceConverterSource.CreateAsync(string aiVoiceId, string? quality, CancellationToken ct) =>
-        await CreateConverterAsync(aiVoiceId, QualityFor(quality), DeviceFor(), ct).ConfigureAwait(false);
-
-    async Task<IVoiceConverter> IVoiceConverterSource.CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) =>
+    public async Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) =>
         await CreateConverterAsync(aiVoiceId, QualityFor(quality), cpuOnly ? AiDevice.Cpu : DeviceFor(), ct).ConfigureAwait(false);
 
     /// <summary>Loads the voice (off the caller's thread) and makes a converter for the voice chain.</summary>

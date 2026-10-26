@@ -48,7 +48,6 @@ public sealed class PolyResampler
     /// <summary>The filter's delay, in input samples.</summary>
     public double DelayIn { get; }
 
-    public int InRate => down;
     public int OutRate => up;
 
     /// <summary>Most output samples <see cref="Process"/> can give for <paramref name="inputLength"/> input samples.</summary>

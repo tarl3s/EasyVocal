@@ -44,11 +44,11 @@ public interface IVoiceConverterSource
 
     string? UnavailableReason { get; }
 
-    /// <summary>Loads the voice (seconds: models are read and prepared) off the caller's thread.</summary>
-    Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct);
-
-    /// <summary>The same, on the processor only when <paramref name="cpuOnly"/> (the retry after a graphics card failed).</summary>
-    Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) => CreateAsync(aiVoiceId, quality, ct);
+    /// <summary>
+    /// Loads the voice (seconds: models are read and prepared) off the caller's thread; on the processor only when
+    /// <paramref name="cpuOnly"/> (the retry after a graphics card failed).
+    /// </summary>
+    Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct);
 
     /// <summary>
     /// What plays while the voice loads and warms up when nothing else would hide the person's own voice (no voice, or

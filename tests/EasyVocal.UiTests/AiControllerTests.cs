@@ -50,8 +50,6 @@ public class AiControllerTests
         public string? UnavailableReason => Available ? null : "The AI pack isn't installed.";
         public readonly List<(string Id, string? Quality, bool CpuOnly, TaskCompletionSource<IVoiceConverter> Load)> Loads = new();
 
-        public Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct) => CreateAsync(aiVoiceId, quality, false, ct);
-
         public Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct)
         {
             var tcs = new TaskCompletionSource<IVoiceConverter>(TaskCreationOptions.RunContinuationsAsynchronously);

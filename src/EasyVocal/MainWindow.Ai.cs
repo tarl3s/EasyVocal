@@ -34,7 +34,6 @@ public partial class MainWindow
     internal Button? DownloadAiCancel => downloadCancel;
     internal TextBlock? DownloadAiStatus => downloadStatus;
     internal Button? AddAiVoiceCard { get; private set; }
-    internal bool AiDownloading => downloading;
     internal bool AiTesting => testing;
 
     /// <summary>Every voice card on screen (classic and AI).</summary>

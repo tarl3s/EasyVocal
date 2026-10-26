@@ -36,8 +36,6 @@ public sealed class AddAiVoiceWindow : AppWindow
     /// <summary>The id of the voice card it added (null until then).</summary>
     internal string? AddedId { get; private set; }
 
-    internal bool Busy => running != null;
-
     public AddAiVoiceWindow(AppController controller)
     {
         this.controller = controller;

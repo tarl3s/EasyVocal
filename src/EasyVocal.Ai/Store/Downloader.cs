@@ -223,15 +223,8 @@ public static class Downloader
 
     private static string Mb(long bytes) => $"{bytes / (1024.0 * 1024):0} MB";
 
-    /// <summary>SHA-256 of a file (lowercase hex).</summary>
-    public static string Sha256Of(string path)
-    {
-        using var f = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(f)).ToLowerInvariant();
-    }
-
-    /// <summary>SHA-256 of a big file with progress (bytes read so far) and cancel.</summary>
-    public static string Sha256Of(string path, IProgress<DownloadProgress>? progress, CancellationToken ct)
+    /// <summary>SHA-256 of a file (lowercase hex), with progress (bytes read so far) and cancel for a big one.</summary>
+    public static string Sha256Of(string path, IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
     {
         using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
         using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
