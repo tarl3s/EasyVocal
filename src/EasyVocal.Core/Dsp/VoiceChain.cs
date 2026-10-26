@@ -30,7 +30,8 @@ namespace EasyVocal.Core.Dsp;
 /// <para>
 /// An AI voice adds a converter (<see cref="SetConverter"/>) in front of all of it: the mic goes through the converter
 /// first and every effect above then plays on the converted voice. Taking a converter in or out (or OFF) crossfades
-/// over 40 ms. Followers get their own stream through the same voice (<see cref="IVoiceConverter.CreateFollower"/>).
+/// over 40 ms. A converter that was let go is disposed only once the audio
+/// thread is done with it (<see cref="Retire"/>).
 /// </para>
 /// </summary>
 public sealed class VoiceChain
@@ -248,9 +249,7 @@ public sealed class VoiceChain
     private IVoiceConverter? converterPending;
     private IVoiceConverter? converterWarm;      // UI → audio: fed the input but not heard, until it is swapped in
     private IVoiceConverter? fedLast;            // audio thread: the warm converter fed in the last block
-    private bool noConverter;                    // a follower that never gets a converter
     private readonly float[] warmScratch = new float[ChunkMax];
-    private readonly System.Collections.Generic.List<VoiceChain> followers = new();
     private readonly float[] converterScratch = new float[ChunkMax];
     private readonly int converterFadeLength;
     private IVoiceConverter? converter;          // audio thread: in use (null = none)
@@ -283,77 +282,117 @@ public sealed class VoiceChain
 
     /// <summary>
     /// A second chain with its own state that always plays this chain's sliders and ON/OFF (its own
-    /// <see cref="Apply"/> and <see cref="Bypass"/> are ignored): another signal through the same voice.
-    /// <paramref name="withConverter"/> false: only the effects follow, never a converter (the engine mixes the sounds
-    /// into an AI voice's own stream instead of running a second one).
+    /// <see cref="Apply"/> and <see cref="Bypass"/> are ignored): another signal through the same voice. It never gets a
+    /// converter (the engine mixes the sounds into an AI voice's own stream instead of running a second one).
     /// </summary>
-    public VoiceChain CreateFollower(bool withConverter = true)
-    {
-        var owner = leader ?? this;
-        var f = new VoiceChain(sampleRate, owner) { noConverter = !withConverter };
-        lock (owner.followers)
-        {
-            owner.followers.Add(f);
-            if (f.noConverter) return f;
-            var c = Volatile.Read(ref owner.converterPending);
-            if (c != null) f.converterPending = c.CreateFollower();
-            var w = Volatile.Read(ref owner.converterWarm);
-            if (w != null) f.converterWarm = w.CreateFollower();
-        }
-        return f;
-    }
+    public VoiceChain CreateFollower() => new VoiceChain(sampleRate, leader ?? this);
 
     /// <summary>
     /// UI thread: puts a converter (an AI voice) in front of the effects, or takes it out (null); crossfades on the
-    /// audio thread. The caller keeps owning <paramref name="next"/> (and disposes it once it set another one); the
-    /// followers' streams made from it belong to the chain. Ignored on a follower.
+    /// audio thread. The caller keeps owning <paramref name="next"/> and hands the one it replaces to
+    /// <see cref="Retire"/>. Ignored on a follower.
     /// </summary>
     public void SetConverter(IVoiceConverter? next)
     {
         if (leader != null) return;
-        lock (followers)
-        {
-            if (ReferenceEquals(Volatile.Read(ref converterPending), next)) return;
-            bool warmed = next != null && ReferenceEquals(Volatile.Read(ref converterWarm), next);
-            Volatile.Write(ref converterPending, next); // before the warm slot is cleared: the audio thread never feeds it twice
-            if (warmed) Volatile.Write(ref converterWarm, null);
-            foreach (var f in followers)
-            {
-                if (f.noConverter) continue;
-                var mine = warmed ? Interlocked.Exchange(ref f.converterWarm, null) ?? next!.CreateFollower() : next?.CreateFollower();
-                var old = Interlocked.Exchange(ref f.converterPending, mine);
-                DisposeLater(old); // after its crossfade: a disposed converter passes the input as it is
-            }
-        }
+        if (ReferenceEquals(Volatile.Read(ref converterPending), next)) return;
+        bool warmed = next != null && ReferenceEquals(Volatile.Read(ref converterWarm), next);
+        Volatile.Write(ref converterPending, next); // before the warm slot is cleared: the audio thread never feeds it twice
+        if (warmed) Volatile.Write(ref converterWarm, null);
     }
 
     /// <summary>
     /// UI thread: feeds <paramref name="next"/> the same input as the voice without it being heard, so it is already
     /// converting when <see cref="SetConverter"/> swaps it in (an AI voice starts its stream while the previous voice
-    /// keeps playing). Null stops warming. The caller keeps owning it, as with SetConverter; the followers' warm streams
-    /// belong to the chain. Ignored on a follower.
+    /// keeps playing). Null stops warming. The caller keeps owning it, as with SetConverter. Ignored on a follower.
     /// </summary>
     public void Warm(IVoiceConverter? next)
     {
         if (leader != null) return;
-        lock (followers)
-        {
-            if (ReferenceEquals(Volatile.Read(ref converterWarm), next)) return;
-            Volatile.Write(ref converterWarm, next);
-            foreach (var f in followers)
-            {
-                if (f.noConverter) continue;
-                var old = Interlocked.Exchange(ref f.converterWarm, next?.CreateFollower());
-                DisposeLater(old);
-            }
-        }
+        Volatile.Write(ref converterWarm, next);
     }
 
-    /// <summary>Disposes a converter the chain owned once its 40 ms crossfade is surely over (never on the audio thread).</summary>
-    private static void DisposeLater(IVoiceConverter? c)
+    // Converters waiting for the audio thread to let go of them (see Retire).
+    private readonly System.Collections.Generic.List<(IVoiceConverter C, int FreeChecks)> retiring = new();
+    private Timer? retireTimer;
+    private bool retireNow;
+    private const int RetireCheckMs = 50;
+
+    /// <summary>
+    /// Disposes <paramref name="c"/> once this chain no longer uses it: not set, not warming, and the audio thread
+    /// has finished its crossfade away from it (two checks 50 ms apart find it free). Until then it keeps playing what
+    /// it plays, so the chain never holds a disposed converter. Any thread; never the audio thread's work.
+    /// </summary>
+    public void Retire(IVoiceConverter? c)
     {
         if (c == null) return;
-        _ = System.Threading.Tasks.Task.Delay(250).ContinueWith(_ => c.Dispose(), System.Threading.Tasks.TaskScheduler.Default);
+        lock (retiring)
+        {
+            if (!retireNow)
+            {
+                foreach (var r in retiring) if (ReferenceEquals(r.C, c)) return;
+                retiring.Add((c, 0));
+                retireTimer ??= new Timer(_ => RetireCheck(), null, RetireCheckMs, RetireCheckMs);
+                return;
+            }
+        }
+        DisposeQuietly(c); // the audio has stopped for good
+    }
+
+    /// <summary>
+    /// The audio has stopped for good (the engine was disposed): every converter waiting in <see cref="Retire"/> is
+    /// disposed now, and so is any retired later.
+    /// </summary>
+    public void RetireAllNow()
+    {
+        IVoiceConverter[] all;
+        lock (retiring)
+        {
+            retireNow = true;
+            all = new IVoiceConverter[retiring.Count];
+            for (int i = 0; i < all.Length; i++) all[i] = retiring[i].C;
+            retiring.Clear();
+            retireTimer?.Dispose();
+            retireTimer = null;
+        }
+        foreach (var c in all) DisposeQuietly(c);
+    }
+
+    /// <summary>The chain still uses <paramref name="c"/>: set, warming, playing or fading out (any thread).</summary>
+    public bool Holds(IVoiceConverter c) =>
+        ReferenceEquals(Volatile.Read(ref converterPending), c) || ReferenceEquals(Volatile.Read(ref converterWarm), c)
+        || ReferenceEquals(Volatile.Read(ref converter), c) || ReferenceEquals(Volatile.Read(ref converterOutgoing), c)
+        || ReferenceEquals(Volatile.Read(ref fedLast), c);
+
+    private void RetireCheck()
+    {
+        var free = new System.Collections.Generic.List<IVoiceConverter>();
+        lock (retiring)
+        {
+            for (int i = retiring.Count - 1; i >= 0; i--)
+            {
+                var (c, checks) = retiring[i];
+                checks = Holds(c) ? 0 : checks + 1;
+                if (checks >= 2)
+                {
+                    free.Add(c);
+                    retiring.RemoveAt(i);
+                }
+                else retiring[i] = (c, checks);
+            }
+            if (retiring.Count == 0)
+            {
+                retireTimer?.Dispose();
+                retireTimer = null;
+            }
+        }
+        foreach (var c in free) DisposeQuietly(c);
+    }
+
+    private static void DisposeQuietly(IVoiceConverter c)
+    {
+        try { c.Dispose(); }
+        catch (Exception) { /* a converter that fails to close must not stop the others */ }
     }
 
     /// <summary>The converter being warmed up (see <see cref="Warm"/>); null = none.</summary>

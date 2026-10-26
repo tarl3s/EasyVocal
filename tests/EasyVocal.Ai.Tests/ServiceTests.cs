@@ -74,13 +74,13 @@ public class ServiceTests : IDisposable
     {
         var a = await service.CreateConverterAsync(AiFixtures.VoiceA, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
         var b = await service.CreateConverterAsync(AiFixtures.VoiceB, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
-        var follower = (AiVoiceConverter)a.CreateFollower();
+        var again = await service.CreateConverterAsync(AiFixtures.VoiceA, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
         Lockstep(a, Speech48(0.6));
         Lockstep(b, Speech48(0.6));
-        Lockstep(follower, Speech48(0.6));
+        Lockstep(again, Speech48(0.6));
         string baseKey = "base:" + BaseModels.BaseGeneratorId + ":Cpu";
-        Assert.Equal(3, service.Models.RefsOf(baseKey)); // one base generator for both voices and the follower
-        a.Dispose(); b.Dispose(); follower.Dispose();
+        Assert.Equal(3, service.Models.RefsOf(baseKey)); // one base generator for both voices and the second stream
+        a.Dispose(); b.Dispose(); again.Dispose();
         await WaitFor(() => service.Models.RefsOf(baseKey) == 0);
         service.Models.Trim(all: true);
         Assert.False(service.Models.IsLoaded(baseKey));
@@ -160,6 +160,46 @@ public class ServiceTests : IDisposable
         Assert.True(st.Ready && st.Error == null, st.ToString());
         Assert.Contains(st.Provider, new[] { "CPU", "DirectML", "CoreML", "CUDA" });
         if (OrtRuntime.GpuProvider() == null) Assert.Equal("CPU", st.Provider);
+    }
+
+    [Fact]
+    public async Task Closing_the_service_stops_every_voice_before_its_models_close()
+    {
+        var svc = new AiVoiceService(data) { Threads = 2 };
+        var conv = await svc.CreateConverterAsync(AiFixtures.VoiceA, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
+        var retired = await svc.CreateConverterAsync(AiFixtures.VoiceB, AiQuality.Light, AiDevice.Cpu, CancellationToken.None);
+        Lockstep(conv, Speech48(0.6));
+        Lockstep(retired, Speech48(0.6));
+        // both keep converting on an audio thread (one of them as if it was let go but not disposed yet)
+        bool stop = false;
+        var x = Speech48(1);
+        var audio = new Thread(() =>
+        {
+            var buf = new float[480];
+            for (int i = 0; !Volatile.Read(ref stop); i = (i + 480) % (x.Length - 480))
+            {
+                x.AsSpan(i, 480).CopyTo(buf);
+                conv.Process(buf);
+                retired.Process(buf);
+                Thread.Sleep(2);
+            }
+        });
+        audio.Start();
+        await Task.Delay(300);
+        svc.Dispose(); // must not close a model a worker is running (a native crash)
+        Assert.True(conv.IsDisposed && retired.IsDisposed);
+        Assert.True(conv.WaitStopped(TimeSpan.Zero) && retired.WaitStopped(TimeSpan.Zero), "every worker stopped before the models closed");
+        Volatile.Write(ref stop, true);
+        audio.Join();
+    }
+
+    [Fact]
+    public void A_voice_s_stand_in_moves_towards_its_natural_pitch()
+    {
+        var m = service.Voices.Find(AiFixtures.VoiceA)!;
+        var s = Assert.IsType<StandInVoice>(service.StandIn(AiFixtures.VoiceA));
+        Assert.Equal(AiFallback.Towards(m.TargetHz, m.Key).Semitones, s.Semitones, 3);
+        Assert.Equal(AiFallback.Default.Semitones, Assert.IsType<StandInVoice>(service.StandIn("no-such-voice")).Semitones, 3);
     }
 
     internal static float[] Speech48(double seconds) => AiBenchmark.SpeechLike(48000, seconds);

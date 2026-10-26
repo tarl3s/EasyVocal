@@ -29,12 +29,23 @@ public class AiControllerTests
         public string? Error => Failure;
         public void Process(Span<float> mono) { if (!Disposed) Interlocked.Increment(ref Processed); }
         public void Reset() { }
-        public IVoiceConverter CreateFollower() => new FakeConverter { Voice = Voice };
         public void Dispose() => Disposed = true;
     }
 
-    private sealed class FakeAi : IVoiceConverterSource
+    private sealed class FakeAi : IVoiceConverterSource, IDisposable
     {
+        public readonly List<FakeConverter> StandIns = new();
+        public Action? OnDispose;
+
+        public IVoiceConverter StandIn(string aiVoiceId)
+        {
+            var s = new FakeConverter { Voice = "stand-in:" + aiVoiceId };
+            StandIns.Add(s);
+            return s;
+        }
+
+        public void Dispose() => OnDispose?.Invoke();
+
         public bool Available { get; set; } = true;
         public string? UnavailableReason => Available ? null : "The AI pack isn't installed.";
         public readonly List<(string Id, string? Quality, bool CpuOnly, TaskCompletionSource<IVoiceConverter> Load)> Loads = new();
@@ -146,13 +157,115 @@ public class AiControllerTests
             Assert.True(Soon(() => two.Disposed), "the previous level is let go once the new one plays");
             Assert.False(twoLight.Disposed);
 
-            // the filter editor's preview plays classic sliders only; closing it brings the AI voice back
+            // the filter editor's preview keeps the AI voice (its sliders play after it); closing it reloads nothing
+            int loads = ai.Loads.Count;
             c.PreviewSliders(new VoiceSliders { Echo = 0.5 });
-            Assert.Equal(AiVoiceState.Off, c.AiState);
-            Assert.True(Soon(() => twoLight.Disposed));
+            Assert.Equal(AiVoiceState.Ready, c.AiState);
+            Assert.Equal("ai-two", c.PlayingVoiceId);
+            int fed = Volatile.Read(ref twoLight.Processed);
+            Settle(ui, () => Volatile.Read(ref twoLight.Processed) > fed + 5);
+            Assert.True(Volatile.Read(ref twoLight.Processed) > fed + 5, "the AI voice keeps converting during the preview");
             c.PreviewSliders(null);
+            Assert.Equal(AiVoiceState.Ready, c.AiState);
+            Assert.Equal(loads, ai.Loads.Count);
+            Thread.Sleep(300);
+            Assert.False(twoLight.Disposed);
+            Assert.Empty(ai.StandIns); // a voice that wasn't clean played meanwhile every time
+        }
+        finally { TestFolders.Delete(data); }
+    }
+
+    [Fact]
+    public void From_a_clean_voice_an_AI_voice_plays_its_stand_in_until_it_is_ready()
+    {
+        var data = TestFolders.New("EV_UiAi_");
+        var ui = new ControllerTests.ManualDispatcher();
+        var ai = new FakeAi();
+        try
+        {
+            using var c = new AppController(data, Platform(), ui, _ => ai);
+            c.Start();
+            Assert.Equal(AppController.NormalVoiceId, c.PlayingVoiceId); // every start: Normal, the clean voice
+            c.SelectVoice("ai-one");
             Assert.Equal(AiVoiceState.Loading, c.AiState);
-            Assert.Equal("ai-two", ai.Loads[^1].Id);
+            var first = Assert.Single(ai.StandIns);
+            Assert.Equal("stand-in:ai-one", first.Voice);
+            Settle(ui, () => first.Processed > 0);
+            Assert.True(first.Processed > 0, "the stand-in voice plays while it loads, never the clean voice");
+
+            // another AI voice picked meanwhile: its own stand-in takes over
+            c.SelectVoice("ai-two");
+            Assert.Equal(2, ai.StandIns.Count);
+            Assert.True(Soon(() => first.Disposed), "the first stand-in is let go once the chain faded it out");
+            var two = ai.Finish(1, ready: false);
+            Settle(ui, () => two.Processed > 0);
+            Assert.False(ai.StandIns[1].Disposed, "still heard while the AI voice warms up");
+            two.IsReady = true;
+            Settle(ui, () => c.AiState == AiVoiceState.Ready);
+            Assert.Equal("ai-two", c.PlayingVoiceId);
+            Assert.True(Soon(() => ai.StandIns[1].Disposed), "the AI voice took over");
+            Assert.False(two.Disposed);
+
+            // a load that fails: the card goes back to Normal and its stand-in goes too
+            c.SelectVoice(AppController.NormalVoiceId);
+            c.SelectVoice("ai-one");
+            Assert.Equal(3, ai.StandIns.Count);
+            ai.Loads[2].Load.SetException(new InvalidDataException("damaged"));
+            Settle(ui, () => c.AiProblem != null);
+            Assert.Equal(AppController.NormalVoiceId, c.ActiveVoice.Id);
+            Assert.True(Soon(() => ai.StandIns[2].Disposed));
+        }
+        finally { TestFolders.Delete(data); }
+    }
+
+    [Fact]
+    public void Quitting_saves_first_then_stops_every_AI_voice_then_closes_the_AI_engine()
+    {
+        var data = TestFolders.New("EV_UiAi_");
+        var ui = new ControllerTests.ManualDispatcher();
+        var ai = new FakeAi();
+        try
+        {
+            var c = new AppController(data, Platform(), ui, _ => ai);
+            c.Start();
+            c.SelectVoice("ai-one");
+            var one = ai.Finish(0);
+            Settle(ui, () => c.AiState == AiVoiceState.Ready);
+            c.SelectVoice("ai-two");
+            var two = ai.Finish(1, ready: false);
+            Settle(ui, () => two.Processed > 0); // warming up while ai-one plays
+            c.MicMuted = true;                    // saved half a second later: not yet
+            bool saved = false, stopped = false;
+            ai.OnDispose = () =>
+            {
+                saved = File.ReadAllText(Path.Combine(data, "settings.json")).Contains("\"MicMuted\": true");
+                stopped = one.Disposed && two.Disposed && ai.StandIns.All(s => s.Disposed);
+            };
+            c.Dispose();
+            Assert.True(saved, "the settings are saved before anything that may take a while");
+            Assert.True(stopped, "every AI voice is stopped before the AI engine closes its models");
+        }
+        finally { TestFolders.Delete(data); }
+    }
+
+    [Fact]
+    public void The_AI_cards_are_shown_even_when_the_hotkeys_are_not_rebuilt()
+    {
+        var data = TestFolders.New("EV_UiAi_");
+        var ui = new ControllerTests.ManualDispatcher();
+        var ai = new FakeAi();
+        try
+        {
+            using var c = new AppController(data, Platform(), ui, _ => ai);
+            c.Start();
+            c.SetTyping(true); // typing in a box: RebuildHotkeys leaves the hotkeys alone (and says nothing)
+            int changes = 0;
+            c.Changed += () => changes++;
+            c.AiVoicesChanged();
+            Assert.Equal(1, changes);
+            c.AddAiVoice(new EasyVocal.Ai.Store.VoiceManifest { Id = "user-mine", Name = "Mine", Emoji = "🧠", Kind = EasyVocal.Ai.Store.VoiceKinds.Pth });
+            Assert.Equal(2, changes);
+            Assert.Contains(c.Settings.Voices, v => v.Id == "user-mine");
         }
         finally { TestFolders.Delete(data); }
     }

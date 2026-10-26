@@ -25,7 +25,8 @@ public interface IAiVoices : IVoiceConverterSource
     /// <summary>Bytes of <paramref name="offer"/> already downloaded (a stopped download goes on).</summary>
     long Downloaded(PackOffer offer);
 
-    Task InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct);
+    /// <summary>Downloads and installs the pack; true when EasyVocal must restart to finish (the runtime in use is replaced then).</summary>
+    Task<bool> InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct);
 
     /// <summary>Removes the pack (and the imported voices with <paramref name="alsoImported"/>); nothing may play from it.</summary>
     Task RemovePackAsync(bool alsoImported);
@@ -78,20 +79,23 @@ public sealed class AiManager : IAiVoices, IDisposable
     public Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, bool cpuOnly, CancellationToken ct) =>
         ((IVoiceConverterSource)service).CreateAsync(aiVoiceId, quality, cpuOnly, ct);
 
+    public IVoiceConverter StandIn(string aiVoiceId) => service.StandIn(aiVoiceId);
+
     public bool SyncPresets(AppSettings settings) => service.SyncPresets(settings);
 
     public Task<PackOffer> FindPackAsync(CancellationToken ct) => installer.FindAsync(ct);
 
     public long Downloaded(PackOffer offer) => installer.Downloaded(offer);
 
-    public async Task InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct)
+    public async Task<bool> InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct)
     {
-        await installer.InstallAsync(offer, progress, ct).ConfigureAwait(false);
+        bool restart = await installer.InstallAsync(offer, progress, ct).ConfigureAwait(false);
         service.PackChanged();
+        return restart;
     }
 
     /// <summary>The e2e run: installs a pack archive from disk the way a download is installed.</summary>
-    internal void InstallLocal(string archive) => installer.Install(archive, null, null, CancellationToken.None);
+    internal bool InstallLocal(string archive) => installer.Install(archive, null, null, CancellationToken.None);
 
     public Task RemovePackAsync(bool alsoImported) => Task.Run(() =>
     {
@@ -195,7 +199,7 @@ internal sealed class StandInAi : IAiVoices
     /// <summary>While set, an install stops at this share of the download (to draw the progress).</summary>
     public TaskCompletionSource? HoldInstall { get; set; }
 
-    public async Task InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct)
+    public async Task<bool> InstallPackAsync(PackOffer offer, IProgress<PackProgress>? progress, CancellationToken ct)
     {
         progress?.Report(new PackProgress(PackStage.Downloading, offer.Size * 42 / 100, offer.Size));
         if (HoldInstall is { } hold) await hold.Task.WaitAsync(ct);
@@ -203,6 +207,7 @@ internal sealed class StandInAi : IAiVoices
         installed = true;
         foreach (var (id, name, emoji) in new[] { ("bright-woman", "Bright woman", "👩"), ("deep-man", "Deep man", "👨"), ("old-man", "Old man", "👴") })
             voices.Add(new VoiceManifest { Id = id, Name = name, Emoji = emoji, BuiltIn = true, Kind = VoiceKinds.Speaker, Licence = "CC BY 4.0", Attribution = "VCTK" });
+        return false;
     }
 
     public Task RemovePackAsync(bool alsoImported)
@@ -263,9 +268,8 @@ internal sealed class StandInAi : IAiVoices
         private readonly VoiceShifter shifter = new(AudioFormat.SampleRate) { PitchSemitones = 5 };
         private volatile bool disposed;
         public int LatencySamples => AudioFormat.SampleRate * 380 / 1000; // what the readout shows
-        public void Process(Span<float> mono) { if (!disposed) shifter.Process(mono); }
+        public void Process(Span<float> mono) { if (disposed) mono.Clear(); else shifter.Process(mono); }
         public void Reset() => shifter.Reset();
-        public IVoiceConverter CreateFollower() => new ShiftConverter();
         public void Dispose() => disposed = true;
     }
 }

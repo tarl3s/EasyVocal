@@ -61,6 +61,7 @@ public sealed class AppController : IDisposable
     private string? aiWanted;                      // "<ai voice id>|<quality>" asked for, null = none
     private CancellationTokenSource? aiLoad;
     private IVoiceConverter? aiIncoming;          // loaded, warming up in the chain until it gives converted audio
+    private IVoiceConverter? aiStandIn;           // plays while an AI voice loads when nothing else would hide the dry voice
     private string? loadingVoiceId;                // the AI voice card being loaded (or last loaded)
     private string? playingVoiceId;                // the voice whose sound the chain plays
     private bool aiRetried, aiErrorTold;
@@ -222,16 +223,17 @@ public sealed class AppController : IDisposable
             engine.StateChanged -= OnEngineStateChanged;
             mixer.PlayingChanged -= OnPlayingChanged;
         }
+        if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
+        if (savePending) SaveNow(); // first: what comes next may take a while or be cut short when the process ends
+        saveTimer.Stop();
         StopPreview();
         loadCancel.Cancel();
-        engine.Dispose();
+        engine.Dispose(); // no audio thread uses the voice chain any more
         aiTimer.Stop();
         CancelAiLoad();
         DropAiConverter();
-        (ai as IDisposable)?.Dispose();
-        if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
-        if (savePending) SaveNow(); // before the virtual mic: its removal may be cut short when the process ends
-        saveTimer.Stop();
+        chain.RetireAllNow(); // every converter let go is disposed now...
+        (ai as IDisposable)?.Dispose(); // ...and the AI engine stops their workers before it closes its models
         RemoveVirtualMic();
     }
 
@@ -409,7 +411,8 @@ public sealed class AppController : IDisposable
     {
         if (disposed) return;
         previewSliders = sliders;
-        ApplyChain();
+        // Only the sliders change: an AI voice that plays (or loads) goes on, the sliders playing after it.
+        chain.Apply(sliders ?? PlayingSliders);
         engine.FilterEnabled = sliders != null || Settings.Enabled;
     }
 
@@ -427,31 +430,29 @@ public sealed class AppController : IDisposable
     /// <summary>What the headphones do right now: the filter editor's choice while it is open, else Hear me.</summary>
     public bool HearingMe => previewHearMe ?? Settings.HearMe;
 
-    /// <summary>Gives the voice chain what it should play: the preview if one is on, else the active voice.</summary>
+    /// <summary>
+    /// Gives the voice chain what it should play: the active voice (an AI voice is loaded and swapped in, see
+    /// <see cref="UpdateAiVoice"/>), with the filter editor's sliders instead of the voice's own while it is open.
+    /// </summary>
     private void ApplyChain()
     {
-        if (previewSliders != null)
-        {
-            // The filter editor plays classic sliders only.
-            CancelAiLoad();
-            DropAiConverter();
-            chain.Apply(previewSliders);
-            playingVoiceId = null;
-            SetAiState(AiVoiceState.Off, null);
-            return;
-        }
         var v = ActiveVoice;
-        if (v.Kind != VoiceKind.Ai)
+        if (v.Kind == VoiceKind.Ai)
         {
-            CancelAiLoad();
-            DropAiConverter();
-            chain.Apply(v.Sliders);
-            playingVoiceId = v.Id;
-            SetAiState(AiVoiceState.Off, null);
+            UpdateAiVoice(v);
             return;
         }
-        UpdateAiVoice(v);
+        CancelAiLoad();
+        DropAiConverter();
+        playingVoiceId = v.Id;
+        chain.Apply(previewSliders ?? v.Sliders);
+        SetAiState(AiVoiceState.Off, null);
     }
+
+    private static readonly VoiceSliders NoSliders = new();
+
+    /// <summary>The sliders of the voice that plays (none before anything played).</summary>
+    private VoiceSliders PlayingSliders => FindVoice(playingVoiceId)?.Sliders ?? NoSliders;
 
     // ---------- AI voices ----------
 
@@ -513,7 +514,7 @@ public sealed class AppController : IDisposable
         string key = AiKey(v);
         if (key == aiWanted && AiState != AiVoiceState.Failed)
         {
-            if (AiState == AiVoiceState.Ready && playingVoiceId == v.Id) chain.Apply(v.Sliders); // its sliders were edited
+            chain.Apply(previewSliders ?? PlayingSliders); // its sliders were edited
             return;
         }
         CancelAiLoad();
@@ -526,7 +527,34 @@ public sealed class AppController : IDisposable
             GiveBackSelection(v.Id, AiVoiceState.Unavailable, why);
             return;
         }
+        // The person's own voice never reaches the call while an AI voice is picked: when nothing hides it until
+        // this one is ready (no voice yet, a clean one, the stand-in of another AI voice), its stand-in plays.
+        if (aiConverter == null && (aiStandIn != null || PlayingSliders.IsNeutral)) UseStandIn(v);
         StartAiLoad(v, cpuOnly: false);
+    }
+
+    /// <summary>The AI voice's stand-in (the mic shifted towards it) plays until the voice itself is ready.</summary>
+    private void UseStandIn(VoicePreset v)
+    {
+        IVoiceConverter standIn;
+        try { standIn = ai!.StandIn(v.AiVoiceId ?? v.Id); }
+        catch (Exception ex)
+        {
+            AppLog.Error("The AI voice's stand-in couldn't be made", ex);
+            standIn = new StandInVoice(StandInVoice.DefaultSemitones, StandInVoice.DefaultFormant);
+        }
+        chain.SetConverter(standIn);
+        chain.Retire(aiStandIn);
+        aiStandIn = standIn;
+    }
+
+    /// <summary>The stand-in is no longer needed: the chain plays <see cref="aiConverter"/> (or none) instead.</summary>
+    private void DropStandIn()
+    {
+        if (aiStandIn == null) return;
+        chain.SetConverter(aiConverter);
+        chain.Retire(aiStandIn);
+        aiStandIn = null;
     }
 
     private void StartAiLoad(VoicePreset v, bool cpuOnly)
@@ -542,7 +570,7 @@ public sealed class AppController : IDisposable
             bool current = !disposed && !cts.IsCancellationRequested && aiWanted == key;
             if (t.IsCompletedSuccessfully)
             {
-                if (!current) { RetireConverter(t.Result); return; }
+                if (!current) { chain.Retire(t.Result); return; }
                 aiIncoming = t.Result;
                 warmSince = DateTime.UtcNow;
                 if (aiIncoming.Ready || State != EngineState.Running) SwapInAiVoice(); // nothing would warm it (or nobody hears it)
@@ -569,9 +597,11 @@ public sealed class AppController : IDisposable
         aiIncoming = null;
         aiLoad = null;
         var v = FindVoice(loadingVoiceId);
-        if (v != null) chain.Apply(v.Sliders);
-        chain.SetConverter(next); // also ends its warm-up
-        RetireConverter(aiConverter);
+        if (v != null) chain.Apply(previewSliders ?? v.Sliders);
+        chain.SetConverter(next); // also ends its warm-up (and crossfades from the stand-in)
+        chain.Retire(aiConverter);
+        chain.Retire(aiStandIn);
+        aiStandIn = null;
         aiConverter = next;
         aiErrorTold = false;
         playingVoiceId = loadingVoiceId;
@@ -598,10 +628,11 @@ public sealed class AppController : IDisposable
             {
                 // nothing was playing yet: Normal, as a classic voice
                 DropAiConverter();
-                chain.Apply(ActiveVoice.Sliders);
+                chain.Apply(previewSliders ?? ActiveVoice.Sliders);
                 playingVoiceId = back;
             }
             else if (FindVoice(back) is { Kind: VoiceKind.Ai } playing && aiConverter != null) aiWanted = AiKey(playing);
+            DropStandIn(); // the card went back to the voice that plays
             Save();
         }
         AiProblem = why;
@@ -621,7 +652,7 @@ public sealed class AppController : IDisposable
             {
                 chain.Warm(null);
                 aiIncoming = null;
-                RetireConverter(incoming);
+                chain.Retire(incoming);
                 RetryOrFail(e);
                 return;
             }
@@ -630,7 +661,7 @@ public sealed class AppController : IDisposable
             {
                 chain.Warm(null);
                 aiIncoming = null;
-                RetireConverter(incoming);
+                chain.Retire(incoming);
                 GiveBackSelection(loadingVoiceId ?? "", AiVoiceState.Failed, "The AI voice took too long to start.");
             }
             return;
@@ -678,25 +709,21 @@ public sealed class AppController : IDisposable
         if (aiIncoming != null)
         {
             chain.Warm(null);
-            RetireConverter(aiIncoming);
+            chain.Retire(aiIncoming);
             aiIncoming = null;
         }
     }
 
+    /// <summary>No AI voice plays any more (nor its stand-in); disposed once the chain let go of them.</summary>
     private void DropAiConverter()
     {
         chain.SetConverter(null);
-        RetireConverter(aiConverter); // after the chain's crossfade: a disposed converter passes the input as it is
+        chain.Retire(aiConverter);
+        chain.Retire(aiStandIn);
         aiConverter = null;
+        aiStandIn = null;
         aiErrorTold = false;
         if (aiIncoming == null) aiTimer.Stop();
-    }
-
-    /// <summary>Disposes a converter once the chain's 40 ms crossfade away from it is surely over.</summary>
-    private static void RetireConverter(IVoiceConverter? c)
-    {
-        if (c == null) return;
-        _ = Task.Delay(250).ContinueWith(_ => c.Dispose(), TaskScheduler.Default);
     }
 
     /// <summary>Settings → AI quality ("auto", "light", "balanced", "max"): the active AI voice reloads (the old one plays meanwhile).</summary>
@@ -747,6 +774,7 @@ public sealed class AppController : IDisposable
         try { if (ai != null && ai.SyncPresets(Settings)) Save(); }
         catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
         RebuildHotkeys();
+        RaiseChanged(); // also when RebuildHotkeys returned early (no hotkeys here, typing in a box)
     }
 
     /// <summary>Saves what the benchmark found (the suggestion and the measured block times); the AI voice reloads with them.</summary>
@@ -774,6 +802,7 @@ public sealed class AppController : IDisposable
         p.BuiltIn = m.BuiltIn;
         Save();
         RebuildHotkeys();
+        RaiseChanged();
         return p.Id;
     }
 
@@ -794,6 +823,7 @@ public sealed class AppController : IDisposable
         AiProblem = null;
         Save();
         RebuildHotkeys();
+        RaiseChanged();
     }
 
     /// <summary>A copy of a voice (see <see cref="ItemOps.DuplicateVoice"/>).</summary>

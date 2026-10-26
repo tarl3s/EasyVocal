@@ -249,18 +249,29 @@ public partial class MainWindow
                     SetDownloadFill(p.Done / (double)total);
                     downloadStatus.Text = L.F("Downloading… {0} of {1}", Mb(p.Done), Mb(total));
                 }
+                else if (p.Stage == PackStage.Checking)
+                {
+                    if (p.Total is long all && all > 0) SetDownloadFill(p.Done / (double)all);
+                    downloadStatus.Text = L.T("Checking the download…");
+                }
                 else if (p.Stage is PackStage.Unpacking or PackStage.Installing)
                 {
                     SetDownloadFill(1);
                     downloadStatus.Text = L.T("Installing…");
                 }
             });
-            await ai.InstallPackAsync(offer, progress, cts.Token);
+            bool restart = await ai.InstallPackAsync(offer, progress, cts.Token);
             if (controller.IsDisposed) return;
             SetDownloadIdle(null, false, offer.Size); // ready for another time (after Remove AI mode)
             downloadCts = null;
             controller.AiVoicesChanged();
             await TestPcAsync(ai);
+            if (restart && !controller.IsDisposed)
+            {
+                // the runtime the AI voices used is still loaded: the new one takes its place at the next start
+                AiStatus.IsVisible = true;
+                AiStatus.Text = (AiStatus.Text + " " + L.T("Restart EasyVocal to finish installing AI mode.")).Trim();
+            }
         }
         catch (OperationCanceledException)
         {

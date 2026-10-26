@@ -88,6 +88,7 @@ public sealed class AudioEngine : IDisposable
         public readonly float[] SoundsBuf = new float[Block];
         public readonly float[] VoicedSoundsBuf = new float[Block];
         public readonly float[] DryBuf = new float[Block];
+        public readonly float[] HeardSoundsBuf = new float[Block];
         public readonly float[] CallBuf = new float[Block];
         public readonly float[] MonitorBuf = new float[Block];
         public readonly Limiter CallLimiter = new(AudioFormat.SampleRate);
@@ -102,7 +103,7 @@ public sealed class AudioEngine : IDisposable
         this.makeMonitor = makeMonitor ?? throw new ArgumentNullException(nameof(makeMonitor));
         this.chain = chain ?? throw new ArgumentNullException(nameof(chain));
         this.mixer = mixer ?? throw new ArgumentNullException(nameof(mixer));
-        soundsChain = chain.CreateFollower(withConverter: false); // an AI voice takes the sounds into its own stream
+        soundsChain = chain.CreateFollower(); // never a converter: an AI voice takes the sounds into its own stream
     }
 
     /// <summary>Raised when <see cref="State"/> changes, on whichever thread noticed it.</summary>
@@ -527,16 +528,20 @@ public sealed class AudioEngine : IDisposable
         sounds.Clear();
         mixer.MixInto(sounds);
         var dry = s.DryBuf.AsSpan(0, n);
+        var heardSounds = s.HeardSoundsBuf.AsSpan(0, n);
         bool converting = chain.Converter != null && !chain.Bypass; // an AI voice (or fading into one)
+        bool soundsInVoice = false;
         if (converting)
         {
             // One stream: what is muted never reaches the AI voice, and with "sounds use the voice" the sounds are mixed
             // into it before it converts (a second AI stream would double the work). The headphones get the voice as
-            // spoken unless the converted one is asked for.
+            // spoken unless the converted one is asked for, and "Hear sounds" a copy of the sounds as they are.
             Ramp(voice, ref voiceGain, micMuted ? 0f : 1f);
             voice.CopyTo(dry);
             if (soundsUseVoice)
             {
+                soundsInVoice = true;
+                sounds.CopyTo(heardSounds);
                 for (int i = 0; i < n; i++) voice[i] += sounds[i];
                 sounds.Clear();
             }
@@ -571,6 +576,8 @@ public sealed class AudioEngine : IDisposable
         var monitor = s.Monitor;
         if (monitor == null || ReferenceEquals(monitor, s.FailedMonitor)) return;
         float meTarget = hearMe ? 1f : 0f, soundsTarget = hearSounds ? 1f : 0f;
+        // The AI voice itself in the headphones already carries the sounds: the copy would play them twice.
+        if (soundsInVoice && hearConverted && hearMe) soundsTarget = 0f;
         if (meTarget == 0f && soundsTarget == 0f && meGain == 0f && soundsGain == 0f)
         {
             monitorWasSilent = true;
@@ -585,6 +592,7 @@ public sealed class AudioEngine : IDisposable
 
         // voice and sounds are not needed any more: scale them in place and sum.
         if (converting && !hearConverted) dry.CopyTo(voice);
+        if (soundsInVoice) heardSounds.CopyTo(sounds);
         Ramp(voice, ref meGain, meTarget);
         Ramp(sounds, ref soundsGain, soundsTarget);
         var mon = s.MonitorBuf.AsSpan(0, n);

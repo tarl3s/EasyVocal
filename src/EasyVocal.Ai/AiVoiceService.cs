@@ -40,6 +40,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
 {
     private readonly Func<AiSettings> settings;
     private readonly Timer trimTimer;
+    private readonly List<AiVoiceConverter> live = new(); // every converter made here, until its worker stopped
     private bool disposed;
 
     /// <param name="settings">The person's AI settings (read each time a voice is loaded); null = defaults.</param>
@@ -132,7 +133,21 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
                 : Models.TryAddRefs(loaded.Keys) ? Models.Lease(loaded.Keys) : throw new InvalidOperationException("The voice was unloaded.");
             return (new RvcStream(voice, s), lease);
         }
-        return new AiVoiceConverter(Make, s.BlockMs * 48, cushion, s.AlgorithmicMs, provider, AiFallback.Towards(loaded.Manifest.TargetHz, loaded.Manifest.Key));
+        var c = new AiVoiceConverter(Make, s.BlockMs * 48, cushion, s.AlgorithmicMs, provider, AiFallback.Towards(loaded.Manifest.TargetHz, loaded.Manifest.Key));
+        lock (live)
+        {
+            live.RemoveAll(x => x.IsDisposed && x.WaitStopped(TimeSpan.Zero));
+            live.Add(c);
+        }
+        return c;
+    }
+
+    /// <summary>The voice's stand-in (towards its natural pitch and key, see <see cref="AiFallback"/>), ready at once.</summary>
+    public IVoiceConverter StandIn(string aiVoiceId)
+    {
+        var m = Voices.Find(aiVoiceId);
+        var f = m == null ? AiFallback.Default : AiFallback.Towards(m.TargetHz, m.Key);
+        return new StandInVoice(f.Semitones, f.Formant);
     }
 
     /// <summary>The cushion for a level: from the block time measured here (95th percentile), else the level's default.</summary>
@@ -321,6 +336,22 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         if (disposed) return;
         disposed = true;
         trimTimer.Dispose();
+        // Every converter's worker stops first (it may be inside a model run): only then are the models closed.
+        AiVoiceConverter[] all;
+        lock (live) all = live.ToArray();
+        foreach (var c in all) c.Dispose();
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        bool stopped = true;
+        foreach (var c in all)
+        {
+            var left = until - DateTime.UtcNow;
+            stopped &= c.WaitStopped(left > TimeSpan.Zero ? left : TimeSpan.Zero);
+        }
+        if (!stopped)
+        {
+            AppLog.Info("AI: a voice was still converting at quit; its models are left to the process's end");
+            return;
+        }
         Models.Dispose();
         AppLog.Info("AI: service closed");
     }

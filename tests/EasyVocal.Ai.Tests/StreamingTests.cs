@@ -304,35 +304,23 @@ public class StreamingTests
         c.Dispose();
         audio.Join();
         Assert.Null(failure);
-        var buf = x.AsSpan(0, Chunk).ToArray();
-        c.Process(buf);
-        Assert.Equal(x.AsSpan(0, Chunk).ToArray(), buf); // after Dispose: untouched
+        // After Dispose: the stand-in voice (the input shifted, from the converted voice's moment), never the input as it is.
+        var after = Tones(0.6);
+        var y = new float[after.Length];
+        var buf = new float[Chunk];
+        for (int i = 0; i + Chunk <= after.Length; i += Chunk)
+        {
+            after.AsSpan(i, Chunk).CopyTo(buf);
+            c.Process(buf);
+            buf.CopyTo(y, i);
+        }
+        Assert.All(y, v => Assert.True(float.IsFinite(v)));
+        Assert.True(ImportTests.Rms(y.AsSpan(Sr / 5).ToArray()) > 0.02, "the stand-in voice plays (no dropout)");
+        var (_, sameness) = BestLag(after, y, 0, Sr / 5);
+        Assert.True(sameness < 0.5, $"not the input as it is (correlation {sameness:0.00})");
         var sw = Stopwatch.StartNew();
         while (!fake.Disposed && sw.ElapsedMilliseconds < 2000) Thread.Sleep(5);
         Assert.True(fake.Disposed);
-    }
-
-    [Fact]
-    public void A_follower_is_its_own_stream()
-    {
-        int made = 0;
-        var fakes = new List<FakeBlocks>();
-        var c = new AiVoiceConverter(() =>
-        {
-            Interlocked.Increment(ref made);
-            var f = new FakeBlocks(100, gain: 0.5f);
-            lock (fakes) fakes.Add(f);
-            return (f, null);
-        }, 4800, 40, 0, "CPU");
-        var f2 = (AiVoiceConverter)c.CreateFollower();
-        var x = Tones(1.5);
-        var y1 = FeedLockstep(c, x);
-        var y2 = FeedLockstep(f2, x.Select(v => v * 0.5f).ToArray());
-        c.Dispose();
-        f2.Dispose();
-        Assert.Equal(2, made);
-        Assert.Equal(c.LatencySamples, f2.LatencySamples);
-        Assert.True(ImportTests.Rms(y1.AsSpan(Sr, Sr / 4).ToArray()) > 1.8 * ImportTests.Rms(y2.AsSpan(Sr, Sr / 4).ToArray()));
     }
 }
 

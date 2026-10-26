@@ -13,9 +13,8 @@ namespace EasyVocal.Tests;
 internal sealed class ScaleConverter : IVoiceConverter
 {
     public readonly float Gain;
-    public readonly List<ScaleConverter> Followers = new();
     public int Processed, Resets;
-    public bool Disposed;
+    public volatile bool Disposed;
 
     public ScaleConverter(float gain, int latency = 4800) { Gain = gain; LatencySamples = latency; }
 
@@ -23,19 +22,16 @@ internal sealed class ScaleConverter : IVoiceConverter
 
     public void Process(Span<float> mono)
     {
-        if (Disposed) return;
+        if (Disposed)
+        {
+            mono.Clear(); // as a real one: never the input as it is
+            return;
+        }
         Processed++;
         for (int i = 0; i < mono.Length; i++) mono[i] *= Gain;
     }
 
     public void Reset() => Resets++;
-
-    public IVoiceConverter CreateFollower()
-    {
-        var f = new ScaleConverter(Gain, LatencySamples);
-        Followers.Add(f);
-        return f;
-    }
 
     public void Dispose() => Disposed = true;
 }
@@ -131,25 +127,40 @@ public class VoiceConverterTests
     }
 
     [Fact]
-    public void Followers_get_their_own_stream_and_lose_it_with_the_voice()
+    public void A_converter_let_go_is_disposed_only_once_the_chain_stopped_using_it()
     {
         var chain = new VoiceChain(Sr);
-        var early = chain.CreateFollower();
-        var c = new ScaleConverter(0.25f);
+        var c = new ScaleConverter(0.5f);
         chain.SetConverter(c);
-        var late = chain.CreateFollower();
-        Assert.Equal(2, c.Followers.Count);
-        var x = Signals.Sine(330, 0.5);
-        var y = Run(early, x);
-        Assert.Equal(x[^1] * 0.25f, y[^1], 6);
-        Assert.Equal(0, c.Processed); // the follower used its own
-        Assert.True(c.Followers[0].Processed > 0);
+        var x = Signals.Sine(220, 0.3);
+        Run(chain, x);
+        chain.SetConverter(null);
+        chain.Retire(c);
+        System.Threading.Thread.Sleep(300);
+        Assert.False(c.Disposed, "the audio thread still plays it (it hasn't faded it out yet)");
+        Assert.True(chain.Holds(c));
+        var y = Run(chain, x); // the 40 ms crossfade away from it
+        Assert.False(chain.Holds(c));
+        for (int i = 0; i < 100 && !c.Disposed; i++) System.Threading.Thread.Sleep(10);
+        Assert.True(c.Disposed, "disposed once the chain let go of it");
+        Assert.Equal(x[^1], y[^1], 6);
 
-        chain.SetConverter(new ScaleConverter(1f));
-        for (int i = 0; i < 200 && !c.Followers.All(f => f.Disposed); i++) System.Threading.Thread.Sleep(10); // after their crossfade
-        Assert.All(c.Followers, f => Assert.True(f.Disposed, "the chain disposes the followers' streams it made"));
-        Assert.False(c.Disposed, "the caller's converter stays the caller's");
-        _ = late;
+        // a follower (the sounds' chain) never gets a converter
+        var follower = chain.CreateFollower();
+        var d = new ScaleConverter(0.25f);
+        chain.SetConverter(d);
+        var z = Run(follower, x);
+        Assert.Equal(x[^1], z[^1], 6);
+        Assert.Equal(0, follower.LatencySamples);
+
+        // once the audio stopped for good, whatever waits is disposed at once
+        chain.SetConverter(null);
+        chain.Retire(d);
+        chain.RetireAllNow();
+        Assert.True(d.Disposed);
+        var e = new ScaleConverter(1f);
+        chain.Retire(e);
+        Assert.True(e.Disposed);
     }
 
     [Fact]
@@ -174,7 +185,6 @@ public class VoiceConverterTests
         int at = Sr / 4;
         Assert.Equal(x[at] * 0.5f, got[at + lag], 4);
         Assert.Equal(x[at], monitor.Written[at + lag], 4); // Hear me: the voice as spoken (no delay to talk over)
-        Assert.Empty(c.Followers); // no second AI stream for the sounds
 
         engine.HearConvertedVoice = true;
         int from = monitor.Written.Length;
@@ -190,6 +200,41 @@ public class VoiceConverterTests
         double peak = withSound.Max(Math.Abs);
         Assert.InRange(peak, 0.07, 0.13); // the 0.2 sound at the voice's 0.5: it went into the AI voice's own stream
         Assert.True(c.Processed > before);
+    }
+
+    [Fact]
+    public void With_an_AI_voice_and_sounds_through_it_the_headphones_still_play_the_sounds()
+    {
+        var chain = new VoiceChain(Sr);
+        var mixer = new SoundMixer();
+        var mic = new FakeInput();
+        var call = new FakeOutput();
+        var monitor = new FakeOutput();
+        using var engine = new AudioEngine(() => mic, () => call, () => monitor, chain, mixer)
+        {
+            HearMe = false, HearSounds = true, SoundsUseVoice = true,
+        };
+        var c = new ScaleConverter(0.5f);
+        chain.SetConverter(c);
+        engine.Start();
+        mic.Feed(new float[Sr / 10]); // the crossfade into the AI voice is over
+        mixer.Set("s", Signals.Sine(880, 0.3, amp: 0.2f));
+        mixer.Toggle("s", 1f);
+        int from = monitor.Written.Length;
+        mic.Feed(new float[Sr / 4]);
+        double peak = monitor.Written.AsSpan(from + 960, 4800).ToArray().Max(Math.Abs);
+        Assert.InRange(peak, 0.15, 0.25); // Hear sounds: the sound as it is (the call gets it through the AI voice)
+
+        // Hear me with the AI voice itself: that voice carries the sounds already, the copy isn't added on top
+        engine.HearMe = true;
+        engine.HearConvertedVoice = true;
+        mic.Feed(new float[Sr / 4]); // the sound is over
+        Assert.False(mixer.IsPlaying("s"));
+        mixer.Toggle("s", 1f);
+        from = monitor.Written.Length;
+        mic.Feed(new float[Sr / 4]);
+        peak = monitor.Written.AsSpan(from + 2400, 4800).ToArray().Max(Math.Abs);
+        Assert.InRange(peak, 0.07, 0.13); // once, through the AI voice (0.5)
     }
 
     [Fact]

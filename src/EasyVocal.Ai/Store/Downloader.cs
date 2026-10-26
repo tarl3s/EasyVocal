@@ -111,21 +111,49 @@ public static class Downloader
     /// Like <see cref="DownloadAsync"/>, but a cancelled or broken download keeps its <c>path.part</c> and the next try
     /// goes on from where it stopped (an HTTP range; a server that won't, sends the whole file again). The finished
     /// file must have <paramref name="expectedSize"/> bytes and <paramref name="expectedSha256"/>, else it is deleted.
+    /// The <c>.part</c> carries the SHA-256 it is meant to become (<c>path.part.sha256</c>): a part of another file (a
+    /// newer pack, another asset) is dropped instead of being continued.
     /// </summary>
     public static async Task<string> DownloadResumableAsync(Uri url, string path, long expectedSize, string expectedSha256,
         IProgress<DownloadProgress>? progress = null, CancellationToken ct = default, HttpClient? client = null)
     {
         var tmp = path + ".part";
-        if (File.Exists(tmp) && new FileInfo(tmp).Length > expectedSize) Core.Storage.Cleanup.TryDelete(tmp);
+        var meant = tmp + ".sha256";
+        if (ResumableBytes(path, expectedSha256) == 0 || new FileInfo(tmp).Length > expectedSize)
+        {
+            Core.Storage.Cleanup.TryDelete(tmp);
+            Core.Storage.Cleanup.TryDelete(meant);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(meant, expectedSha256.ToLowerInvariant());
         try
         {
-            return await Fetch(url, path, tmp, expectedSize, expectedSha256, expectedSize, resume: true, progress, ct, client, null).ConfigureAwait(false);
+            var hex = await Fetch(url, path, tmp, expectedSize, expectedSha256, expectedSize, resume: true, progress, ct, client, null).ConfigureAwait(false);
+            Core.Storage.Cleanup.TryDelete(meant);
+            return hex;
         }
         catch (InvalidDataException)
         {
             Core.Storage.Cleanup.TryDelete(tmp); // the bytes are wrong: never go on from them
+            Core.Storage.Cleanup.TryDelete(meant);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Bytes of <paramref name="path"/>'s <c>.part</c> that a resumable download of <paramref name="expectedSha256"/>
+    /// would go on from: 0 when there is none or it was meant to become another file.
+    /// </summary>
+    public static long ResumableBytes(string path, string expectedSha256)
+    {
+        var tmp = path + ".part";
+        try
+        {
+            if (!File.Exists(tmp) || !File.Exists(tmp + ".sha256")) return 0;
+            var meant = File.ReadAllText(tmp + ".sha256").Trim();
+            return string.Equals(meant, expectedSha256, StringComparison.OrdinalIgnoreCase) ? new FileInfo(tmp).Length : 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return 0; }
     }
 
     private static async Task<string> Fetch(Uri url, string path, string tmp, long maxBytes, string? expectedSha256, long? expectedSize,
@@ -200,6 +228,24 @@ public static class Downloader
     {
         using var f = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(f)).ToLowerInvariant();
+    }
+
+    /// <summary>SHA-256 of a big file with progress (bytes read so far) and cancel.</summary>
+    public static string Sha256Of(string path, IProgress<DownloadProgress>? progress, CancellationToken ct)
+    {
+        using var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buf = new byte[1 << 20];
+        long done = 0, total = f.Length, lastReport = 0;
+        int n;
+        while ((n = f.Read(buf, 0, buf.Length)) > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            sha.AppendData(buf, 0, n);
+            done += n;
+            if (progress != null && (done - lastReport >= 8L << 20 || done == total)) { lastReport = done; progress.Report(new DownloadProgress(done, total)); }
+        }
+        return Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
     }
 }
 

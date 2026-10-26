@@ -20,13 +20,19 @@ public class PackInstallerTests : IDisposable
     public void Dispose() => TestFolders.Delete(work);
 
     /// <summary>The tiny pack zipped as a release asset (engine + two bundled voices).</summary>
-    private static byte[] PackZip(bool withInt8 = true)
+    private static byte[] PackZip(bool withInt8 = true, string? runtime = null)
     {
         var data = AiFixtures.TinyDataFolder();
         try
         {
             var pack = new AiPack(data);
             if (withInt8) File.Copy(Path.Combine(pack.EngineFolder, AiPack.ContentFp32), Path.Combine(pack.EngineFolder, AiPack.ContentInt8));
+            if (runtime != null)
+            {
+                Directory.CreateDirectory(pack.RuntimeFolder);
+                File.WriteAllText(Path.Combine(pack.RuntimeFolder, "onnxruntime.dll"), runtime);
+                File.WriteAllText(Path.Combine(pack.RuntimeFolder, "licence.txt"), "MIT");
+            }
             var zip = Path.Combine(data, "pack.zip");
             ZipFile.CreateFromDirectory(pack.Root, zip);
             return File.ReadAllBytes(zip);
@@ -151,6 +157,95 @@ public class PackInstallerTests : IDisposable
         http.Map("/release3", new LocalHttp.Route(404, Encoding.ASCII.GetBytes("{}")));
         var none = new PackInstaller(pack, releaseApi: http.Url("/release3"), assetName: "B.zip");
         Assert.Contains("isn't available", (await Assert.ThrowsAsync<PackUnavailableException>(() => none.FindAsync())).Message);
+    }
+
+    [Fact]
+    public async Task A_whole_download_left_from_before_is_checked_off_the_callers_thread_and_installed()
+    {
+        var data = Path.Combine(work, "data");
+        var pack = new AiPack(data);
+        var zip = PackZip();
+        using var http = new LocalHttp();
+        http.Map("/A.zip", new LocalHttp.Route(200, zip, Ranges: true));
+        http.Map("/release", new LocalHttp.Route(200, Release(http, "A.zip", zip.Length, "sha256:" + Sha(zip))));
+        var installer = new PackInstaller(pack, releaseApi: http.Url("/release"), assetName: "A.zip");
+        var offer = await installer.FindAsync();
+        Directory.CreateDirectory(installer.DownloadFolder);
+        File.WriteAllBytes(Path.Combine(installer.DownloadFolder, "A.zip"), zip); // an install that stopped after the download
+
+        int caller = Environment.CurrentManagedThreadId;
+        var checks = new List<(long Done, int Thread)>();
+        int before = http.Requests;
+        await installer.InstallAsync(offer, new SyncProgress<PackProgress>(p =>
+        {
+            if (p.Stage == PackStage.Checking) lock (checks) checks.Add((p.Done, Environment.CurrentManagedThreadId));
+        }));
+        Assert.True(pack.Installed);
+        Assert.Equal(before, http.Requests); // nothing downloaded again
+        Assert.Contains(checks, c => c.Done == zip.Length);
+        Assert.All(checks.Where(c => c.Done > 0), c => Assert.NotEqual(caller, c.Thread)); // hashed off the caller's (UI) thread
+    }
+
+    [Fact]
+    public async Task A_part_meant_for_another_file_is_dropped_not_continued()
+    {
+        var data = Path.Combine(work, "data");
+        var pack = new AiPack(data);
+        var zip = PackZip();
+        using var http = new LocalHttp();
+        http.Map("/A.zip", new LocalHttp.Route(200, zip, Ranges: true));
+        http.Map("/release", new LocalHttp.Route(200, Release(http, "A.zip", zip.Length, "sha256:" + Sha(zip))));
+        var installer = new PackInstaller(pack, releaseApi: http.Url("/release"), assetName: "A.zip");
+        var offer = await installer.FindAsync();
+        // the start of an older pack under the same name
+        Directory.CreateDirectory(installer.DownloadFolder);
+        var part = Path.Combine(installer.DownloadFolder, "A.zip.part");
+        File.WriteAllBytes(part, zip.AsSpan(0, zip.Length / 2).ToArray().Select(b => (byte)(b ^ 0x5a)).ToArray());
+        File.WriteAllText(part + ".sha256", new string('1', 64));
+        Assert.Equal(0, installer.Downloaded(offer));
+        File.Delete(part + ".sha256"); // none recorded (a part from before this check): not trusted either
+        Assert.Equal(0, installer.Downloaded(offer));
+
+        await installer.InstallAsync(offer);
+        Assert.True(pack.Installed);
+        Assert.Equal(0, http.RangedRequests); // started again from the beginning
+    }
+
+    [Fact]
+    public void A_runtime_in_use_is_swapped_at_the_next_start_and_its_marker_stays_until_then()
+    {
+        var data = Path.Combine(work, "data");
+        var pack = new AiPack(data);
+        var archive = Path.Combine(work, "pack.zip");
+        File.WriteAllBytes(archive, PackZip(runtime: "old"));
+        var installer = new PackInstaller(pack);
+        Assert.False(installer.Install(archive, null, null, CancellationToken.None));
+        var dll = Path.Combine(pack.RuntimeFolder, "onnxruntime.dll");
+        Assert.Equal("old", File.ReadAllText(dll));
+
+        File.WriteAllBytes(archive, PackZip(runtime: "new"));
+        bool restart;
+        using (new FileStream(dll, FileMode.Open, FileAccess.Read, FileShare.None)) // loaded: Windows won't move or delete it
+        {
+            installer.Remove(alsoImported: false);
+            restart = installer.Install(archive, null, null, CancellationToken.None);
+            Assert.True(pack.Installed);
+        }
+        if (!restart)
+        {
+            // macOS / Linux move a folder with an open file: the runtime is simply replaced
+            Assert.False(OperatingSystem.IsWindows());
+            Assert.Equal("new", File.ReadAllText(dll));
+            Assert.False(File.Exists(Path.Combine(pack.Root, "runtime.remove")));
+            return;
+        }
+        Assert.True(File.Exists(Path.Combine(pack.Root, "runtime.remove")), "the marker stays until the swap is done");
+        PackInstaller.CleanLeftovers(pack); // the next start
+        Assert.Equal("new", File.ReadAllText(dll));
+        Assert.True(File.Exists(Path.Combine(pack.RuntimeFolder, "licence.txt")), "the whole new runtime, not what Remove left");
+        Assert.False(File.Exists(Path.Combine(pack.Root, "runtime.remove")));
+        Assert.False(Directory.Exists(Path.Combine(pack.Root, "runtime.pending")));
+        Assert.True(pack.Installed);
     }
 
     private sealed class SyncProgress<T>(Action<T> report) : IProgress<T>

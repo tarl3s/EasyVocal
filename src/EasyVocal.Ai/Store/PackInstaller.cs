@@ -11,7 +11,7 @@ namespace EasyVocal.Ai.Store;
 public sealed record PackOffer(string AssetName, Uri Url, long Size, string Sha256);
 
 /// <summary>What the AI pack's install is doing.</summary>
-public enum PackStage { Looking, Downloading, Unpacking, Installing }
+public enum PackStage { Looking, Downloading, Checking, Unpacking, Installing }
 
 public readonly record struct PackProgress(PackStage Stage, long Done, long? Total);
 
@@ -102,6 +102,8 @@ public sealed class PackInstaller
     public const string DownloadFolderName = "AI.download";
     public const string StateFile = "pack.json";
     private const string RemoveMarker = "runtime.remove";
+    /// <summary>A new runtime that couldn't replace the loaded one: swapped in at the next start.</summary>
+    private const string PendingRuntime = "runtime.pending";
 
     private readonly AiPack pack;
     private readonly HttpClient? client;
@@ -154,31 +156,41 @@ public sealed class PackInstaller
     }
 
     /// <summary>Bytes already downloaded towards this offer (a stopped download goes on from there).</summary>
-    public long Downloaded(PackOffer offer)
-    {
-        var part = Path.Combine(DownloadFolder, offer.AssetName) + ".part";
-        return File.Exists(part) ? new FileInfo(part).Length : 0;
-    }
+    public long Downloaded(PackOffer offer) => Downloader.ResumableBytes(Path.Combine(DownloadFolder, offer.AssetName), offer.Sha256);
 
-    /// <summary>Downloads (or goes on downloading), checks and installs the pack.</summary>
-    public async Task InstallAsync(PackOffer offer, IProgress<PackProgress>? progress = null, CancellationToken ct = default)
+    /// <summary>
+    /// Downloads (or goes on downloading), checks and installs the pack. True when the runtime in use couldn't be
+    /// replaced (it is loaded): the new one is swapped in at the next start, so EasyVocal should be restarted.
+    /// </summary>
+    public async Task<bool> InstallAsync(PackOffer offer, IProgress<PackProgress>? progress = null, CancellationToken ct = default)
     {
         if (!FileNames.IsPlain(offer.AssetName)) throw new ArgumentException("Bad asset name.", nameof(offer));
         Directory.CreateDirectory(DownloadFolder);
         var file = Path.Combine(DownloadFolder, offer.AssetName);
-        if (File.Exists(file) && (new FileInfo(file).Length != offer.Size || !string.Equals(Downloader.Sha256Of(file), offer.Sha256, StringComparison.OrdinalIgnoreCase)))
-            Cleanup.TryDelete(file); // an older or broken one
+        if (File.Exists(file))
+        {
+            // a whole download left from before (an install that failed or was stopped): checked off this thread
+            progress?.Report(new PackProgress(PackStage.Checking, 0, offer.Size));
+            var check = progress == null ? null : new InlineProgress<DownloadProgress>(d => progress.Report(new PackProgress(PackStage.Checking, d.Done, offer.Size)));
+            bool same = await Task.Run(() => new FileInfo(file).Length == offer.Size
+                && string.Equals(Downloader.Sha256Of(file, check, ct), offer.Sha256, StringComparison.OrdinalIgnoreCase), ct).ConfigureAwait(false);
+            if (!same) Cleanup.TryDelete(file); // an older or broken one
+        }
         if (!File.Exists(file))
         {
             var p = progress == null ? null : new InlineProgress<DownloadProgress>(d => progress.Report(new PackProgress(PackStage.Downloading, d.Done, d.Total ?? offer.Size)));
             await Downloader.DownloadResumableAsync(offer.Url, file, offer.Size, offer.Sha256, p, ct, client).ConfigureAwait(false);
         }
-        await Task.Run(() => Install(file, offer, progress, ct), ct).ConfigureAwait(false);
+        bool restart = await Task.Run(() => Install(file, offer, progress, ct), ct).ConfigureAwait(false);
         Cleanup.TryDelete(DownloadFolder);
+        return restart;
     }
 
-    /// <summary>Installs a pack archive that was checked already (also the e2e run's local pack).</summary>
-    public void Install(string archive, PackOffer? offer, IProgress<PackProgress>? progress, CancellationToken ct)
+    /// <summary>
+    /// Installs a pack archive that was checked already (also the e2e run's local pack). True when the runtime in use
+    /// couldn't be replaced: it is swapped in at the next start (<see cref="CleanLeftovers"/>).
+    /// </summary>
+    public bool Install(string archive, PackOffer? offer, IProgress<PackProgress>? progress, CancellationToken ct)
     {
         progress?.Report(new PackProgress(PackStage.Unpacking, 0, null));
         var stage = Path.Combine(DataFolder, "AI.staging-" + Guid.NewGuid().ToString("N")[..8]);
@@ -200,11 +212,22 @@ public sealed class PackInstaller
             progress?.Report(new PackProgress(PackStage.Installing, 0, null));
             Directory.CreateDirectory(pack.Root);
             Replace(Path.Combine(root, "engine"), pack.EngineFolder);
+            bool restart = false;
+            var marker = Path.Combine(pack.Root, RemoveMarker);
+            var pending = Path.Combine(pack.Root, PendingRuntime);
             if (Directory.Exists(Path.Combine(root, "runtime")))
             {
-                // A loaded runtime (this session used AI voices) can't be replaced on Windows: the one in use stays.
-                if (!Replace(Path.Combine(root, "runtime"), pack.RuntimeFolder)) AppLog.Info("AI: the runtime in use is kept (it is loaded)");
-                Cleanup.TryDelete(Path.Combine(pack.Root, RemoveMarker));
+                Cleanup.TryDelete(pending);
+                if (Replace(Path.Combine(root, "runtime"), pack.RuntimeFolder)) Cleanup.TryDelete(marker);
+                else
+                {
+                    // A loaded runtime (this session used AI voices) can't be replaced on Windows, and after Remove it
+                    // may be half deleted: the new one waits next to it and takes its place at the next start.
+                    Directory.Move(Path.Combine(root, "runtime"), pending);
+                    File.WriteAllText(marker, "the runtime was in use: replaced by runtime.pending at the next start");
+                    restart = true;
+                    AppLog.Info("AI: the runtime in use is replaced at the next start (it is loaded)");
+                }
             }
             Directory.CreateDirectory(pack.VoicesFolder);
             foreach (var dir in Directory.EnumerateDirectories(voices))
@@ -219,6 +242,7 @@ public sealed class PackInstaller
             };
             File.WriteAllText(Path.Combine(pack.Root, StateFile), JsonSerializer.Serialize(state));
             AppLog.Info("AI: pack installed (" + (offer?.AssetName ?? Path.GetFileName(archive)) + ")");
+            return restart;
         }
         finally
         {
@@ -260,6 +284,7 @@ public sealed class PackInstaller
                 if (builtIn || alsoImported) Cleanup.TryDelete(dir);
             }
         Cleanup.TryDelete(pack.RuntimeFolder);
+        Cleanup.TryDelete(Path.Combine(pack.Root, PendingRuntime));
         if (Directory.Exists(pack.RuntimeFolder))
         {
             try { File.WriteAllText(Path.Combine(pack.Root, RemoveMarker), "the runtime was in use: removed at the next start"); }
@@ -278,7 +303,13 @@ public sealed class PackInstaller
             if (File.Exists(Path.Combine(pack.Root, RemoveMarker)))
             {
                 Cleanup.TryDelete(pack.RuntimeFolder);
-                if (!Directory.Exists(pack.RuntimeFolder)) Cleanup.TryDelete(Path.Combine(pack.Root, RemoveMarker));
+                var pending = Path.Combine(pack.Root, PendingRuntime);
+                if (!Directory.Exists(pack.RuntimeFolder))
+                {
+                    // the swap a reinstall couldn't do while the runtime was loaded; the marker goes only once it is done
+                    if (Directory.Exists(pending)) Directory.Move(pending, pack.RuntimeFolder);
+                    Cleanup.TryDelete(Path.Combine(pack.Root, RemoveMarker));
+                }
                 if (Directory.Exists(pack.Root) && !Directory.EnumerateFileSystemEntries(pack.Root).Any()) Cleanup.TryDelete(pack.Root);
             }
             if (Directory.Exists(data))

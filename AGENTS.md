@@ -169,23 +169,32 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   an under-run, the cushion grows 20 ms (and gives 10 ms back after 20 s without a gap). The stream's start, an
   overload (a worker more than 3 blocks behind skips ahead) and a failed worker (`Error`) play the stand-in voice too.
   `Ready` = converted audio was played. No lock, no allocation, no wait; the worker is woken on every block; Dispose
-  from any thread (it then passes audio through: the chain and the controller dispose a converter only ~250 ms after
-  its 40 ms crossfade).
+  from any thread (it then plays the stand-in voice, never the input). `WaitStopped` = its worker has left the model:
+  `AiVoiceService.Dispose` disposes every converter it made and waits for them (3 s at most, else the models are left
+  to the process's end) before it closes any model.
   The cushion starts at `AiLevels.CushionFor(p95)` = measured 95th percentile × 1.25 + 15 ms (`AiSettings.MeasuredBlockMs`
   from the benchmark), else the level's default.
 - **Chain**: `VoiceChain.SetConverter` puts it in front of the classic effects (they play on the converted voice);
   in/out and OFF crossfade over 40 ms; a converter that wasn't fed until it fades in (after OFF) is `Reset` first.
   `VoiceChain.Warm(next)` feeds the next converter the input unheard until `SetConverter(next)` swaps it in.
+  `VoiceChain.Retire(c)` disposes a converter once the chain no longer uses it (not set, not warming, the audio thread
+  done fading it out: two free checks 50 ms apart; while the audio is stopped it waits), `RetireAllNow` after the
+  engine is gone. Followers never get a converter.
   `AudioEngine` with a converter: mute applies before it, "Sounds use the voice" mixes the sounds into its one stream
-  (the engine's sounds chain is a follower *without* converter), and Hear me plays the voice as spoken unless
-  `HearConvertedVoice` (Settings → "Hear me plays the AI voice itself").
+  (the engine's sounds chain is a follower), and Hear me plays the voice as spoken unless `HearConvertedVoice`
+  (Settings → "Hear me plays the AI voice itself"); Hear sounds still gets a copy of the sounds as they are (not on
+  top of the AI voice itself in the headphones, which carries them).
 - **Controller** (`AppController`, AI section): picking an AI card loads it off the UI thread while **the voice before
-  it keeps playing** (`PlayingVoiceId`; the card shows a spinner, `AiLoadingVoiceId`), warms it in the chain and swaps
+  it keeps playing** (`PlayingVoiceId`; the card shows a spinner, `AiLoadingVoiceId`) — unless that voice is clean
+  (Normal, none yet, another AI voice's stand-in): then the voice's stand-in plays (`IVoiceConverterSource.StandIn`,
+  `StandInVoice` = a `VoiceShifter` towards its `TargetHz`, ready at once) —, warms it in the chain and swaps
   it in (with its sliders) once `Ready`; an overtaken load is disposed; a failed or unavailable load gives the card back
   to the voice that plays and sets `AiProblem` (the banner, ✕ = `DismissAiProblem`); a worker that fails while
   playing (it plays its stand-in) is told and tried once more on the processor (`CreateAsync(.., cpuOnly)`), then
   `Failed`. The key reloaded on change = voice + its quality (or Settings') + device + benchmark time. The filter
-  editor's preview plays classic sliders only. `Ai` (`IAiVoices`, `AiVoices.cs`): `AiManager` = `AiVoiceService` +
+  editor's preview only changes the sliders (an AI voice keeps playing, the preview's sliders after it; nothing
+  reloads). Quit: save, stop the engine, retire every converter now, dispose the AI engine (which waits for the
+  workers), then remove the virtual mic. `Ai` (`IAiVoices`, `AiVoices.cs`): `AiManager` = `AiVoiceService` +
   `PackInstaller` + `VoiceImporter` (normal runs), `StandInAi` (the smoke test: every state, no ONNX Runtime), the
   tiny test pack (`E2E/TinyAiPack.cs`, the e2e run with `--e2e-ai <fixtures>`: a local web server plays the release).
   At start a card per installed AI voice (`SyncPresets`; bundled cards stay `BuiltIn` and named by their pack;
@@ -228,8 +237,13 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
 - **Pack install** (`Store/PackInstaller.cs`): the pack is a release of its own (tag `PackSource.Tag` = `ai-pack-v1`;
   assets `EasyVocal-AI-win-x64.zip`, `-macos-arm64.zip`, `-macos-x64.zip`, `-linux-x64.zip`; SHA-256 from the asset's
   `digest` or a `<asset>.sha256` next to it, none = refused). Downloaded to `<data>/AI.download/` (resumable with a
-  range; wrong bytes never resumed), unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE (fp16-stored or not), base generator,
-  voices), moved into `<data>/AI` part by part (imported `voices/user-*` untouched; a loaded runtime is kept), then
+  range; the `.part` records the SHA-256 it is meant to become in `.part.sha256`, a part of another file is dropped;
+  wrong bytes never resumed; a whole zip left from before is hashed off the UI thread, "Checking the download…"),
+  unpacked into `AI.staging-*`, checked (HuBERT fp32 + int8, RMVPE (fp16-stored or not), base generator,
+  voices), moved into `<data>/AI` part by part (imported `voices/user-*` untouched; a loaded runtime that can't be
+  replaced — Windows, also after Remove left it half deleted — waits as `runtime.pending` with the `runtime.remove`
+  marker, kept until `CleanLeftovers` swaps it in at the next start; `InstallAsync` returns true and the download card
+  says to restart EasyVocal), then
   `AiVoiceService.PackChanged` re-probes ONNX Runtime (no restart). Remove deletes engine, bundled voices, runtime (a
   loaded one at the next start: `CleanLeftovers`). `Downloader`: https only (`AllowLoopbackHttp` for tests/e2e),
   idle timeout, Content-Disposition, `Sniff` by bytes. Untrusted sizes are capped (`TorchCheckpoint`: data.pkl 8 MB,

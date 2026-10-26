@@ -33,10 +33,10 @@ public sealed record AiStreamStats(
 /// Every output sample has its input's position: the audio thread asks for position <c>now − L</c>
 /// (L = one block + a cushion for the processing time). When that sample isn't there yet (the PC is busy) the gap is
 /// covered with the last good converted audio, repeated back and forth from its newest sample (so nothing clicks) and
-/// fading to silence over 100 ms, then a 5 ms crossfade back to the voice; it counts an under-run and the cushion grows
-/// by 20 ms. The person's own (dry) voice is never played instead: before the first converted audio and after a
-/// worker error it is silence. When the worker falls more than three blocks behind it
-/// skips ahead (an overload). Nothing here allocates, locks or waits on the audio thread.
+/// fading over 100 ms into the stand-in voice (<see cref="AiFallback"/>), then a 5 ms crossfade back to the voice; it
+/// counts an under-run and the cushion grows by 20 ms. The person's own (dry) voice is never played instead: before
+/// the first converted audio, after a worker error and once disposed it is the stand-in voice. When the worker falls
+/// more than three blocks behind it skips ahead (an overload). Nothing here allocates, locks or waits on the audio thread.
 /// </para>
 /// </summary>
 public sealed class AiVoiceConverter : IVoiceConverter
@@ -171,15 +171,17 @@ public sealed class AiVoiceConverter : IVoiceConverter
         return s[Math.Min(n - 1, (int)Math.Ceiling(n * 0.95) - 1)];
     }
 
-
-    public IVoiceConverter CreateFollower() =>
-        new AiVoiceConverter(makeStream, blockSamples48, cushion * 1000.0 / Rate, AlgorithmicSamples * 1000.0 / Rate, provider, fallback);
+    /// <summary>
+    /// Waits until the worker has stopped (after <see cref="Dispose"/>): only then may the models it runs be closed.
+    /// False when it is still inside a model run after <paramref name="timeout"/>.
+    /// </summary>
+    public bool WaitStopped(TimeSpan timeout) => worker.Join(timeout);
 
     // ---------------- audio thread ----------------
 
     public void Process(Span<float> x)
     {
-        if (disposed) return; // the chain fades a converter out after it was let go: the audio passes untouched
+        // Disposed: the worker is gone and nothing new is converted, so what plays is the stand-in voice (never the input).
         for (int i = 0; i < x.Length; i += FallbackMax) ProcessPart(x.Slice(i, Math.Min(FallbackMax, x.Length - i)));
     }
 
@@ -194,8 +196,11 @@ public sealed class AiVoiceConverter : IVoiceConverter
         x[..first].CopyTo(inRing.AsSpan(at));
         if (first < n) x[first..].CopyTo(inRing);
         Volatile.Write(ref written, t0 + n);
-        try { wake.Set(); }
-        catch (ObjectDisposedException) { return; } // the worker is gone (disposed meanwhile)
+        if (!disposed)
+        {
+            try { wake.Set(); }
+            catch (ObjectDisposedException) { } // the worker is gone (disposed meanwhile): the stand-in voice plays below
+        }
 
         long avail = Volatile.Read(ref produced);
         long from = Volatile.Read(ref producedFrom);
@@ -479,7 +484,7 @@ public sealed class AiVoiceConverter : IVoiceConverter
 public sealed record AiFallback(double Semitones, double Formant)
 {
     /// <summary>A few semitones up with a lighter voice body: never the voice as it is.</summary>
-    public static AiFallback Default { get; } = new(4, 1.12);
+    public static AiFallback Default { get; } = new(StandInVoice.DefaultSemitones, StandInVoice.DefaultFormant);
 
     /// <summary>
     /// Towards a voice's natural pitch (<paramref name="targetHz"/>) from an average speaking voice (140 Hz), plus its
