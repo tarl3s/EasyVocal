@@ -162,6 +162,7 @@ internal static class PackRelease
         var pack = new AiPack(data);
         var installer = new PackInstaller(pack, assetName: asset);
         var offer = await installer.FindAsync();
+        if (installer.ApiFailure is { } api) Console.WriteLine("the release API failed, used the direct links: " + api.Message + " (" + api.InnerException?.Message + ")");
         Console.WriteLine($"{offer.AssetName}: {offer.Size / 1048576.0:0.0} MB, sha256 {offer.Sha256} ({offer.Url})");
         long last = 0;
         var progress = new Prog<PackProgress>(p =>

@@ -7,11 +7,11 @@ namespace EasyVocal.Ai.Tests.Helpers;
 /// <summary>
 /// A tiny HTTP/1.1 server on 127.0.0.1 for the download tests (no HttpListener: it needs URL reservations on
 /// Windows). Each route answers with a status, optional bytes, an optional length (null = none: read until close)
-/// and an optional pause between 16 KB pieces.
+/// an optional pause between 16 KB pieces and optional extra header lines.
 /// </summary>
 public sealed class LocalHttp : IDisposable
 {
-    public sealed record Route(int Status, byte[] Body, bool SendLength = true, int PauseMs = 0, long? FakeLength = null, bool Ranges = false);
+    public sealed record Route(int Status, byte[] Body, bool SendLength = true, int PauseMs = 0, long? FakeLength = null, bool Ranges = false, string? Headers = null);
 
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly Dictionary<string, Route> routes = new();
@@ -78,7 +78,8 @@ public sealed class LocalHttp : IDisposable
                     body = body[from..];
                     status = 206;
                 }
-                var h = new StringBuilder($"HTTP/1.1 {status} {(status is 200 or 206 ? "OK" : "Error")}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n" + extra);
+                var h = new StringBuilder($"HTTP/1.1 {status} {(status is 200 or 206 ? "OK" : "Error")}\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n" + extra
+                    + (r.Headers == null ? "" : r.Headers.TrimEnd() + "\r\n"));
                 if (r.SendLength) h.Append($"Content-Length: {r.FakeLength ?? body.Length}\r\n");
                 h.Append("\r\n");
                 var hb = Encoding.ASCII.GetBytes(h.ToString());

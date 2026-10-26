@@ -159,6 +159,82 @@ public class PackInstallerTests : IDisposable
         Assert.Contains("isn't available", (await Assert.ThrowsAsync<PackUnavailableException>(() => none.FindAsync())).Message);
     }
 
+    private const string RateLimited = "X-RateLimit-Limit: 60\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 1792991700";
+    private static readonly byte[] RateLimitBody = Encoding.ASCII.GetBytes("{\"message\":\"API rate limit exceeded for 13.105.117.1.\"}");
+
+    [Fact]
+    public async Task A_rate_limited_release_API_falls_back_to_the_direct_links_and_says_why()
+    {
+        // GitHub's API allows 60 requests an hour per network without an account (a CI runner's or an office's
+        // shared address runs out): the release's direct links have no such limit
+        var data = Path.Combine(work, "data");
+        var pack = new AiPack(data);
+        var zip = PackZip();
+        using var http = new LocalHttp();
+        http.Map("/release", new LocalHttp.Route(403, RateLimitBody, Headers: RateLimited));
+        http.Map("/dl/A.zip", new LocalHttp.Route(200, zip, Ranges: true));
+        http.Map("/dl/A.zip.sha256", new LocalHttp.Route(200, Encoding.ASCII.GetBytes(Sha(zip) + "  A.zip\n")));
+        var installer = new PackInstaller(pack, releaseApi: http.Url("/release"), assetName: "A.zip", directBase: http.Url("/dl/"));
+
+        var offer = await installer.FindAsync();
+        Assert.Equal(Sha(zip), offer.Sha256);
+        Assert.Equal(zip.Length, offer.Size); // from the download server's Content-Range (one byte asked for)
+        Assert.Equal(http.Url("/dl/A.zip"), offer.Url.ToString());
+        var why = Assert.IsType<PackUnavailableException>(installer.ApiFailure);
+        Assert.Contains("too many", why.Message);
+        Assert.Contains("HTTP 403", why.InnerException!.Message);
+        Assert.Contains("X-RateLimit-Remaining=0", why.InnerException.Message);
+        Assert.Contains("API rate limit exceeded", why.InnerException.Message);
+        await installer.InstallAsync(offer);
+        Assert.True(pack.Installed);
+
+        // the API working again: it is used (no failure recorded)
+        http.Map("/release", new LocalHttp.Route(200, Release(http, "A.zip", zip.Length, "sha256:" + Sha(zip))));
+        await installer.FindAsync();
+        Assert.Null(installer.ApiFailure);
+    }
+
+    [Fact]
+    public async Task A_failed_look_says_what_happened_and_keeps_the_details_for_the_log()
+    {
+        var pack = new AiPack(Path.Combine(work, "data"));
+        using var http = new LocalHttp();
+
+        // rate limited and the direct links broken too: the API's reason, both details inside
+        http.Map("/release", new LocalHttp.Route(403, RateLimitBody, Headers: RateLimited));
+        http.Map("/dl/A.zip.sha256", new LocalHttp.Route(500, Encoding.ASCII.GetBytes("upstream exploded")));
+        var both = new PackInstaller(pack, releaseApi: http.Url("/release"), assetName: "A.zip", directBase: http.Url("/dl/"));
+        var e = await Assert.ThrowsAsync<PackUnavailableException>(() => both.FindAsync());
+        Assert.Contains("too many", e.Message);
+        var all = e.InnerException!.ToString();
+        Assert.Contains("X-RateLimit-Remaining=0", all);
+        Assert.Contains("HTTP 500", all);
+        Assert.Contains("upstream exploded", all);
+
+        // the direct links say there is no such asset: that is what the person is told
+        http.Map("/dl/A.zip.sha256", new LocalHttp.Route(200, Encoding.ASCII.GetBytes(new string('a', 64))));
+        Assert.Contains("no AI pack for this computer", (await Assert.ThrowsAsync<PackUnavailableException>(() => both.FindAsync())).Message);
+
+        // the server's own fault: not "check your internet"
+        http.Map("/release", new LocalHttp.Route(502, Encoding.ASCII.GetBytes("bad gateway")));
+        var api = new PackInstaller(pack, releaseApi: http.Url("/release"), assetName: "A.zip");
+        e = await Assert.ThrowsAsync<PackUnavailableException>(() => api.FindAsync());
+        Assert.Contains("has a problem", e.Message);
+        Assert.Contains("HTTP 502", e.InnerException!.Message);
+        Assert.Contains(http.Url("/release"), e.InnerException.Message);
+
+        // nobody there: no connection, and the URL it tried
+        var port = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        port.Start();
+        var closed = $"http://127.0.0.1:{((System.Net.IPEndPoint)port.LocalEndpoint).Port}/release";
+        port.Stop();
+        var off = new PackInstaller(pack, releaseApi: closed, assetName: "A.zip");
+        e = await Assert.ThrowsAsync<PackUnavailableException>(() => off.FindAsync());
+        Assert.Contains("Couldn't reach", e.Message);
+        Assert.Contains(closed, e.InnerException!.Message);
+        Assert.IsAssignableFrom<HttpRequestException>(e.InnerException.InnerException);
+    }
+
     [Fact]
     public async Task A_whole_download_left_from_before_is_checked_off_the_callers_thread_and_installed()
     {

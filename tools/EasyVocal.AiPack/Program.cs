@@ -68,6 +68,7 @@ try
 catch (Exception ex)
 {
     Console.Error.WriteLine("failed: " + ex.Message);
+    if (ex.InnerException != null) Console.Error.WriteLine(ex); // the details behind the friendly message
     return 1;
 }
 

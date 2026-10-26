@@ -30,6 +30,8 @@ public static class PackSource
     /// <summary>The pack's own release; a new pack format gets a new tag.</summary>
     public const string Tag = "ai-pack-v1";
     public static string ReleaseApi => $"https://api.github.com/repos/{Repo}/releases/tags/{Tag}";
+    /// <summary>The release's direct links (<c>&lt;base&gt;&lt;asset&gt;</c>): used when the API can't be.</summary>
+    public static string DirectBase => $"https://github.com/{Repo}/releases/download/{Tag}/";
 
     /// <summary>Roughly how big the download is (shown before the release was looked at).</summary>
     public const long ApproxBytes = 540L * 1024 * 1024;
@@ -109,14 +111,18 @@ public sealed class PackInstaller
     private readonly HttpClient? client;
     private readonly string releaseApi;
     private readonly string? assetName;
+    private readonly Uri? directBase;
 
     /// <param name="releaseApi">The release's API URL (tests and the e2e run: a local server).</param>
     /// <param name="assetName">The asset to install (null = this computer's).</param>
-    public PackInstaller(AiPack pack, HttpClient? client = null, string? releaseApi = null, string? assetName = null)
+    /// <param name="directBase">Where the release's files are when its API fails (null: GitHub's for the real release, none for another <paramref name="releaseApi"/>).</param>
+    public PackInstaller(AiPack pack, HttpClient? client = null, string? releaseApi = null, string? assetName = null, string? directBase = null)
     {
         this.pack = pack;
         this.client = client;
         this.releaseApi = releaseApi ?? PackSource.ReleaseApi;
+        var direct = directBase ?? (releaseApi == null ? PackSource.DirectBase : null);
+        this.directBase = direct == null ? null : new Uri(direct.EndsWith('/') ? direct : direct + "/");
         this.assetName = assetName ?? PackSource.ThisAssetName;
     }
 
@@ -124,35 +130,120 @@ public sealed class PackInstaller
 
     public string DownloadFolder => Path.Combine(DataFolder, DownloadFolderName);
 
-    /// <summary>Looks at the release: what to download for this computer.</summary>
+    /// <summary>
+    /// Looks at the release: what to download for this computer. The release's API (api.github.com) allows few
+    /// requests per network without an account (a shared office, school or cloud network runs out): when it refuses
+    /// or can't be reached, the release's direct links are used instead (the <c>.sha256</c> file and the asset's size
+    /// from the download server), which have no such limit.
+    /// </summary>
     public async Task<PackOffer> FindAsync(CancellationToken ct = default)
     {
         var name = assetName ?? throw new PackUnavailableException(UiText.Mark("There is no AI pack for this computer yet."));
         var http = client ?? SharedClient.Value;
         string json;
+        ApiFailure = null;
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, releaseApi);
-            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
-                throw new PackUnavailableException(UiText.Mark("The AI pack isn't available for download yet."));
-            if (!resp.IsSuccessStatusCode)
-                throw new PackUnavailableException(UiText.Mark("Couldn't reach the download server. Check your internet connection and try again."));
-            json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            json = await Ask(http, new Uri(releaseApi), "application/vnd.github+json", ct, resp =>
+                resp.StatusCode == System.Net.HttpStatusCode.NotFound ? new PackUnavailableException(UiText.Mark("The AI pack isn't available for download yet.")) : null).ConfigureAwait(false);
+        }
+        catch (PackUnavailableException api) when (api.InnerException != null && directBase != null)
+        {
+            // the API refused or couldn't be reached (not a missing release): the direct links
+            ApiFailure = api;
+            AppLog.Error("AI: the release API failed, trying the release's direct links", api);
+            try { return await FindDirectAsync(http, name, ct).ConfigureAwait(false); }
+            catch (PackUnavailableException direct)
+            {
+                // a server problem: the API's reason (the first one met); else what the direct links said (no pack, wrong size)
+                var why = direct.InnerException != null ? api.Message : direct.Message;
+                throw new PackUnavailableException(why, new AggregateException(api.InnerException!, direct.InnerException ?? direct));
+            }
+        }
+        var (url, size, sha, sidecar) = PackSource.Pick(json, name);
+        sha ??= await SidecarSha(http, sidecar!, ct).ConfigureAwait(false);
+        return new PackOffer(name, url, size, sha);
+    }
+
+    /// <summary>Why the release's API wasn't used by the last <see cref="FindAsync"/> (null: it was).</summary>
+    public Exception? ApiFailure { get; private set; }
+
+    /// <summary>The offer from the release's direct links: <c>&lt;asset&gt;.sha256</c> and the asset's size (one byte asked for).</summary>
+    private async Task<PackOffer> FindDirectAsync(HttpClient http, string name, CancellationToken ct)
+    {
+        var url = new Uri(directBase!, Uri.EscapeDataString(name));
+        var sha = await SidecarSha(http, new Uri(directBase!, Uri.EscapeDataString(name + ".sha256")), ct).ConfigureAwait(false);
+        long size = 0;
+        await Ask(http, url, null, ct, resp =>
+        {
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return new PackUnavailableException(UiText.Mark("There is no AI pack for this computer yet."));
+            if (resp.IsSuccessStatusCode)
+                size = resp.Content.Headers.ContentRange?.Length ?? (resp.StatusCode == System.Net.HttpStatusCode.OK ? resp.Content.Headers.ContentLength ?? 0 : 0);
+            return null;
+        }, firstByte: true).ConfigureAwait(false);
+        if (size <= 0 || size > PackSource.MaxBytes) throw new PackUnavailableException(UiText.Mark("The AI pack on the server looks wrong. Try again later."));
+        return new PackOffer(name, url, size, sha);
+    }
+
+    /// <summary>The SHA-256 written in a release's <c>.sha256</c> file.</summary>
+    private static async Task<string> SidecarSha(HttpClient http, Uri url, CancellationToken ct)
+    {
+        var text = await Ask(http, url, null, ct, resp =>
+            resp.StatusCode == System.Net.HttpStatusCode.NotFound ? new PackUnavailableException(UiText.Mark("The AI pack can't be checked (its SHA-256 is missing), so it isn't installed.")) : null).ConfigureAwait(false);
+        var sha = text.Trim().Split(' ', '\t', '\n', '\r')[0].ToLowerInvariant();
+        return PackSource.IsSha(sha) ? sha : throw new PackUnavailableException(UiText.Mark("The AI pack can't be checked (its SHA-256 is missing), so it isn't installed."));
+    }
+
+    /// <summary>
+    /// One GET (<paramref name="firstByte"/>: only the first byte, for the headers); returns the body. A failure is a
+    /// <see cref="PackUnavailableException"/> that says what happened (no connection, no answer in time, too many
+    /// requests, the server's fault, a refusal), with the details (the URL, the HTTP status, the rate-limit headers and
+    /// the server's own words) in its inner exception for the log. <paramref name="check"/> may give its own exception
+    /// for an answer (shown as it is), or null to go on.
+    /// </summary>
+    private static async Task<string> Ask(HttpClient http, Uri url, string? accept, CancellationToken ct,
+        Func<HttpResponseMessage, PackUnavailableException?> check, bool firstByte = false)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            if (accept != null) req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
+            if (firstByte) req.Headers.Range = new RangeHeaderValue(0, 0);
+            using var resp = await http.SendAsync(req, firstByte ? HttpCompletionOption.ResponseHeadersRead : HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+            if (check(resp) is { } own) throw own;
+            if (resp.IsSuccessStatusCode) return firstByte ? "" : await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            string body;
+            try { body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException) { body = ""; }
+            int code = (int)resp.StatusCode;
+            throw new PackUnavailableException(code is 403 or 429
+                ? UiText.Mark("The download server is refusing requests from this network for now (too many of them). Try again in an hour.")
+                : code >= 500
+                    ? UiText.Mark("The download server has a problem right now. Try again later.")
+                    : UiText.Mark("The download server refused the request. Try again later."),
+                new HttpRequestException(Describe(url, resp, body), null, resp.StatusCode));
         }
         catch (HttpRequestException ex)
         {
-            throw new PackUnavailableException(UiText.Mark("Couldn't reach the download server. Check your internet connection and try again."), ex);
+            throw new PackUnavailableException(UiText.Mark("Couldn't reach the download server. Check your internet connection and try again."),
+                new HttpRequestException($"GET {url}: {ex.Message}", ex, ex.StatusCode));
         }
-        var (url, size, sha, sidecar) = PackSource.Pick(json, name);
-        if (sha == null)
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            var text = await http.GetStringAsync(sidecar!, ct).ConfigureAwait(false);
-            sha = text.Trim().Split(' ', '\t', '\n', '\r')[0].ToLowerInvariant();
-            if (!PackSource.IsSha(sha)) throw new PackUnavailableException(UiText.Mark("The AI pack can't be checked (its SHA-256 is missing), so it isn't installed."));
+            throw new PackUnavailableException(UiText.Mark("The download server didn't answer in time. Check your internet connection and try again."),
+                new TimeoutException($"GET {url}: no answer in time", ex));
         }
-        return new PackOffer(name, url, size, sha);
+    }
+
+    /// <summary>What a refused request was, for the log: URL, status, GitHub's rate-limit headers, the start of the answer.</summary>
+    internal static string Describe(Uri url, HttpResponseMessage resp, string body)
+    {
+        var s = new System.Text.StringBuilder($"GET {url}: HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
+        foreach (var h in new[] { "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After", "X-GitHub-Request-Id" })
+            if (resp.Headers.TryGetValues(h, out var v)) s.Append("; ").Append(h).Append('=').Append(string.Join(",", v));
+        var text = body.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (text.Length > 0) s.Append("; ").Append(text.Length > 300 ? text[..300] + "…" : text);
+        return s.ToString();
     }
 
     /// <summary>Bytes already downloaded towards this offer (a stopped download goes on from there).</summary>
