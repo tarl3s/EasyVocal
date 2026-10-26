@@ -24,6 +24,12 @@ every pull request; a `packages` job builds the four downloads exactly as `tools
 README's ad-hoc codesign) and runs the unpacked program's `--smoketest` and `--e2e`. **Nobody has used the app on a real Mac or Linux desktop yet** (CI runs the tests, not a person),
 so the READMEs call those builds "Preview".
 
+**2.0.0 adds AI voices** (design `docs/superpowers/specs/2026-10-25-ai-voices-design.md`; phase 1 research on the
+`spike/ai-voices` branch: `docs/superpowers/research/2026-10-25-ai-voices-phase1.md`). Phase 2 (the engine, no UI) is
+on `feat/ai-voices`: `src/EasyVocal.Ai` runs RVC v2 voices through ONNX Runtime, the voice chain has a converter slot
+for them, `AppController` loads the active AI voice; phase 3 is the UI (AI section, import, quality, pack download),
+phase 4 the per-OS AI pack assets (models + ONNX Runtime's native library) and the 2.0.0 gate.
+
 ## Project layout
 
 | Project | Target | What |
@@ -33,8 +39,10 @@ so the READMEs call those builds "Preview".
 | `src/EasyVocal.Platform.Unix` | `net8.0` marked macOS + Linux | what both share: PortAudio devices (own P/Invoke, `PortAudio/`; natives from the `org.k2fsa.portaudio.runtime.*` packages, Apache-2.0; 48 kHz mono float, 10 ms blocks, any device rate converted both ways; the list from an optional `IDeviceSource`, PortAudio started again only when the devices changed — never on a timer — and a change under open streams fails them so the engine reopens; same-name devices matched in order; a 2 s poll for stalled streams); a closing stream (Dispose never waits, not even for the backend's lock) answers paComplete with silence and PortAudio stops it on its own audio thread; a thread of its own waits for PortAudio's stream-finished callback, then Pa_AbortStream (nothing left to stop) so it is "stopped" before Pa_CloseStream (which would abort it otherwise) — never a stop from outside while the audio thread may be stopping it (both end in AudioOutputUnitStop: macOS froze); only a stream with no callback for 1 s is aborted from outside, its callback answering paContinue from then on; opens wait for closes (`PortAudioStream`, tested on pretend calls in `PortAudioCloseTests`), `ICommandRunner` (pactl, brew, open… in `C.UTF-8` on Linux, `StreamAsync` for `pactl subscribe`; tests fake it), `Opener`, `InstallLayout` (the release's `easyvocal-files.txt` marker, App Translocation), the updater's sh helper (`ShHelperScript`, `ShLauncher` with setsid) and `UnixUpdaterPlatform` (.app / folder) |
 | `src/EasyVocal.Platform.MacOS` | `net8.0` marked `macos` | `CoreAudioDevices` (the list: UIDs, names, defaults), `MicPermission` (AVFoundation's status via the ObjC runtime; refused → `MicPermissionDeniedException`, also while recording), `BlackHoleProvider` (`brew install blackhole-2ch` in the background with an osascript password dialog through `SUDO_ASKPASS`, else the official page), `CarbonHotkeys` + `MacKeys` (kVK codes; Win = ⌘) (options = kEventHotKeyExclusive = 1 << 0; another bit is paramErr for every key), `LaunchAgent` (`~/Library/LaunchAgents/com.tarl3s.easyvocal.plist`, `--tray`), `NoAppMenuEntry`; `MacPlatform.Services` |
 | `src/EasyVocal.Platform.Linux` | `net8.0` marked `linux` | `LinuxAudio` (picks without waiting: `PulseBackend` when pactl and libpulse-simple are there, PortAudio when its first look finds no server, back to PulseAudio once `pactl info` answers again), `PulseBackend` (the UI reads only a snapshot; pactl — JSON where it can — runs on a worker woken by one long-running `pactl subscribe`, a slow poll only while that is down; a failed look keeps the last good snapshot; streams whose device left the snapshot fail, unknown ids and EasyVocal's own mic are refused; libpulse-simple streams by name, ~30 ms queued), `PactlVirtualMic` (module-null-sink `easyvocal_out` + module-remap-source `easyvocal_mic`, unloaded on quit, leftovers (and halves of a failed try) unloaded by name; a default the system moved to them is put back), `X11Hotkeys` + `X11Keys` (XGrabKey on its own thread and display, poll() + wake pipe, MappingNotify re-grabs, Caps/Num Lock variants, none on Wayland: `DesktopSession`), `AutostartEntry` (`~/.config/autostart/easyvocal.desktop`), `AppMenuEntry` (`~/.local/share/applications` + icon in its size's hicolor folder), `TrayHost` (StatusNotifierWatcher on D-Bus), `AlsaDevices`; `LinuxPlatform.Services` |
+| `src/EasyVocal.Ai` | `net8.0` (portable) | the AI voices' engine (RVC v2 on ONNX Runtime; see "AI voices" below). References only `Microsoft.ML.OnnxRuntime.Managed` 1.23.2; the native library comes from `OnnxRuntime.Native.props` (DirectML 1.23.0 on Windows, the CPU package 1.23.2 elsewhere — 1.23.x is the last with osx-x64) in the tests, the tool and Debug builds of the app, and later from the AI pack (`<data>/AI/runtime/`, `OrtRuntime.UseNativeFolder`). Embeds the weight-less templates (`Templates/*.onnx.gz`) and the bundled voices' recipe (`Voices/bundled-voices.json`) |
 | `src/EasyVocal` | `net8.0`, Avalonia 11 (exe `EasyVocal(.exe)`) | the app: windows, `AppController` (talks only to the interfaces and an `IUiDispatcher`), tray, smoke/e2e test modes; `PlatformFactory.ForThisComputer` is the one place that picks the platform (Windows, macOS, Linux; anything else a no-devices stand-in). It references every platform project and calls each only behind `OperatingSystem.IsWindows()/IsMacOS()/IsLinux()` (CA1416 checks) |
 | `tests/EasyVocal.Tests` | `net8.0` | everything portable (runs on any OS), the updater with a pretend platform (`Helpers/FakeUpdate.cs`); fixtures in `Fixtures/` (a 440 Hz tone as MP3 and OGG) |
+| `tests/EasyVocal.Ai.Tests` | `net8.0` (portable) | the AI engine on any OS: `.pth`/ONNX/`.index` reading against PyTorch and faiss (tiny fixtures in `Fixtures/`, made by `tools/ai/export/make_fixtures.py`), the audio-thread converter with stand-in workers (`StreamingTests`), the whole engine on a tiny pack (`ServiceTests`), imports by file and by link (a local HTTP server, `Helpers/LocalHttp.cs`), and with the real models (`RealModelTests`, `PipelineTests`: bundled voices, latency per level through the real `AudioEngine`). The real models are RVC's MIT files, downloaded once into `EV_AI_MODELS` (default `%TEMP%\EV_AiModelCache`, kept; CI caches `upstream/`) and turned into a pack there; "SKIPPED: …" when they can't be had (`EV_AI_OFFLINE=1`). Latency budgets are reported (`OVER BUDGET`), enforced only with `EV_AI_STRICT=1` (an idle PC: the suites run in parallel); on CI (`CI=true`) the quality checks of a level the runner can't keep up with are skipped |
 | `tests/EasyVocal.FfmpegStandIn` | `net8.0` exe | a tiny program the decoder tests run in place of ffmpeg (what it does is written in the "sound file" it gets) |
 | `tests/EasyVocal.Tests.Windows` | `net8.0-windows` | registry, `.lnk`, VB-CABLE/Authenticode, Media Foundation / ACM, hotkeys, the PowerShell helper, the e2e run; links the portable tests' `Helpers/` |
 | `tests/EasyVocal.UiTests` | `net8.0` (portable) | Avalonia.Headless (drawn with Skia): the app's own smoke and e2e steps in-process on pretend devices/hotkeys/startup/virtual mic (`E2E/TestPlatform.cs`), the e2e relaunch as a second session; `AppController` on a hand-pumped `IUiDispatcher`; `KeyMap`. `EV_UI_SNAPSHOTS=<folder>` keeps the PNGs |
@@ -81,6 +89,9 @@ dotnet run --project src/EasyVocal -- --data <folder> --smoketest   # opens ever
 dotnet run --project src/EasyVocal -- --data <folder> --e2e         # end-to-end test on test audio devices, exits 0
 tools/Publish-Release.ps1 -NoUpload   # self-contained single-file zip -> publish\EasyVocal-win-x64.zip (< 80 MB)
 EV_VOICE_SAMPLES=<folder> dotnet test --filter RenderListeningSamples   # every built-in voice on real speech, as WAVs + README.txt (voice-samples/ is git-ignored)
+dotnet test tests/EasyVocal.Ai.Tests   # the AI engine (the real models: downloaded once into EV_AI_MODELS, see below)
+EV_AI_SAMPLES=<folder> dotnet test tests/EasyVocal.Ai.Tests --filter Bundled_voices   # every bundled AI voice on real speech, as WAVs
+dotnet run --project tools/EasyVocal.AiPack -- build --data <folder>   # an AI pack in <folder>/AI from RVC's public files (then bench / list / render)
 ```
 
 App arguments (`Program.cs` and `AppSession.cs`, parsed by `AppArgs.cs`): `--data <folder>` (use that folder instead of
@@ -123,6 +134,59 @@ the relaunch is a second `AppSession` on the same folder).
 | Tests | `tests/EasyVocal.Tests/` (portable, `net8.0`: + `Helpers/FakeAudio.cs`, `FakeUpdate.cs` (a pretend updater platform, source and launcher), `Signals.cs`, `MiniFlac.cs` = a tiny FLAC writer, Windows has no FLAC encoder; `Speech.cs` = real speech made once per run with Windows' TTS through PowerShell (David/Zira/Maria when installed, a synthetic vowel otherwise, e.g. on macOS/Linux; `EV_SPEECH=synthetic` or `=en` reproduces those inputs (CI's
 Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeatures.cs` = what a voice sounds like in numbers; `WavFile.cs`); `VoiceCharacterTests.cs` measures every built-in voice on that speech; `DecoderTests.cs` (NLayer, NVorbis, extensible WAV, the loader's "keep looking", ffmpeg through the stand-in: output, non-zero exit, deadline + kill, cancel; a real ffmpeg only when installed, "SKIPPED" otherwise); `UpdateServiceTests.cs`; `MeterPreviewTests.cs` (MicMeter, SoundPreview, PathCompare, data folders); `AppArgs.cs` is linked in via the csproj. `tests/EasyVocal.Tests.Windows/` (`SetupTests` = Run key + VB-CABLE pack, `StartMenuShortcutTests`, `UpdaterTests` = Windows' names and unpack, PowerShell helper run for real; `WindowsSoundTests` = Media Foundation, ACM mu-law / IMA ADPCM, which decoder reads MP3; `WindowsHotkeysTests` = the message-only window; `E2ETests.cs` runs the built app with `--e2e`). `tests/EasyVocal.UiTests/` (`HeadlessAppTests` = the smoke and e2e steps headless, `ControllerTests` = the controller on a hand-pumped dispatcher, `KeyMap`; `TestAppBuilder.cs` = the real App on the headless platform with Skia) |
 | Tools | `tools/Make-Icon.ps1` (draws `Assets/EasyVocal.ico`; `-PngDir` = the same drawing as 16-1024 px PNGs), `tools/Publish-Release.ps1` (publishes win-x64, osx-arm64, osx-x64, linux-x64 self-contained single file; Windows keeps the natives inside the exe, macOS/Linux next to it), `tools/EasyVocal.Packager` (plain .NET console: `Release.Pack` makes each download: `MacApp` = Info.plist (com.tarl3s.easyvocal, LSMinimumSystemVersion 11.0, NSMicrophoneUsageDescription), PkgInfo, `.icns` built from PNG chunks, the program and dylibs 0755; `LinuxApp` = `EasyVocal/` with easyvocal.png, easyvocal.desktop and install.sh; `Archives` = zips with Unix modes in the external attributes and "made by Unix", ustar tar.gz with modes, never links, no .pdb; `Manifest` = `easyvocal-files.txt` in each install root: next to EasyVocal.exe, in `EasyVocal.app/Contents/Resources/`, in `EasyVocal/`) |
+| AI tools | `tools/EasyVocal.AiPack` (plain .NET console: `fetch` RVC's public files, `build` a pack, `voices` = write the bundled voices again from the recipe (the "generation script"), `list`, `bench`, `render` a recording through a voice offline or streamed); `tools/ai/export/*.py` (dev time only, a Python venv with torch/transformers/onnx and RVC's repository): `export_rvc.py templates` = the weight-less RVC v2 templates, `export_hubert.py template` = HuBERT's, `make_fixtures.py` = the tests' tiny models, `variants.py` = int8/fp16 (`hubert_int8.onnx`), `rel_attn_patch.py` = trace-friendly attention (same math) |
+
+## AI voices (`src/EasyVocal.Ai`)
+
+- **Pipeline** (RVC v2, RVC's realtime scheme `rtrvc.py`, per stream `Rvc/RvcStream.cs`): mic 48 kHz → 16 kHz
+  (`Dsp/PolyResampler.cs`) → rolling context (extra + crossfade + 10 ms search + block) → HuBERT base layer 12
+  (`Rvc/ContentEncoder.cs`, 768 values per 20 ms, doubled to 100 fps, optional `.index` blend `Rvc/FeatureIndex.cs`)
+  + pitch on the newest block + 50 ms (`Rvc/Pitch.cs`: RMVPE through ONNX, YIN in C# on Light; `F0.Post` fills gaps
+  ≤ 150 ms, shifts, coarse bins; `AutoKey` moves the input to the voice's natural pitch `TargetHz` from the median of
+  the last ~6 s of voicing) → generator (`Rvc/RvcGenerator.cs`: enc graph over all frames, dec graph = flow +
+  NSF-HiFiGAN over the newest block + crossfade + search frames, speaker vector `g` an input; or one RVC WebUI /
+  w-okada graph) → output gate from the input level → SOLA + sin² crossfade → 48 kHz. `Rvc/RvcOffline.cs` = a whole
+  recording at once. Shapes are fixed per level, tensors are preallocated `OrtValue`s (no allocation per block).
+- **Levels** (`AiQuality.cs`): Light = 200 ms blocks, 0.4 s context, YIN, int8 content encoder; Balanced = 200 ms
+  (120 on a GPU), 1 s, RMVPE, index 0.5; Max = 250 ms (150 GPU), 2 s, RMVPE, fp32, index 0.75.
+- **Audio thread** (`Engine/AiVoiceConverter.cs`, an `IVoiceConverter`): copies the mic into a ring and plays the
+  worker's output ring `L` = block + cushion behind, by absolute sample position (latency = L + crossfade + search +
+  the resamplers, reported by `LatencySamples`). A sample that isn't ready is replaced by the input from the same
+  moment (time-aligned dry voice) with a 5 ms crossfade from the last good audio mirrored, counted as an under-run;
+  the cushion then grows 20 ms (moved while the dry voice plays, crossfaded); a worker more than 3 blocks behind
+  skips ahead (overload). No lock, no allocation, no wait; Dispose from any thread (it then passes audio through).
+  The cushion starts at `AiLevels.CushionFor(p95)` = measured 95th percentile × 1.25 + 15 ms (`AiSettings.MeasuredBlockMs`
+  from the benchmark), else the level's default.
+- **Chain**: `VoiceChain.SetConverter` puts it in front of the classic effects (they play on the converted voice);
+  in/out and OFF crossfade over 40 ms; followers (the sounds through the voice) get `CreateFollower()` streams that the
+  chain owns. `AppController.UpdateAiVoice` loads the active `VoiceKind.Ai` preset off the UI thread (`AiState`
+  Loading → Ready / Failed / Unavailable, `AiProblem`, `VoiceLatencyMs`; an overtaken load is disposed; the filter
+  editor's preview plays classic sliders only); a classic voice or Normal drops it. `AppSession` passes an
+  `AiVoiceService` (none in test runs); at start it adds a card per installed AI voice (`SyncPresets`).
+- **Sessions** (`Runtime/OrtRuntime.cs`): `AiDevice` Cpu / Gpu (DirectML on Windows, CoreML on macOS, CUDA on Linux,
+  each tried and falling back to the CPU when missing or refused, logged) / Auto; "auto" in the settings = the CPU
+  until the benchmark found the GPU better. Intra-op threads = physical cores ≤ 6, spinning off. Runs are serialised
+  per model (DirectML). `Engine/ModelCache.cs` shares loaded models between streams (leases; unloaded 3 min after
+  the last one).
+- **Store** (`Store/`): the pack is `<data>/AI` (`AiPack.cs`: `engine/hubert.onnx` [+ `hubert_int8.onnx`],
+  `engine/rmvpe.onnx`, `engine/rvc-v2-40k.pth` = the base generator, optional `engine/templates/` overriding the
+  built-in ones, `runtime/`, `voices/<id>/voice.json` + files). `VoiceManifest` (id — persisted, never renamed — name,
+  emoji, kind `speaker`/`pth`/`onnx-pair`/`onnx-single`, rate, `TargetHz`/`Key`, source/licence/attribution, files with
+  SHA-256). `VoiceImporter`: `.pth` (checked by building and running it once), `.onnx` (recognised by its inputs,
+  rate probed), `.index`, `.zip` (only model files are taken, under our own names; G_/D_ training checkpoints skipped),
+  links (`Downloader`: https only — http to localhost for tests —, Hugging Face `/blob/` → `/resolve/`, size cap
+  1.5 GB, SHA-256, progress, cancel, nothing left behind); a voice is added whole or not at all.
+- **`.pth` without PyTorch** (`Import/`): `TorchCheckpoint` (zip + a pickle machine for what torch.save writes; nothing
+  is executed), `WeightMap` (weight norm folded along the dim g keeps; prefixes matched), `OnnxRewriter.Fill` (a
+  template's initializers replaced by the tensors, shape-checked, one allocation), `RvcTemplates` (v2 with pitch,
+  32k/40k/48k; the rate from `sr`, the config or the first upsampler's kernel; unknown layouts or unused tensors →
+  "isn't supported yet"). `SessionOptions.AddInitializer` must not be used for this (ORT has used the file's values).
+- **Bundled voices** (`Voices/bundled-voices.json` → `PackBuilder.WriteBundledVoices`): blends of the base model's
+  VCTK speaker vectors (MIT model, CC BY 4.0 data, attribution in each voice.json), each a speaker picked far from the
+  others by WavLM speaker similarity mixed 0.65/0.35 with its nearest neighbour, with a natural pitch. `PackBuilder`
+  makes the whole pack from `BaseModels` (RVC's Hugging Face files, SHA-256 = their LFS ids) with no Python.
+- **Benchmark** (`AiBenchmark.cs`): each level on the CPU (and the GPU), real time = mean block ≤ 75 % of the block and
+  p95 ≤ 110 %; suggests the best real-time level (GPU wins ties); `SaveTo(AiSettings)`.
 
 ## Avalonia notes (learned in the port)
 
@@ -178,6 +242,9 @@ Windows has no Maria) — tune a voice until it passes on all three); `VoiceFeat
   macOS/Linux: org.k2fsa.portaudio.runtime.* (PortAudio's native library, MIT, packaged Apache-2.0) with our own
   P/Invoke; app: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent (MIT); tests: xUnit, Avalonia.Headless.XUnit). The
   system's own libraries are loaded at run time: CoreAudio, Carbon, AVFoundation (macOS); libpulse-simple, libX11 (Linux).
+  AI engine: `Microsoft.ML.OnnxRuntime.Managed` (MIT); its natives (`Microsoft.ML.OnnxRuntime`, `.DirectML`, MIT) only in
+  tests, tools and Debug builds, never in the release downloads (the AI pack carries them). AI models: MIT (RVC,
+  HuBERT, RMVPE: Apache-2.0); voice data CC BY 4.0 (VCTK) with attribution. GPL model exports (w-okada, MoeSS) are not used.
 - Audio thread: no allocation per block, no locks held while doing DSP, no LINQ.
 - VB-CABLE is not bundled (donationware); the app downloads the official installer and verifies its signature.
   BlackHole (GPL) is not bundled either: Homebrew installs it, or the person does from its page. On Linux nothing is

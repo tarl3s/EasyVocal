@@ -23,22 +23,27 @@ public sealed record BenchmarkResult(AiQuality Suggested, AiDevice Device, strin
 
 /// <summary>
 /// The one-time measurement that suggests a level for this PC: each level on the processor (and on the GPU when one
-/// works), a few seconds of speech-like sound streamed exactly as the voice chain does, the 95th percentile of the
-/// block time. A level is real time when that stays under 70 % of a block (room for the rest of the PC). The
-/// suggestion is the best level that is real time; the GPU wins a tie (it leaves the processor free).
+/// works), a few seconds of speech-like sound streamed exactly as the voice chain does. A level is real time when a
+/// block takes on average at most 75 % of its length (room for the rest of the PC) and its 95th percentile stays
+/// within 110 % (the stream's cushion covers that). The suggestion is the best level that is real time; the GPU wins
+/// a tie (it leaves the processor free).
 /// </summary>
 public static class AiBenchmark
 {
-    public const double RealTimeShare = 0.7;
+    /// <summary>Most of a block the mean block time may take.</summary>
+    public const double RealTimeShare = 0.75;
+
+    /// <summary>Most of a block the 95th percentile may take.</summary>
+    public const double PeakShare = 1.1;
 
     public static Task<BenchmarkResult> RunAsync(AiVoiceService service, string voiceId, IProgress<string>? progress = null,
-        CancellationToken ct = default, int blocks = 12) =>
-        Task.Run(() => Run(service, voiceId, progress, ct, blocks), ct);
+        CancellationToken ct = default, int blocks = 12, bool tryGpu = true) =>
+        Task.Run(() => Run(service, voiceId, progress, ct, blocks, tryGpu), ct);
 
-    public static BenchmarkResult Run(AiVoiceService service, string voiceId, IProgress<string>? progress, CancellationToken ct, int blocks = 12)
+    public static BenchmarkResult Run(AiVoiceService service, string voiceId, IProgress<string>? progress, CancellationToken ct, int blocks = 12, bool tryGpu = true)
     {
         var devices = new List<AiDevice> { AiDevice.Cpu };
-        if (OrtRuntime.TryLoad(out _) && OrtRuntime.GpuProvider() != null) devices.Add(AiDevice.Gpu);
+        if (tryGpu && OrtRuntime.TryLoad(out _) && OrtRuntime.GpuProvider() != null) devices.Add(AiDevice.Gpu);
         var runs = new List<BenchmarkRun>();
         foreach (var device in devices)
         {
@@ -55,7 +60,7 @@ public static class AiBenchmark
                 }
                 if (device == AiDevice.Gpu && r.Provider == "CPU") break; // the GPU refused: already measured on the CPU
                 runs.Add(r);
-                if (r.Rtf > 1.0) break; // the next levels are heavier still
+                if (r.MeanMs / r.BlockMs > 1.0) break; // the next levels are heavier still
             }
         }
         BenchmarkRun? best = null;
@@ -90,8 +95,9 @@ public static class AiBenchmark
         ms.Sort();
         double p95 = ms[Math.Min(ms.Count - 1, (int)Math.Ceiling(ms.Count * 0.95) - 1)];
         double rtf = p95 / s.BlockMs;
-        double latency = s.BlockMs + (p95 * 1.3 + 20) + s.AlgorithmicMs + 2;
-        return new BenchmarkRun(q, loaded.Voice.Generator.Provider, s.BlockMs, ms.Average(), p95, rtf, latency, rtf <= RealTimeShare);
+        double latency = s.BlockMs + AiLevels.CushionFor(p95) + s.AlgorithmicMs + 2;
+        double mean = ms.Average();
+        return new BenchmarkRun(q, loaded.Voice.Generator.Provider, s.BlockMs, mean, p95, rtf, latency, mean / s.BlockMs <= RealTimeShare && rtf <= PeakShare);
     }
 
     /// <summary>A vowel-like buzz with a moving pitch and pauses (what the models cost doesn't depend on the words).</summary>

@@ -91,7 +91,7 @@ public class AiSettings
 {
     /// <summary>"auto" (the benchmark's suggestion, else "balanced"), "light", "balanced" or "max".</summary>
     public string Quality { get; set; } = "auto";
-    /// <summary>"auto" (the GPU when one works, else the processor), "cpu" or "gpu".</summary>
+    /// <summary>"auto" (the processor, or the GPU once the benchmark found it better), "cpu" or "gpu".</summary>
     public string Device { get; set; } = "auto";
     /// <summary>What the one-time benchmark suggested ("light", "balanced", "max"); null = not measured yet.</summary>
     public string? SuggestedQuality { get; set; }

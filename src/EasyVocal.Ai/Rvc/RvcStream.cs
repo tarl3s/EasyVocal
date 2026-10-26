@@ -40,8 +40,8 @@ public sealed record StreamSettings(int BlockMs, int ExtraMs, int CrossfadeMs, b
 
 /// <summary>
 /// Follows the speaker's pitch so a voice with a natural pitch (<see cref="RvcVoice.TargetHz"/>) gets the input moved
-/// there: the median of the last ~6 s of voiced frames, an assumed 150 Hz until 0.3 s of voicing was heard; the
-/// shift moves by at most one semitone per block once it is known. Allocation-free.
+/// there: the median of the last ~6 s of voiced frames, an assumed 150 Hz until 0.3 s of voicing was heard;
+/// then the shift follows it, quickly for a big change (another speaker), half a semitone per block at most otherwise. Allocation-free.
 /// </summary>
 public sealed class AutoKey
 {
@@ -90,7 +90,8 @@ public sealed class AutoKey
         double hz = Math.Pow(2, sort[count / 2]);
         InputHz = hz;
         double want = Compute(hz);
-        key = !known ? want : key + Math.Clamp(want - key, -1, 1);
+        double diff = want - key;
+        key = !known ? want : key + (Math.Abs(diff) > 2 ? diff * 0.6 : Math.Clamp(diff, -0.5, 0.5)); // a new speaker: catch up fast; else drift slowly
         known = true;
         return (float)key;
     }

@@ -1,5 +1,6 @@
 # Builds EasyVocal and runs its tests on Windows, macOS and Linux.
-# Windows: every suite (portable, Windows platform, UI headless, the e2e run of the real app).
+# Windows: every suite (portable, Windows platform, UI headless, the e2e run of the real app). The AI voices' tests (every OS) download
+# RVC's public MIT models once (cached) and build an AI pack from them.
 # macOS / Linux: the portable tests, the macOS/Linux platform tests (with the real CoreAudio / Carbon, and on Linux a real
 # PulseAudio server and an X server) and the headless UI tests. Nothing is released from here.
 name: CI
@@ -19,7 +20,7 @@ env:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -27,12 +28,19 @@ jobs:
           dotnet-version: 8.0.x
       - name: Build
         run: dotnet build EasyVocal.sln -warnaserror
+      - name: AI models cache (RVC's public MIT files, downloaded once)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ai-models/upstream
+          key: ai-upstream-v1-${{ runner.os }}
       - name: Test (every suite)
         run: dotnet test EasyVocal.sln --no-build --logger "console;verbosity=normal"
+        env:
+          EV_AI_MODELS: ${{ runner.temp }}/ai-models
 
   macos:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -43,8 +51,18 @@ jobs:
           dotnet build tests/EasyVocal.Tests -warnaserror
           dotnet build tests/EasyVocal.Tests.Platforms -warnaserror
           dotnet build tests/EasyVocal.UiTests -warnaserror
+          dotnet build tests/EasyVocal.Ai.Tests -warnaserror
       - name: Portable tests
         run: dotnet test tests/EasyVocal.Tests --no-build
+      - name: AI models cache (RVC's public MIT files, downloaded once)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ai-models/upstream
+          key: ai-upstream-v1-${{ runner.os }}
+      - name: AI voices tests
+        run: dotnet test tests/EasyVocal.Ai.Tests --no-build --logger "console;verbosity=normal"
+        env:
+          EV_AI_MODELS: ${{ runner.temp }}/ai-models
       - name: macOS platform tests
         run: dotnet test tests/EasyVocal.Tests.Platforms --no-build --logger "console;verbosity=detailed"
       - name: UI tests (headless)
@@ -52,7 +70,7 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -72,8 +90,18 @@ jobs:
           dotnet build tests/EasyVocal.Tests -warnaserror
           dotnet build tests/EasyVocal.Tests.Platforms -warnaserror
           dotnet build tests/EasyVocal.UiTests -warnaserror
+          dotnet build tests/EasyVocal.Ai.Tests -warnaserror
       - name: Portable tests
         run: dotnet test tests/EasyVocal.Tests --no-build
+      - name: AI models cache (RVC's public MIT files, downloaded once)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ai-models/upstream
+          key: ai-upstream-v1-${{ runner.os }}
+      - name: AI voices tests
+        run: dotnet test tests/EasyVocal.Ai.Tests --no-build --logger "console;verbosity=normal"
+        env:
+          EV_AI_MODELS: ${{ runner.temp }}/ai-models
       - name: Linux platform tests (real PulseAudio, Xvfb)
         env:
           EV_PULSE_TESTS: "1"

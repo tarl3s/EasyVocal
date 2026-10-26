@@ -79,7 +79,8 @@ internal sealed partial class AppSession
         // The e2e test plays and records known audio through test devices (the virtual mic missing at first, then "installed").
         if (args.E2E) e2eDevices = options.Platform?.Audio as E2E.TestAudioDevices ?? new E2E.TestAudioDevices(cablePresent: args.E2ERelaunch);
         var platform = options.Platform ?? TestPlatformFor(PlatformFactory.ForThisComputer());
-        controller = new AppController(DataFolder, platform);
+        // AI voices: the engine looks for an AI pack in the data folder (none = the classic voices only). Test runs have none.
+        controller = new AppController(DataFolder, platform, aiVoices: args.TestMode ? null : s => new EasyVocal.Ai.AiVoiceService(DataFolder, () => s.Ai));
         // ...and never downloads or runs the virtual mic's installer: the e2e test "installs" its test cable instead.
         if (args.TestMode)
             controller.CableInstaller = e2eDevices != null ? e2eDevices.FakeInstallAsync

@@ -38,4 +38,22 @@ public interface IVoiceConverterSource
 
     /// <summary>Loads the voice (seconds: models are read and prepared) off the caller's thread.</summary>
     Task<IVoiceConverter> CreateAsync(string aiVoiceId, string? quality, CancellationToken ct);
+
+    /// <summary>Adds a voice card (<see cref="Model.VoiceKind.Ai"/>) for each installed AI voice that has none; true when it added one.</summary>
+    bool SyncPresets(Model.AppSettings settings);
+}
+
+/// <summary>Where the active voice's AI part is.</summary>
+public enum AiVoiceState
+{
+    /// <summary>A classic voice: no AI.</summary>
+    Off,
+    /// <summary>The AI voice is being loaded (the classic sliders play meanwhile).</summary>
+    Loading,
+    /// <summary>The AI voice plays.</summary>
+    Ready,
+    /// <summary>It couldn't be loaded (a damaged or unsupported model…).</summary>
+    Failed,
+    /// <summary>AI voices can't run here (no AI pack, no runtime).</summary>
+    Unavailable,
 }

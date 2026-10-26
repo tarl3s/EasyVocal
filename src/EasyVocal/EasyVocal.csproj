@@ -39,8 +39,14 @@
     <InternalsVisibleTo Include="EasyVocal.UiTests" />
   </ItemGroup>
 
+  <!-- Debug builds run the AI voices without an AI pack's runtime folder: ONNX Runtime's native library from NuGet.
+       Release downloads leave it out (the AI pack brings it). -->
+  <Import Project="..\EasyVocal.Ai\OnnxRuntime.Native.props" Condition="'$(Configuration)' == 'Debug'" />
+
   <ItemGroup>
     <ProjectReference Include="..\EasyVocal.Core\EasyVocal.Core.csproj" />
+    <!-- The AI voices (ONNX Runtime's managed API; its native library comes with the AI pack). -->
+    <ProjectReference Include="..\EasyVocal.Ai\EasyVocal.Ai.csproj" />
     <!-- Windows-only code (marked SupportedOSPlatform("windows")): used only behind OperatingSystem.IsWindows(). -->
     <ProjectReference Include="..\EasyVocal.Platform.Windows\EasyVocal.Platform.Windows.csproj" />
     <!-- macOS and Linux (marked SupportedOSPlatform too): used only behind OperatingSystem.IsMacOS() / IsLinux(). -->

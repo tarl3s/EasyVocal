@@ -56,11 +56,17 @@ public sealed class AppController : IDisposable
     private int changePosted;
     private DateTime? restoreUntil; // set when the cable shows up while the defaults from before its install are remembered
     private bool started, disposed, savePending;
+    private readonly IVoiceConverterSource? ai;
+    private IVoiceConverter? aiConverter;         // the AI voice the chain plays (owned here)
+    private string? aiWanted;                      // "<ai voice id>|<quality>" asked for, null = none
+    private CancellationTokenSource? aiLoad;
 
     /// <param name="dataFolder">Where settings.json and the Sounds folder live (normally <see cref="SettingsStore.DefaultFolder"/>).</param>
     /// <param name="platform">The system's devices, startup entry and virtual mic (the tests swap in their own devices and a throwaway startup entry).</param>
     /// <param name="ui">The UI thread (null = Avalonia's).</param>
-    public AppController(string dataFolder, PlatformServices platform, IUiDispatcher? ui = null)
+    /// <param name="aiVoices">Makes the AI voices' engine from the settings (null = no AI voices: the tests' default).</param>
+    public AppController(string dataFolder, PlatformServices platform, IUiDispatcher? ui = null,
+        Func<AppSettings, IVoiceConverterSource?>? aiVoices = null)
     {
         this.ui = ui ?? AvaloniaUiDispatcher.Instance;
         Platform = platform;
@@ -79,6 +85,8 @@ public sealed class AppController : IDisposable
         if (settingsFile.CouldNotRead)
             AppLog.Info("settings.json could not be read (another program holds it?): using defaults and not saving this session");
         engine = new AudioEngine(MakeInput, MakeCallOutput, MakeMonitor, chain, mixer);
+        try { ai = aiVoices?.Invoke(Settings); }
+        catch (Exception ex) { AppLog.Error("The AI voices couldn't start", ex); }
 
         saveTimer = this.ui.CreateTimer(SaveDelay, SaveNow);
         recoverTimer = this.ui.CreateTimer(RecoverEvery, Recover);
@@ -141,6 +149,11 @@ public sealed class AppController : IDisposable
         started = true;
 
         if (FirstRun) Save(); // settings.json exists from now on
+        try
+        {
+            if (ai is { Available: true } && ai.SyncPresets(Settings)) Save(); // a card for each installed AI voice
+        }
+        catch (Exception ex) { AppLog.Error("Listing the AI voices failed", ex); }
         EnsureActiveVoice();
         engine.FilterEnabled = Settings.Enabled;
         engine.MicMuted = Settings.MicMuted;
@@ -203,6 +216,9 @@ public sealed class AppController : IDisposable
         StopPreview();
         loadCancel.Cancel();
         engine.Dispose();
+        aiLoad?.Cancel();
+        DropAiConverter();
+        (ai as IDisposable)?.Dispose();
         if (restoreUntil != null) ForgetDefaultsBeforeCable(); // the cable came and its restore window was used
         if (savePending) SaveNow(); // before the virtual mic: its removal may be cut short when the process ends
         saveTimer.Stop();
@@ -402,7 +418,89 @@ public sealed class AppController : IDisposable
     public bool HearingMe => previewHearMe ?? Settings.HearMe;
 
     /// <summary>Gives the voice chain what it should play: the preview if one is on, else the active voice.</summary>
-    private void ApplyChain() => chain.Apply(previewSliders ?? ActiveVoice.Sliders);
+    private void ApplyChain()
+    {
+        chain.Apply(previewSliders ?? ActiveVoice.Sliders);
+        UpdateAiVoice();
+    }
+
+    // ---------- AI voices ----------
+
+    /// <summary>Whether the AI voices can run here (an AI pack and its runtime).</summary>
+    public bool AiAvailable => ai is { Available: true };
+
+    /// <summary>Why they can't (null when they can, or when this build has none).</summary>
+    public string? AiUnavailableReason => ai == null ? null : ai.UnavailableReason;
+
+    /// <summary>The active voice's AI part: off (a classic voice), loading, playing, or failed / unavailable (see <see cref="AiProblem"/>).</summary>
+    public AiVoiceState AiState { get; private set; } = AiVoiceState.Off;
+
+    /// <summary>What went wrong with the AI voice, in plain words; null when nothing did.</summary>
+    public string? AiProblem { get; private set; }
+
+    /// <summary>How far the voice on the call is behind the mic right now, in ms (AI voice and effects, not the devices).</summary>
+    public int VoiceLatencyMs => chain.LatencySamples * 1000 / AudioFormat.SampleRate;
+
+    /// <summary>The AI voices' engine (null = none in this build or test).</summary>
+    public IVoiceConverterSource? AiVoices => ai;
+
+    /// <summary>
+    /// Gives the chain the active voice's AI converter (loaded off the UI thread; the chain crossfades to it when it is
+    /// ready, the classic sliders playing meanwhile) or takes it out for a classic voice and while the filter editor previews.
+    /// </summary>
+    private void UpdateAiVoice()
+    {
+        var v = previewSliders == null ? ActiveVoice : null;
+        string? want = v is { Kind: VoiceKind.Ai } ? (v.AiVoiceId ?? v.Id) + "|" + v.AiQuality : null;
+        if (want == aiWanted) return;
+        aiWanted = want;
+        aiLoad?.Cancel();
+        aiLoad = null;
+        if (want == null || ai is not { Available: true })
+        {
+            DropAiConverter();
+            AiState = want == null ? AiVoiceState.Off : AiVoiceState.Unavailable;
+            AiProblem = want == null ? null : ai?.UnavailableReason ?? "AI voices aren't available in this version.";
+            if (want != null) AppLog.Info("AI voice not available: " + AiProblem);
+            RaiseChanged();
+            return;
+        }
+        var cts = new CancellationTokenSource();
+        aiLoad = cts;
+        AiState = AiVoiceState.Loading;
+        AiProblem = null;
+        string id = v!.AiVoiceId ?? v.Id;
+        var task = ai.CreateAsync(id, v.AiQuality, cts.Token);
+        task.ContinueWith(t => ui.Post(() =>
+        {
+            bool current = !disposed && !cts.IsCancellationRequested && aiWanted == want;
+            if (t.IsCompletedSuccessfully)
+            {
+                if (!current) { t.Result.Dispose(); return; }
+                chain.SetConverter(t.Result);
+                aiConverter?.Dispose();
+                aiConverter = t.Result;
+                AiState = AiVoiceState.Ready;
+                AppLog.Info($"AI voice {id} ready ({VoiceLatencyMs} ms)");
+            }
+            else
+            {
+                if (!current) return;
+                var ex = t.Exception?.GetBaseException();
+                AiState = AiVoiceState.Failed;
+                AiProblem = ex?.Message ?? "The AI voice couldn't be loaded.";
+                AppLog.Error("AI voice " + id + " failed to load", ex);
+            }
+            RaiseChanged();
+        }), CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+    }
+
+    private void DropAiConverter()
+    {
+        chain.SetConverter(null);
+        aiConverter?.Dispose(); // a disposed converter passes the audio through while the chain fades it out
+        aiConverter = null;
+    }
 
     /// <summary>A copy of a voice (see <see cref="ItemOps.DuplicateVoice"/>).</summary>
     public VoicePreset DuplicateVoice(string id)

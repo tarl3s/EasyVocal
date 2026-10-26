@@ -43,4 +43,10 @@ public static class AiLevels
     /// with that much cushion and grows it if it runs late.
     /// </summary>
     public static double DefaultBlockMs(AiQuality q) => q switch { AiQuality.Light => 120, AiQuality.Max => 270, _ => 170 };
+
+    /// <summary>
+    /// The cushion a stream starts with for a block time (95th percentile, ms): 25 % more plus 15 ms for the rest of the
+    /// PC; an under-run grows it by 20 ms anyway.
+    /// </summary>
+    public static double CushionFor(double blockMsP95) => blockMsP95 * 1.25 + 15;
 }

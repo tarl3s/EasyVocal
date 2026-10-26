@@ -106,6 +106,9 @@ public sealed class Yin : IPitchEstimator
 
     public float Threshold { get; set; } = 0.15f;
 
+    /// <summary>Deepest dip still taken as voiced when none is under <see cref="Threshold"/>.</summary>
+    public float Fallback { get; set; } = 0.35f;
+
     public int WindowFor(int samples) => samples;
 
     public void Estimate(ReadOnlySpan<float> x, Span<float> f0)
@@ -113,7 +116,8 @@ public sealed class Yin : IPitchEstimator
         int n = Math.Min(f0.Length, 1 + x.Length / 160);
         for (int t = 0; t < n; t++)
         {
-            int start = Math.Clamp(t * 160 - W / 2, 0, Math.Max(0, x.Length - W - MaxTau - 1));
+            // the whole span the frame compares (W + MaxTau) centred on it; the newest frames use what there is
+            int start = Math.Clamp(t * 160 - (W + MaxTau) / 2, 0, Math.Max(0, x.Length - W - MaxTau - 1));
             if (start + W + MaxTau >= x.Length) { f0[t] = 0; continue; }
             double energy = 0;
             for (int i = 0; i < W; i++) energy += x[start + i] * x[start + i];
@@ -128,13 +132,19 @@ public sealed class Yin : IPitchEstimator
                 run += s;
                 d[tau] = run > 0 ? s * tau / run : 1;
             }
+            int global = MinTau;
             for (int tau = MinTau; tau < MaxTau; tau++)
+            {
+                if (d[tau] < d[global]) global = tau;
                 if (d[tau] < Threshold)
                 {
                     while (tau + 1 < MaxTau && d[tau + 1] < d[tau]) tau++;
                     best = tau;
                     break;
                 }
+            }
+            // no dip under the threshold: YIN's fallback, the deepest one, when it is still clearly periodic
+            if (best < 1 && d[global] < Fallback) best = global;
             if (best < 1) { f0[t] = 0; continue; }
             float a = d[best - 1], b = d[best], c = d[best + 1];
             float den = a - 2 * b + c, shift = den != 0 ? 0.5f * (a - c) / den : 0;

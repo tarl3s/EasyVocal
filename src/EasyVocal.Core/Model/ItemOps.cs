@@ -60,6 +60,9 @@ public static class ItemOps
             Hidden = false,
             Hotkey = null,
             Kind = original.Kind,
+            // a copy of an AI voice is the same AI voice with sliders of its own
+            AiVoiceId = original.Kind == VoiceKind.Ai ? original.AiVoiceId ?? original.Id : null,
+            AiQuality = original.AiQuality,
             Sliders = original.Sliders.Clone(),
         };
         s.Voices.Insert(index + 1, copy);

@@ -16,7 +16,7 @@ namespace EasyVocal.UiTests;
 public class ControllerTests
 {
     /// <summary>A UI thread the test drives: posted work waits in a queue, timers tick when told to.</summary>
-    private sealed class ManualDispatcher : IUiDispatcher
+    internal sealed class ManualDispatcher : IUiDispatcher
     {
         private readonly Queue<Action> posted = new();
         private readonly int thread = Environment.CurrentManagedThreadId;

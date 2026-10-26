@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The AI pack's dev tool (plain .NET, any OS): downloads RVC's public MIT files, builds an AI pack folder from them
+       (content encoder from HuBERT's weights + the embedded template, RMVPE, the base generator, the bundled voices from
+       src/EasyVocal.Ai/Voices/bundled-voices.json), runs the benchmark, renders a voice for listening. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>EasyVocal.AiPack</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EasyVocal.Ai\EasyVocal.Ai.csproj" />
+  </ItemGroup>
+
+  <Import Project="..\..\src\EasyVocal.Ai\OnnxRuntime.Native.props" />
+
+</Project>

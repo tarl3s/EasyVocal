@@ -85,7 +85,7 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         {
             "cpu" => AiDevice.Cpu,
             "gpu" => AiDevice.Gpu,
-            _ => s.SuggestedDevice == "cpu" ? AiDevice.Cpu : AiDevice.Auto,
+            _ => s.SuggestedDevice == "gpu" ? AiDevice.Gpu : AiDevice.Cpu, // the processor until the benchmark found the GPU better
         };
     }
 
@@ -127,12 +127,12 @@ public sealed class AiVoiceService : IVoiceConverterSource, IDisposable
         return new AiVoiceConverter(Make, s.BlockMs * 48, cushion, s.AlgorithmicMs, provider);
     }
 
-    /// <summary>The cushion for a level: the measured 95th percentile × 1.3 + 20 ms, else the level's default.</summary>
+    /// <summary>The cushion for a level: from the block time measured here (95th percentile), else the level's default.</summary>
     public double CushionMs(AiQuality q, string provider)
     {
         var m = settings().MeasuredBlockMs;
         double block = m != null && m.TryGetValue(AiLevels.Id(q) + ":" + provider, out var v) && v > 0 ? v : AiLevels.DefaultBlockMs(q);
-        return block * 1.3 + 20;
+        return AiLevels.CushionFor(block);
     }
 
     /// <summary>Loads a voice's models for a quality and device (cached); the caller disposes the result.</summary>

@@ -23,7 +23,10 @@ public static class RvcTemplates
     public static byte[] Enc(int sr) => Resource($"rvc_v2_f0_{sr / 1000}k_enc.onnx.gz");
     public static byte[] Dec(int sr) => Resource($"rvc_v2_f0_{sr / 1000}k_dec.onnx.gz");
 
-    /// <summary>The output rate a .pth says it has ("40k", or the config's last number), or 0.</summary>
+    /// <summary>
+    /// The output rate a .pth says it has ("40k", or the config's last number); without either (RVC's pretrained
+    /// files) the first upsampling layer's kernel tells (32k: 20, 40k: 16, 48k: 24); 0 = unknown.
+    /// </summary>
     public static int SampleRateOf(TorchCheckpoint ck)
     {
         var s = ck.Sr?.Trim().ToLowerInvariant();
@@ -31,6 +34,9 @@ public static class RvcTemplates
         if (s is "40k" or "40000") return 40000;
         if (s is "48k" or "48000") return 48000;
         if (ck.Config is { Count: > 0 } c && c[^1] is long l && (l == 32000 || l == 40000 || l == 48000)) return (int)l;
+        foreach (var k in new[] { "dec.ups.0.weight_v", "dec.ups.0.parametrizations.weight.original1", "dec.ups.0.weight" })
+            if (ck.Tensors.TryGetValue(k, out var w) && w.Shape.Length == 3)
+                return w.Shape[2] switch { 20 => 32000, 16 => 40000, 24 => 48000, _ => 0 };
         return 0;
     }
 

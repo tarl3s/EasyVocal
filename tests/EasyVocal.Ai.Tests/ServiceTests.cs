@@ -112,7 +112,7 @@ public class ServiceTests : IDisposable
     [Fact]
     public async Task The_benchmark_measures_every_level_and_suggests_one()
     {
-        var r = await AiBenchmark.RunAsync(service, AiFixtures.VoiceA, blocks: 4);
+        var r = await AiBenchmark.RunAsync(service, AiFixtures.VoiceA, blocks: 4, tryGpu: !RealModels.OnCi);
         foreach (var run in r.Runs) output.WriteLine(run.ToString());
         output.WriteLine($"suggested {r.Suggested} on {r.Provider}");
         Assert.Equal(3, r.Runs.Count(x => x.Provider == "CPU"));
@@ -123,7 +123,7 @@ public class ServiceTests : IDisposable
         Assert.True(settings.MeasuredBlockMs.ContainsKey("light:CPU"));
         // the measured block time feeds the stream's cushion
         var svc = new AiVoiceService(data, () => settings);
-        try { Assert.Equal(settings.MeasuredBlockMs["light:CPU"] * 1.3 + 20, svc.CushionMs(AiQuality.Light, "CPU"), 3); }
+        try { Assert.Equal(AiLevels.CushionFor(settings.MeasuredBlockMs["light:CPU"]), svc.CushionMs(AiQuality.Light, "CPU"), 3); }
         finally { svc.Dispose(); }
     }
 
@@ -140,18 +140,29 @@ public class ServiceTests : IDisposable
             s.Quality = "max";
             Assert.Equal(AiQuality.Max, svc.QualityFor(null));
             Assert.Equal(AiQuality.Light, svc.QualityFor("light"));
-            Assert.Equal(AiDevice.Auto, svc.DeviceFor());
+            Assert.Equal(AiDevice.Cpu, svc.DeviceFor()); // until the benchmark found the GPU better
+            s.SuggestedDevice = "gpu";
+            Assert.Equal(AiDevice.Gpu, svc.DeviceFor());
             s.Device = "cpu";
             Assert.Equal(AiDevice.Cpu, svc.DeviceFor());
         }
         finally { svc.Dispose(); }
     }
 
-    internal static float[] Speech48(double seconds)
+    [Fact]
+    public async Task The_GPU_is_used_when_it_works_here_and_the_CPU_otherwise()
     {
-        var x = AiBenchmark.SpeechLike(48000, seconds);
-        return x;
+        output.WriteLine("providers: " + string.Join(", ", OrtRuntime.Providers()) + "; this system's GPU provider: " + (OrtRuntime.GpuProvider() ?? "none"));
+        using var conv = await service.CreateConverterAsync(AiFixtures.VoiceA, AiQuality.Light, AiDevice.Gpu, CancellationToken.None);
+        Lockstep(conv, Speech48(1.2));
+        var st = conv.Stats;
+        output.WriteLine(st.ToString());
+        Assert.True(st.Ready && st.Error == null, st.ToString());
+        Assert.Contains(st.Provider, new[] { "CPU", "DirectML", "CoreML", "CUDA" });
+        if (OrtRuntime.GpuProvider() == null) Assert.Equal("CPU", st.Provider);
     }
+
+    internal static float[] Speech48(double seconds) => AiBenchmark.SpeechLike(48000, seconds);
 
     internal static float[] Lockstep(AiVoiceConverter c, float[] input)
     {
